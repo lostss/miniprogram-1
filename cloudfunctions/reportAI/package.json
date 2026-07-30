@@ -1,0 +1,11 @@
+{
+  "name": "reportAI",
+  "version": "1.0.0",
+  "description": "保障报告生成",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3",
+    "@cloudbase/node-sdk": "^3.16.0",
+    "ws": "^8.16.0"
+  }
+}

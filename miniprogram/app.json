@@ -1,0 +1,18 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/report/index",
+    "pages/clients/index"
+  ],
+  "window": {
+    "backgroundColor": "#F5F0EB",
+    "backgroundTextStyle": "light",
+    "navigationBarBackgroundColor": "#F5F0EB",
+    "navigationBarTitleText": "保小秘",
+    "navigationBarTextStyle": "black"
+  },
+  "sitemapLocation": "sitemap.json",
+  "style": "v2",
+  "lazyCodeLoading": "requiredComponents",
+  "usingComponents": {}
+}

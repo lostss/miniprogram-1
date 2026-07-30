@@ -1,0 +1,47 @@
+---
+description: 云函数开发规范
+alwaysApply: true
+---
+
+# 云函数开发规范
+
+## 入口与 AI 调用
+
+入口模式及 AI 调用详见 `use_skill("cloud-functions")` 和 `use_skill("ai-model-nodejs")`。
+
+本项目特定约定：
+
+**模型**: `hy3-preview`（通过 `hunyuan-v3` group / `cloudbase` group 均可）
+
+**AI 调用分两条路径**:
+
+| 场景 | 调用方式 | 走审查链 |
+|------|---------|---------|
+| 云函数（reportAI/ocrService/conversationAI） | `_shared/ai-gateway.js` → `safeCallChat` | ✅ 全链 |
+| 前端对话（chat-panel） | `wx.cloud.extend.AI.createModel('hunyuan-v3').streamText()` | ❌ 直调 |
+
+**审查链（仅云函数侧）**:
+sanitize → PII脱敏 → 注入检测 → 内容安全 → 限流(60次/60s) → AI → 输出审计 → agent_logs
+
+错误码：`INJECTION`/`CONTENT_UNSAFE`/`RATE_LIMIT`/`OUTPUT_UNSAFE`
+
+> chat-panel 直调 `wx.cloud.extend.AI` 绕过了安全链。如果未来需要对话侧审计/限流，需改为经 conversationAI 云函数中转。
+
+## 部署
+
+| 修改范围 | 操作 |
+|----------|------|
+| `_shared/*` | `node scripts/sync-shared.js` → 部署消费方 |
+| 函数自身 | 部署对应函数 |
+
+## 返回与分析
+
+`{ code, msg, data? }`，code: 200/400/401/404/500，msg 中文禁堆栈
+
+分析触发：进入/退出/缓存刷新（15min阈值）；手动跳过阈值。
+分析 → insights → `has_new_insight=true` → 红点
+
+## OCR
+
+选图(≤9) → 并发压缩(quality:65)+上传 → 分批并发 OCR(每批5张 `Promise.all`) → matchPolicies → 置信度分流(≥95%自动/低确认卡片)
+非保单 `error_code: 'not_policy'`；`skipInjection: true` 避免文档误杀

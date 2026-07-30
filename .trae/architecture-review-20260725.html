@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>架构深化评审报告 · 2026-07-25</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1f2430;
+    --border: #2a2f3a;
+    --text: #e4e7ec;
+    --muted: #8b93a7;
+    --accent: #c9a96e;
+    --accent-glow: rgba(201, 169, 110, 0.15);
+    --strong: #ef4444;
+    --worth: #f59e0b;
+    --spec: #6366f1;
+    --good: #10b981;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    line-height: 1.65;
+  }
+  .container { max-width: 1200px; margin: 0 auto; padding: 48px 24px 120px; }
+  h1 { font-size: 2.5rem; font-weight: 700; letter-spacing: -0.02em; }
+  h2 { font-size: 1.5rem; font-weight: 600; margin-top: 2.5rem; margin-bottom: 1rem; }
+  h3 { font-size: 1.15rem; font-weight: 600; color: var(--accent); }
+  .lead { color: var(--muted); font-size: 1.05rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px;
+    margin: 28px 0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+  }
+  .badge {
+    display: inline-block;
+    padding: 3px 12px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+  .badge-strong { background: rgba(239,68,68,0.15); color: #fca5a5; border: 1px solid rgba(239,68,68,0.3); }
+  .badge-worth  { background: rgba(245,158,11,0.15); color: #fcd34d; border: 1px solid rgba(245,158,11,0.3); }
+  .badge-spec   { background: rgba(99,102,241,0.15); color: #c7d2fe; border: 1px solid rgba(99,102,241,0.3); }
+  .badge-num    { background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); }
+  .meta {
+    color: var(--muted);
+    font-size: 0.9rem;
+    font-family: ui-monospace, "SF Mono", Monaco, monospace;
+    background: var(--panel-2);
+    border-left: 3px solid var(--accent);
+    padding: 10px 14px;
+    border-radius: 4px;
+    margin: 12px 0;
+    word-break: break-all;
+  }
+  .section-label {
+    text-transform: uppercase;
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .visual {
+    background: var(--panel-2);
+    border-radius: 12px;
+    padding: 20px;
+    margin: 16px 0;
+    border: 1px dashed var(--border);
+  }
+  .visual-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 768px) { .visual-grid { grid-template-columns: 1fr; } }
+  .visual-half {
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 16px;
+    border: 1px solid var(--border);
+  }
+  .visual-title {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 10px;
+    text-align: center;
+    font-weight: 600;
+  }
+  .visual-title.before { color: #fca5a5; }
+  .visual-title.after  { color: #6ee7b7; }
+  .node {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 0.78rem;
+    margin: 4px 0;
+    text-align: center;
+  }
+  .node-bad { border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.08); }
+  .node-good { border-color: rgba(16,185,129,0.4); background: rgba(16,185,129,0.08); }
+  .node-accent { border-color: var(--accent); background: var(--accent-glow); }
+  .arrow { color: var(--muted); text-align: center; font-size: 1.1rem; margin: 2px 0; }
+  .code-inline {
+    font-family: ui-monospace, "SF Mono", Monaco, monospace;
+    font-size: 0.85em;
+    background: var(--panel-2);
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: var(--accent);
+  }
+  pre {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 0.82rem;
+    font-family: ui-monospace, "SF Mono", Monaco, monospace;
+    color: #d4d4d4;
+    margin: 12px 0;
+  }
+  pre code { background: transparent; padding: 0; }
+  .top-rec {
+    background: linear-gradient(135deg, rgba(201,169,110,0.12), rgba(201,169,110,0.02));
+    border: 1px solid rgba(201,169,110,0.3);
+    border-radius: 16px;
+    padding: 32px;
+    margin-top: 48px;
+  }
+  .toc { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px 28px; }
+  .toc a { color: var(--text); text-decoration: none; }
+  .toc a:hover { color: var(--accent); }
+  .toc-item { padding: 6px 0; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .toc-item:last-child { border-bottom: none; }
+  .stat-row { display: flex; gap: 24px; flex-wrap: wrap; margin: 20px 0; }
+  .stat { background: var(--panel-2); padding: 12px 18px; border-radius: 8px; border: 1px solid var(--border); }
+  .stat-num { font-size: 1.6rem; font-weight: 700; color: var(--accent); }
+  .stat-label { font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  .mermaid { background: var(--panel-2); padding: 16px; border-radius: 8px; margin: 12px 0; }
+  hr.divider { border: none; border-top: 1px solid var(--border); margin: 48px 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="section-label">架构深化评审 · Architecture Deepening Review</div>
+    <h1>保险顾问小程序 · 架构摩擦清单</h1>
+    <p class="lead">
+      10 项深化机会，按摩擦严重度排序。每项应用<strong style="color:var(--accent)">删除测试</strong>判断模块是否在赚取其 keep，
+      用<strong style="color:var(--accent)"> Locality / Leverage / Seam </strong>词汇描述摩擦。
+      域语言取自 <code class="code-inline">CONTEXT.md</code>，架构语言取自 LANGUAGE.md。
+    </p>
+    <div class="stat-row">
+      <div class="stat"><div class="stat-num">10</div><div class="stat-label">深化候选</div></div>
+      <div class="stat"><div class="stat-num">5</div><div class="stat-label">Strong</div></div>
+      <div class="stat"><div class="stat-num">3</div><div class="stat-label">Worth exploring</div></div>
+      <div class="stat"><div class="stat-num">2</div><div class="stat-label">Speculative</div></div>
+      <div class="stat"><div class="stat-num">0</div><div class="stat-label">ADR 冲突</div></div>
+    </div>
+  </header>
+
+  <div class="toc">
+    <div class="section-label">目录</div>
+    <div class="toc-item"><a href="#c1">#1 safeUpdate / safeQuery 在 dataWrite 中被 13+ 处绕过</a><span class="badge badge-strong">Strong</span></div>
+    <div class="toc-item"><a href="#c2">#2 conversationAI 的 _handlePostProcess 是 216 行五模式巨函数</a><span class="badge badge-strong">Strong</span></div>
+    <div class="toc-item"><a href="#c3">#3 v2-context.js 返回 { markdown, raw } — 接口泄漏使深模块变浅</a><span class="badge badge-strong">Strong</span></div>
+    <div class="toc-item"><a href="#c4">#4 chat-panel 前端复制后端 SecurityGuard — PII 规则双写</a><span class="badge badge-strong">Strong</span></div>
+    <div class="toc-item"><a href="#c5">#5 _shared 同步残留 4 份不使用的 OCR 副本</a><span class="badge badge-worth">Worth exploring</span></div>
+    <div class="toc-item"><a href="#c6">#6 markFamilyMutated / _advanceStage 手动调用 15+ 处</a><span class="badge badge-strong">Strong</span></div>
+    <div class="toc-item"><a href="#c7">#7 reportAI 内联 336 行 prompt + 报告生命周期散落</a><span class="badge badge-worth">Worth exploring</span></div>
+    <div class="toc-item"><a href="#c8">#8 member-store.js 是纯桶模块 — 删除测试显示透传</a><span class="badge badge-spec">Speculative</span></div>
+    <div class="toc-item"><a href="#c9">#9 errorHandler 仅 chat-panel 使用，3 个页面 ad-hoc 处理</a><span class="badge badge-worth">Worth exploring</span></div>
+    <div class="toc-item"><a href="#c10">#10 insurance_period 解析逻辑前后端三份实现</a><span class="badge badge-strong">Strong</span></div>
+  </div>
+
+  <h2 id="c1">候选 #1 · safeUpdate / safeQuery 在 dataWrite 中被 13+ 处绕过 <span class="badge badge-strong">Strong</span></h2>
+
+  <div class="card">
+    <div class="section-label">涉及文件</div>
+    <div class="meta">
+      cloudfunctions/dataWrite/handlers.js · cloudfunctions/_shared/db-helpers.js
+    </div>
+
+    <div class="section-label" style="margin-top:18px">问题</div>
+    <p>
+      <code class="code-inline">db-helpers.js</code> 导出 <code class="code-inline">safeQuery</code> / <code class="code-inline">safeUpdate</code> / <code class="code-inline">safeUpdateMany</code>，
+      承诺"<strong>统一注入 _openid 防越权</strong>"这一安全不变量。但 <code class="code-inline">handlers.js</code> 中 21 个 handler 大量裸调
+      <code class="code-inline">db.collection().where().update()</code> / <code class="code-inline">db.collection().doc().update()</code> 绕过它们。
+    </p>
+    <p style="color:var(--muted);font-size:0.92rem">绕过点（节选）：</p>
+    <pre><code>L232:  db.collection('policies').doc(exist.data[0]._id).update(...)   // writePolicy 去重
+L306:  db.collection('facts').where(...).update(...)                    // addFact supersede
+L333:  db.collection('facts').doc(factId).update(...)                   // updateFactConfidence
+L376:  db.collection('families').where(...).update(...)                 // updateFamilyHandler
+L575:  db.collection('families').where(...).update(...)                 // setStage
+L732:  db.collection('members').doc(...).remove()                       // deleteMember 硬删
+L789:  db.collection('policies').doc(target._id).update(...)            // deletePolicy 软删
+L870:  db.collection('policies').doc(target._id).update(...)            // updatePolicy
+L893:  db.collection('facts').doc(...).update(...)                      // deleteFact
+L950:  db.collection('policies').where(...).update(...)                 // writeCashValue 回写</code></pre>
+    <p>
+      更糟糕的是命名冲突的历史疤痕——<code class="code-inline">updateFamilyHandler</code>、<code class="code-inline">deleteFamilyHandler</code> 是为了避免与 db-helpers 导入的
+      <code class="code-inline">updateFamily</code> 冲突而重命名的。Handler 层与 db-helpers 层处于同一抽象层级，命名空间碰撞本身就是<strong>接缝不清</strong>的信号。
+    </p>
+
+    <div class="section-label">深化方向</div>
+    <p>
+      把"对某集合的写入"作为唯一接缝，所有 handler 必须经过它。该接缝统一注入：
+      <code class="code-inline">_openid</code>（安全）、<code class="code-inline">updated_at</code>（审计）、<code class="code-inline">markFamilyMutated</code>（脏标记）、<code class="code-inline">_advanceStage</code>（stage 推进）。
+      使绕过成为<strong>不可能</strong>，而非依靠开发者自律。
+    </p>
+
+    <div class="section-label">收益</div>
+    <ul>
+      <li><strong>Locality</strong>：安全不变量集中一处，新增 handler 自动获得保护</li>
+      <li><strong>测试性</strong>：可对写入接缝做单测（注入是否生效、stage 是否推进）</li>
+      <li><strong>AI-navigability</strong>：理解"所有 families 写入都校验 _openid"无需通读 21 个 handler</li>
+    </ul>
+
+    <div class="visual">
+      <div class="visual-grid">
+        <div class="visual-half">
+          <div class="visual-title before">现状 · 安全不变量散落</div>
+          <div class="node node-bad">handler: writePolicy</div>
+          <div class="arrow">↘ 裸调 db.collection.update</div>
+          <div class="node node-bad">handler: addFact</div>
+          <div class="arrow">↘ 裸调 db.collection.update</div>
+          <div class="node node-bad">handler: updatePolicy</div>
+          <div class="arrow">↘ 裸调 db.collection.update</div>
+          <div class="node node-accent">safeUpdate (建议性)</div>
+          <div class="arrow">↘ 少数 handler 用</div>
+          <div style="color:var(--muted);font-size:0.78rem;text-align:center;margin-top:8px">"是否注入 _openid" 需逐个阅读 21 处</div>
+        </div>
+        <div class="visual-half">
+          <div class="visual-title after">深化 · 单一写入接缝</div>
+          <div class="node node-good">handler: writePolicy</div>
+          <div class="node node-good">handler: addFact</div>
+          <div class="node node-good">handler: updatePolicy</div>
+          <div class="arrow">↓ 唯一调用</div>
+          <div class="node node-accent">writeSeam(collection, where, data, hooks)</div>
+          <div style="display:flex;gap:8px;justify-content:center;margin-top:8px">
+            <div class="node node-good" style="font-size:0.7rem">_openid</div>
+            <div class="node node-good" style="font-size:0.7rem">updated_at</div>
+            <div class="node node-good" style="font-size:0.7rem">markMutated</div>
+            <div class="node node-good" style="font-size:0.7rem">advanceStage</div>
+          </div>
+          <div style="color:#6ee7b7;font-size:0.78rem;text-align:center;margin-top:8px">绕过 = 编译错误（无该 API）</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2 id="c2">候选 #2 · conversationAI 的 _handlePostProcess 是 216 行五模式巨函数 <span class="badge badge-strong">Strong</span></h2>
+
+  <div class="card">
+    <div class="section-label">涉及文件</div>
+    <div class="meta">cloudfunctions/conversationAI/index.js (L472-688)</div>
+
+    <div class="section-label">问题</div>
+    <p>
+      文件头注释（L2-8）声称"<strong>三模式架构</strong>：getPrompt / generateText / postProcess"。但 <code class="code-inline">_handlePostProcess</code> 内部实际包含<strong>五种互异分支</strong>：
+    </p>
+    <pre><code>L481-486  CONFIRM 拦截  : {CONFIRM:xxx} 正则 → _handleConfirm
+L488-492  KEEP 拦截    : {KEEP:xxx} 正则 → _handleKeep
+L494-507  sug 拦截     : 匹配上一条 suggestions 数组 → 转 CONFIRM/KEEP
+L520-634  正常工具路径 : safeCallChatWithTools → _dispatch 12 case
+L644-687  持久化 + 日志 : 写 user/assistant 消息 + agent_logs</code></pre>
+    <p>
+      同时 <code class="code-inline">_dispatch</code>（L51-106）是 12-case switch，其中 <code class="code-inline">deleteMember</code>/<code class="code-inline">deletePolicy</code>/<code class="code-inline">deleteFact</code> 共享 <code class="code-inline">_pendingDelete</code> 二次确认逻辑，
+      而 <code class="code-inline">writeMessage</code>/<code class="code-inline">queryPolicies</code>/<code class="code-inline">queryMembers</code>/<code class="code-inline">queryFacts</code> 又各自内联 <code class="code-inline">cloud.callFunction + .catch(e => console.error(...))</code> 重复模式。
+    </p>
+    <p>
+      <code class="code-inline">_TOOL_DEFINITIONS</code>（L235-468，230 行内联 JSON Schema）与 <code class="code-inline">_dispatch</code> case 一一对应但<strong>无编译期校验</strong>——新增工具需同步修改两处，漏改即静默失败。
+    </p>
+
+    <div class="section-label">深化方向</div>
+    <p>
+      把"对话后处理"建模为四阶段管道，每阶段独立接缝：
+      <strong>意图识别 → 工具执行 → 确认流转 → 持久化</strong>。
+      工具定义与 dispatch 由<strong>注册表</strong>驱动（声明式），消除 switch 与 schema 双写。
+    </p>
+
+    <div class="section-label">收益</div>
+    <ul>
+      <li><strong>Locality</strong>：理解"用户点击确认卡片后发生什么"不再跨越 5 函数 3 云函数</li>
+      <li><strong>测试性</strong>：每阶段可独立单测（意图识别纯函数、确认流转状态机）</li>
+      <li><strong>Leverage</strong>：注册表使新增工具成本从"改 3 处"降到"加 1 条注册"</li>
+    </ul>
+
+    <div class="visual">
+      <div class="visual-grid">
+        <div class="visual-half">
+          <div class="visual-title before">现状 · postProcess 五分支交织</div>
+          <pre style="margin:0;font-size:0.72rem">_handlePostProcess(text) {
+  if CONFIRM  → _handleConfirm
+  if KEEP     → _handleKeep
+  if sug      → 转 CONFIRM/KEEP
+  if 正常 {
+    safeCallChatWithTools
+    → _dispatch (12-case switch)
+    → build suggestions
+    → build pending_confirms
+    → 模板化摘要
+  }
+  写消息 + agent_logs
+}</pre>
+          <div style="color:var(--muted);font-size:0.78rem;text-align:center;margin-top:8px">216 行 · 5 模式 · 1 函数</div>
+        </div>
+        <div class="visual-half">
+          <div class="visual-title after">深化 · 四阶段管道</div>
+          <div class="node node-good">1. 意图识别 (纯函数)</div>
+          <div class="arrow">↓</div>
+          <div class="node node-good">2. 工具执行 (注册表驱动)</div>
+          <div class="arrow">↓</div>
+          <div class="node node-good">3. 确认流转 (状态机)</div>
+          <div class="arrow">↓</div>
+          <div class="node node-good">4. 持久化 (统一 writer)</div>
+          <div style="color:#6ee7b7;font-size:0.78rem;text-align:center;margin-top:8px">每阶段独立接缝 · 单测友好</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2 id="c3">候选 #3 · v2-context.js 返回 { markdown, raw } — 接口泄漏使深模块变浅 <span class="badge badge-strong">Strong</span></h2>
+
+  <div class="card">
+    <div class="section-label">涉及文件</div>
+    <div class="meta">
+      cloudfunctions/_shared/v2-context.js · cloudfunctions/conversationAI/index.js (L116-154) · cloudfunctions/reportAI/index.js (L363-410)
+    </div>
+
+    <div class="section-label">问题</div>
+    <p>
+      <code class="code-inline">v2-context.js</code> L68-70 的 JSDoc 明确暴露 dual 返回结构：
+    </p>
+    <pre><code>@returns {{ markdown: string, raw: { family, members, finances, facts, cashValues } }}
+         markdown: 供 AI 消费的上下文文本
+         raw: 内部查询的原始数据，供调用方复用避免重复查询</code></pre>
+    <p>
+      但两个调用方都<strong>绕过 markdown</strong>，从 <code class="code-inline">raw</code> 重新组装自己的上下文：
+    </p>
+    <ul>
+      <li><strong>conversationAI</strong> L124-154：拆 raw → 额外查 policies → 用 <code class="code-inline">_memberTable</code>/<code class="code-inline">_financeTable</code>/<code class="code-inline">_policyTable</code> 重新渲染表格 → 拼接到 ctx.markdown</li>
+      <li><strong>reportAI</strong> L367-410：拆 raw → 自行计算 totalPremium/premiumRatio → 构建 structuredMd/summaryMd/hintsMd → 拼接到 ctx.markdown</li>
+    </ul>
+    <p>
+      更隐蔽的是：<code class="code-inline">_memberTable</code>/<code class="code-inline">_financeTable</code> 在 v2-context.js 内部定义，conversationAI 却通过
+      <code class="code-inline">require('./_shared/v2-context')._memberTable</code> 直接导入——这些"内部"渲染函数事实上是<strong>被外部调用的第二接口</strong>。
+    </p>
+
+    <div class="section-label">深化方向</div>
+    <p>
+      把"哪些集合 → 哪些表格 → 哪些附加计算"作为<strong>场景化配置</strong>。调用方只声明场景（conversation / report）和额外需求（需 policies 明细 / 需保单汇总计算），由模块统一产出完整 markdown，不暴露 raw。
+    </p>
+
+    <div class="section-label">收益</div>
+    <ul>
+      <li><strong>Interface 收敛</strong>：从"5 集合形状 + 4 渲染函数 + 1 markdown"降到"1 个 markdown"</li>
+      <li><strong>消除候选 #2 的根因</strong>：conversationAI 的 _buildToolContext 不再需要，postProcess 自然瘦身</li>
+      <li><strong>测试性</strong>：场景配置可表驱动，新增场景零代码改动</li>
+    </ul>
+
+    <div class="visual">
+      <div class="visual-grid">
+        <div class="visual-half">
+          <div class="visual-title before">现状 · raw 泄漏，调用方各自组装</div>
+          <pre style="margin:0;font-size:0.72rem">buildV2Context()
+  ↓
+{ markdown, raw: {family, members,
+                  finances, facts,
+                  cashValues} }
+  ↓
+conversationAI: 拆 raw + 查 policies
+                + 重渲染表格
+reportAI:       拆 raw + 算保费
+                + 拼 structuredMd</pre>
+          <div style="color:var(--muted);font-size:0.78rem;text-align:center;margin-top:8px">调用方知道 5 个集合形状</div>
+        </div>
+        <div class="visual-half">
+          <div class="visual-title after">深化 · 场景化配置</div>
+          <pre style="margin:0;font-size:0.72rem">buildAIContext({
+  familyId,
+  scene: 'conversation',
+  extras: ['policies', 'memberTable']
+})
+  ↓
+完整 markdown (单一返回)
+
+buildAIContext({
+  familyId,
+  scene: 'report',
+  extras: ['premiumCalc', 'hints']
+})
+  ↓
+完整 markdown (单一返回)</pre>
+          <div style="color:#6ee7b7;font-size:0.78rem;text-align:center;margin-top:8px">调用方只声明需求</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2 id="c4">候选 #4 · chat-panel 前端复制后端 SecurityGuard — PII 规则双写 <span class="badge badge-strong">Strong</span></h2>
+
+  <div class="card">
+    <div class="section-label">涉及文件</div>
+    <div class="meta">
+      miniprogram/components/chat-panel/index.js (L23-78) · cloudfunctions/_shared/guard.js (L19-98) · cloudfunctions/_shared/ai-gateway.js · scripts/sync-shared.js (L39 CONTRACT_FILES)
+    </div>
+
+    <div class="section-label">问题</div>
+    <p>
+      chat-panel/index.js L23 的注释<strong>明确承认这是复制</strong>：
+    </p>
+    <pre><code>// ===== P0 安全防护：sanitize + desensitize（来自 cloudfunctions/_shared/guard.js） =====</code></pre>
+    <p>
+      L26-41 重新定义 <code class="code-inline">_PII_PATTERNS</code>（身份证/手机号/银行卡），L50-63 重新实现 <code class="code-inline">sanitize</code>，L71-78 重新实现 <code class="code-inline">desensitize</code>。
+    </p>
+    <p>
+      更严重的是<strong>两处规则不一致</strong>：
+    </p>
+    <ul>
+      <li>后端 <code class="code-inline">auditOutput</code>：身份证前3后2，手机号前3后4</li>
+      <li>前端 <code class="code-inline">_PII_PATTERNS</code>：身份证保留地区码+出生日期，手机号前3后4，银行卡后4</li>
+    </ul>
+    <p>
+      <code class="code-inline">sync-shared.js</code> L39 已有跨树契约机制 <code class="code-inline">CONTRACT_FILES = ['thresholds.js']</code>，会把 _shared 同步到 <code class="code-inline">miniprogram/utils/</code>。
+      但 <code class="code-inline">guard.js</code> <strong>不在契约列表中</strong>——所以前端安全逻辑是手动复制，无同步保障。
+    </p>
+
+    <div class="section-label">深化方向</div>
+    <p>
+      把 sanitize / desensitize / detectInjection 抽为<strong>纯函数</strong>（无 wx-server-sdk 依赖），通过 <code class="code-inline">CONTRACT_FILES</code> 同步到前端。
+      或：前端不脱敏，由后端统一脱敏后回传。
+    </p>
+
+    <div class="section-label">收益</div>
+    <ul>
+      <li><strong>安全 Locality</strong>：PII 规则单一真相源，新增 PII 模式（护照/邮箱）改一处</li>
+      <li><strong>消除不一致</strong>：当前前端脱敏更细，但后端审计日志用粗粒度——同一身份证号在前端 UI 和后端日志中显示不同</li>
+      <li><strong>测试性</strong>：纯函数可单测，前后端共用测试用例</li>
+    </ul>
+
+    <div class="visual">
+      <div class="visual-grid">
+        <div class="visual-half">
+          <div class="visual-title before">现状 · PII 规则双写</div>
+          <div class="node node-bad">chat-panel/index.js</div>
+          <div style="font-size:0.72rem;color:var(--muted);text-align:center">_PII_PATTERNS (细粒度)</div>
+          <div style="font-size:0.72rem;color:var(--muted);text-align:center">sanitize / desensitize</div>
+          <div class="arrow" style="margin:12px 0">≠ 同步 ≠</div>
+          <div class="node node-bad">_shared/guard.js + ai-gateway.js</div>
+          <div style="font-size:0.72rem;color:var(--muted);text-align:center">auditOutput (粗粒度)</div>
+          <div style="color:var(--muted);font-size:0.78rem;text-align:center;margin-top:8px">新增 PII 类型需改两处</div>
+        </div>
+        <div class="visual-half">
+          <div class="visual-title after">深化 · CONTRACT_FILES 共享</div>
+          <div class="node node-accent">_shared/pii-rules.js (纯函数)</div>
+          <div class="arrow">↓ sync-shared.js</div>
+          <div style="display:flex;gap:8px;justify-content:center">
+            <div class="node node-good" style="font-size:0.78rem">miniprogram/utils/pii-rules.js</div>
+            <div class="node node-good" style="font-size:0.78rem">cloudfunctions/*/​_shared/pii-rules.js</div>
+          </div>
+          <div style="color:#6ee7b7;font-size:0.78rem;text-align:center;margin-top:12px">单一真相源 · 自动同步</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2 id="c5">候选 #5 · _shared 同步残留 4 份不使用的 OCR 副本 <span class="badge badge-worth">Worth exploring</span></h2>
+
+  <div class="card">
+    <div class="section-label">涉及文件</div>
+    <div class="meta">
+      scripts/sync-shared.js · cloudfunctions/{conversationAI,dataQuery,dataWrite,reportAI}/_shared/ocr-core.js (陈旧) · cloudfunctions/{conversationAI,dataQuery,dataWrite,reportAI}/_shared/ocr-extractor.js (陈旧)
+    </div>
+
+    <div class="section-label">问题</div>
+    <p>
+      <code class="code-inline">sync-shared.js</code> 默认是<strong>闭包式同步</strong>（只复制实际 require 到的文件），<code class="code-inline">--prune</code> 标志非默认。
+    </p>
+    <p>
+      grep 确认 <code class="code-inline">require('./_shared/ocr-core')</code> 仅在 <code class="code-inline">ocrService/handlers.js</code> L14 出现一次。但 LS 显示
+      <code class="code-inline">ocr-core.js</code> 存在于<strong>全部 5 个云函数</strong>的 _shared 目录中。同理 <code class="code-inline">ocr-extractor.js</code>、<code class="code-inline">ocr-confidence.js</code>、<code class="code-inline">member-matcher.js</code> 也残留。
+    </p>
+    <p>
+      这些是早期 <code class="code-inline">--broadcast</code> 模式留下的陈旧副本，从未被 <code class="code-inline">--prune</code> 清理。
+    </p>
+
+    <div class="section-label">深化方向</div>
+    <p>
+      把 <code class="code-inline">--prune</code> 改为默认行为，或干脆不复制文件改为构建时打包（符号链接 / bundler），使"权威源 ↔ 副本"对应关系在文件系统层面可见。
+    </p>
+
+    <div class="section-label">收益</div>
+    <ul>
+      <li><strong>AI-navigability</strong>：打开 conversationAI/_shared/ocr-core.js 不再误以为它依赖 OCR 管线</li>
+      <li><strong>消除噪声依赖</strong>：修 ocr-core bug 时不再制造"4 个函数都依赖 OCR"的假象</li>
+      <li><strong>删除测试</strong>：删除 4 份陈旧副本，复杂度不重新出现——它们从未被 require</li>
+    </ul>
+
+    <div class="visual">
+      <div class="mermaid">
+graph LR
+  subgraph "权威源"
+    SRC[_shared/ocr-core.js]
+  end
+  subgraph "实际使用"
+    OCR[ocrService ✓]
+  end
+  subgraph "陈旧残留"
+    C1[conversationAI ✗]
+    DQ[dataQuery ✗]
+    DW[dataWrite ✗]
+    RA[reportAI ✗]
+  end
+  SRC -->|sync| OCR
+  SRC -.->|陈旧副本| C1
+  SRC -.->|陈旧副本| DQ
+  SRC -.->|陈旧副本| DW
+  SRC -.->|陈旧副本| RA
+  style OCR fill:#10b98133,stroke:#10b88
+  style C1 fill:#ef444433,stroke:#ef4444
+  style DQ fill:#ef444433,stroke:#ef4444
+  style DW fill:#ef444433,stroke:#ef4444
+  style RA fill:#ef444433,stroke:#ef4444
+      </div>
+    </div>
+  </div>
+
+  <h2 id="c6">候选 #6 · markFamilyMutated / _advanceStage 手动调用 15+ 处 <span class="badge badge-strong">Strong</span></h2>
+
+  <div class="card">
+    <div class="section-label">涉及文件</div>
+    <div class="meta">
+      cloudfunctions/dataWrite/handlers.js · cloudfunctions/_shared/family-mutation.js · cloudfunctions/_shared/domain/stageMachine.js
+    </div>
+
+    <div class="section-label">问题</div>
+    <p>
+      grep 确认 <code class="code-inline">markFamilyMutated</code> 在 handlers.js 中被调用 <strong>15 次</strong>（L97, 118, 156, 195, 235, 319, 334, 463, 682, 810, 834, 880, 894, 955），
+      <code class="code-inline">_advanceStage</code> 被调用 <strong>10 次</strong>。每次都是同一模式：
+    </p>
+    <pre><code>await markFamilyMutated(db, familyId, openid)
+_advanceStage(db, familyId, openid).catch(e => console.error(...))</code></pre>
+    <p>
+      <strong>不一致的调用</strong>：
+    </p>
+    <ul>
+      <li><code class="code-inline">setStage</code> (L571-579) 不调 markFamilyMutated——engagement_stage 变化是否应触发洞察过期？未记录</li>
+      <li><code class="code-inline">updateFactConfidence</code> (L327-336) 调了 markMutated 但没调 advanceStage——置信度升级可能改变画像</li>
+    </ul>
+
+    <div class="section-label">深化方向</div>
+    <p>
+      把"数据变更 → 标记脏 → 推进 stage"作为写入的<strong>隐式后置钩子</strong>，handler 只声明"我改了什么集合"，钩子统一触发副作用。
+      这与候选 #1 的 writeSeam 天然协同。
+    </p>
+
+    <div class="section-label">收益</div>
+    <ul>
+      <li><strong>消除遗忘风险</strong>：新增 handler 不再需要"记得调 markFamilyMutated"</li>
+      <li><strong>语义一致性</strong>：setStage / updateFactConfidence 的副作用自动正确</li>
+      <li><strong>测试性</strong>：脏标记与 stage 推进可作为写入接缝的断言点</li>
+    </ul>
+
+    <div class="visual">
+      <div class="visual-grid">
+        <div class="visual-half">
+          <div class="visual-title before">现状 · 手动调用 15 处</div>
+          <div class="node node-bad">handler A</div>
+          <div style="font-size:0.7rem;color:var(--muted);text-align:center">await markMutated + _advanceStage</div>
+          <div class="node node-bad">handler B</div>
+          <div style="font-size:0.7rem;color:var(--muted);text-align:center">await markMutated (忘 _advanceStage?)</div>
+          <div class="node node-bad">handler C</div>
+          <div style="font-size:0.7rem;color:var(--muted);text-align:center">仅 _advanceStage</div>
+          <div style="color:var(--muted);font-size:0.78rem;text-align:center;margin-top:8px">"何时标记脏"散落 15 处</div>
+        </div>
+        <div class="visual-half">
+          <div class="visual-title after">深化 · 隐式后置钩子</div>
+          <div class="node node-good">handler A (声明 touched: ['members'])</div>
+          <div class="node node-good">handler B (声明 touched: ['facts'])</div>
+          <div class="node node-good">handler C (声明 touched: ['policies'])</div>
+          <div class="arrow">↓ writeSeam 统一触发</div>
+          <div class="node node-accent">markMutated → advanceStage</div>
+          <div style="color:#6ee7b7;font-size:0.78rem;text-align:center;margin-top:8px">遗忘 = 不可能</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2 id="c7">候选 #7 · reportAI 内联 336 行 prompt + 报告生命周期散落 <span class="badge badge-worth">Worth exploring</span></h2>
+
+  <div class="card">
+    <div class="section-label">涉及文件</div>
+    <div class="meta">cloudfunctions/reportAI/index.js</div>
+
+    <div class="section-label">问题</div>
+    <p>
+      <code class="code-inline">REPORT_PROMPT</code> 是 L16-351 的 <strong>336 行字符串常量</strong>（角色设定 + 数据忠实性规则 + 6 步思维链 + 6 个分析维度 + 8 个写作模块指南 + 反模式 + JSON 格式），直接内联在 exports.main 上方。
+    </p>
+    <p>
+      <code class="code-inline">exports.main</code> (L353-506, 154 行) 混合 5 个关注点：
+    </p>
+    <pre><code>L369-375  节流检查 (30s throttle)
+L363-410  上下文构建 (buildV2Context + 额外查 policies + 拼 structuredMd)
+L412-445  AI 调用 + JSON 解析重试
+L447-473  版本归档 + 清理 (reports 集合)
+L474-496  写入 families + agent_logs</code></pre>
+    <p>
+      <code class="code-inline">_parseAIJSON</code> (L602-620) 与 <code class="code-inline">ocr-extractor.js</code> L42-61 的同名函数<strong>几乎相同</strong>但行为略异（ocr 版支持 [] 起始，reportAI 版只支持 {）。
+    </p>
+
+    <div class="section-label">深化方向</div>
+    <p>
+      ① Prompt 外置为 <code class="code-inline">prompts.js</code>（与 ocrService 一致）；
+      ② 版本归档/清理抽为"<strong>报告版本仓库</strong>"模块；
+      ③ <code class="code-inline">_parseAIJSON</code> 抽为共享工具（与 ocr-extractor 共用）；
+      ④ <code class="code-inline">_buildStructuredCoverage</code> (L513-580, 68 行纯函数) 可复用于 dataQuery 报告预览。
+    </p>
+
+    <div class="section-label">收益</div>
+    <ul>
+      <li><strong>AI-navigability</strong>：exports.main 实际逻辑从占文件 40% 提升到 80%+</li>
+      <li><strong>Locality</strong>：报告生命周期（生成→版本→归档→清理）内聚一处</li>
+      <li><strong>消除 _parseAIJSON 双写</strong>：与 ocr-extractor 共用</li>
+    </ul>
+  </div>
+
+  <h2 id="c8">候选 #8 · member-store.js 是纯桶模块 — 删除测试显示透传 <span class="badge badge-spec">Speculative</span></h2>
+
+  <div class="card">
+    <div class="section-label">涉及文件</div>
+    <div class="meta">cloudfunctions/_shared/member-store.js · familyView.js · memberRepo.js</div>
+
+    <div class="section-label">问题</div>
+    <p>
+      <code class="code-inline">member-store.js</code> 全文 25 行，其中 20 行是 require + module.exports，注释自称"<strong>稳定导出桶</strong>"：
+    </p>
+    <pre><code>const { loadFamilyView } = require('./familyView')
+const { getMembers, ..., _shapeMember } = require('./memberRepo')
+module.exports = { getMembers, ..., loadFamilyView, ... }  // 14 个 re-export</code></pre>
+    <p>
+      <strong>删除测试</strong>：删除 member-store.js，复杂度<strong>不重新出现</strong>——调用方只需把
+      <code class="code-inline">require('./_shared/member-store')</code> 改为 <code class="code-inline">require('./_shared/familyView')</code> 或 <code class="code-inline">require('./_shared/memberRepo')</code>。
+    </p>
+    <p>
+      familyView.js L9 直接 <code class="code-inline">require('./memberRepo')</code>——绕过桶，证明桶不是唯一路径。"稳定导出桶"的论据在单仓库、6 云函数项目中很弱：没有外部消费者，调用方接口不变的代价是 0。
+    </p>
+
+    <div class="section-label">深化方向</div>
+    <p>
+      删除 member-store.js，让调用方直接从 familyView（1 符号）和 memberRepo（12 符号）导入。
+      若未来出现成员/财务的横切关注点（缓存/事件），可在此接缝重建——但目前无此需求。
+    </p>
+
+    <div class="section-label">收益</div>
+    <ul>
+      <li><strong>减少间接性</strong>：找 upsertMember 实现少跳一层</li>
+      <li><strong>删除测试通过</strong>：复杂度不重新出现 = 它未在赚取 keep</li>
+    </ul>
+
+    <div class="visual">
+      <div class="visual-grid">
+        <div class="visual-half">
+          <div class="visual-title before">现状 · 三层</div>
+          <div class="node node-bad">调用方 → member-store (桶)</div>
+          <div class="arrow">→</div>
+          <div class="node">familyView + memberRepo</div>
+          <div style="color:var(--muted);font-size:0.78rem;text-align:center;margin-top:8px">桶 = 14 个 re-export，0 行为</div>
+        </div>
+        <div class="visual-half">
+          <div class="visual-title after">深化 · 直接导入</div>
+          <div class="node node-good">调用方 → familyView</div>
+          <div class="node node-good">调用方 → memberRepo</div>
+          <div style="color:#6ee7b7;font-size:0.78rem;text-align:center;margin-top:8px">少一层间接 · 找实现少跳一次</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2 id="c9">候选 #9 · errorHandler 仅 chat-panel 使用，3 个页面 ad-hoc 处理 <span class="badge badge-worth">Worth exploring</span></h2>
+
+  <div class="card">
+    <div class="section-label">涉及文件</div>
+    <div class="meta">
+      miniprogram/utils/errorHandler.js · miniprogram/components/chat-panel/index.js · miniprogram/pages/{clients,index,report}/index.js
+    </div>
+
+    <div class="section-label">问题</div>
+    <p>
+      <code class="code-inline">errorHandler.js</code> 提供 <code class="code-inline">handle</code>（自动 toast + 日志 + 上报）、<code class="code-inline">getErrorInfo</code>、<code class="code-inline">showSuccess</code> 等，错误码映射表覆盖 400/401/403/404/500/NETWORK/TIMEOUT。
+    </p>
+    <p>
+      但 grep 确认 <strong>仅 chat-panel 使用</strong>（3 处 <code class="code-inline">getErrorInfo</code>）。3 个页面均 ad-hoc 调 <code class="code-inline">wx.showToast</code>：
+    </p>
+    <pre><code>clients/index.js L19:  '加载失败，请下拉重试'
+clients/index.js L52:  r.result?.msg || '删除失败'
+index/index.js   L139: '写入失败，请重试'
+index/index.js   L165: '操作失败，请重试'
+report/index.js  L165: '刷新失败'</code></pre>
+    <p>
+      同一"删除失败"场景，clients 用 <code class="code-inline">r.result?.msg || '删除失败'</code>（带后端消息），index 用 <code class="code-inline">'删除失败'</code>（硬编码）——<strong>文案不一致</strong>。
+      同一错误码在 chat-panel 显示"服务繁忙，请稍后重试"，在页面显示"操作失败，请重试"。
+    </p>
+
+    <div class="section-label">深化方向</div>
+    <p>
+      提供 <code class="code-inline">getErrorInfo</code>（纯函数，无 toast 副作用）作为唯一接缝，页面和组件都通过它获取提示文案，toast 由调用方自行决定——使文案真相源唯一，同时不强制 UI 行为。
+    </p>
+
+    <div class="section-label">收益</div>
+    <ul>
+      <li><strong>文案一致性</strong>：同一错误码在前端所有入口显示相同提示</li>
+      <li><strong>Locality</strong>：错误码 → 文案映射集中一处</li>
+      <li><strong>不强制 UI</strong>：纯函数接缝，toast 时机仍由调用方控制</li>
+    </ul>
+  </div>
+
+  <h2 id="c10">候选 #10 · insurance_period 解析逻辑前后端三份实现 <span class="badge badge-strong">Strong</span></h2>
+
+  <div class="card">
+    <div class="section-label">涉及文件</div>
+    <div class="meta">
+      cloudfunctions/_shared/policy-status.js (L18-73 parseExpiry) · miniprogram/utils/report-builder.js (L321-335 _parseExpiryYear) · cloudfunctions/reportAI/index.js (L522-535 _parseExpiryYear)
+    </div>
+
+    <div class="section-label">问题</div>
+    <p>
+      <strong>三处独立实现</strong>"保障期文本 → 到期年份"解析，行为互异：
+    </p>
+    <div class="visual">
+      <table style="width:100%;font-size:0.82rem;border-collapse:collapse">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border)">
+            <th style="padding:8px;text-align:left">输入</th>
+            <th style="padding:8px;text-align:left">policy-status.js</th>
+            <th style="padding:8px;text-align:left">report-builder.js (前端)</th>
+            <th style="padding:8px;text-align:left">reportAI/index.js</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:8px"><code class="code-inline">"至70周岁"</code></td>
+            <td style="padding:8px;color:#6ee7b7">年份（用 age 推算）</td>
+            <td style="padding:8px;color:#fca5a5">null（缺 age）</td>
+            <td style="padding:8px;color:#fca5a5">'-'</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:8px"><code class="code-inline">"终身"</code></td>
+            <td style="padding:8px;color:#6ee7b7">effYear+105-age</td>
+            <td style="padding:8px;color:#fca5a5">null</td>
+            <td style="padding:8px;color:#fcd34d">'终身' (字符串)</td>
+          </tr>
+          <tr>
+            <td style="padding:8px"><strong>返回类型</strong></td>
+            <td style="padding:8px"><code class="code-inline">{year, date, label}</code></td>
+            <td style="padding:8px"><code class="code-inline">number|null</code></td>
+            <td style="padding:8px"><code class="code-inline">string</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <strong>后果</strong>：同一保单在前端报告（report-builder）和后端 AI 上下文（reportAI）中可能显示<strong>不同的到期年份</strong>。
+      <code class="code-inline">policy-status.js</code> 是权威源（注释自称"纯函数，可单元测试"），但前端无法通过 CONTRACT_FILES 获取它（不在列表中，且依赖 age 参数）。
+    </p>
+
+    <div class="section-label">深化方向</div>
+    <p>
+      两条路：
+    </p>
+      <strong>A. 共享纯函数</strong>：把 policy-status 的纯解析函数加入 <code class="code-inline">CONTRACT_FILES</code>，前后端共用；<br>
+      <strong>B. 预计算字段</strong>：保单入库时由后端预计算 <code class="code-inline">expiry_year</code> 字段，前端只读不解析。<br>
+      B 更彻底——消除所有解析时机差异，但需迁移脚本回填历史数据。
+
+    <div class="section-label">收益</div>
+    <ul>
+      <li><strong>消除数据不一致</strong>：同一保单前后端显示一致到期年份</li>
+      <li><strong>Locality</strong>：保障期解析单一真相源</li>
+      <li><strong>测试性</strong>：三份实现合并为一份可单测的纯函数</li>
+    </ul>
+
+    <div class="visual">
+      <div class="visual-grid">
+        <div class="visual-half">
+          <div class="visual-title before">现状 · 三份实现</div>
+          <div class="node node-bad">policy-status.js (6 格式, 返回 object)</div>
+          <div class="node node-bad">report-builder.js (3 格式, 返回 number)</div>
+          <div class="node node-bad">reportAI/index.js (4 格式, 返回 string)</div>
+          <div style="color:var(--muted);font-size:0.78rem;text-align:center;margin-top:8px">同一保单 → 3 种结果</div>
+        </div>
+        <div class="visual-half">
+          <div class="visual-title after">深化 · 单一真相源</div>
+          <div class="node node-accent">policy-status.js (纯函数, 6 格式)</div>
+          <div class="arrow">↓ CONTRACT_FILES 同步</div>
+          <div style="display:flex;gap:8px;justify-content:center">
+            <div class="node node-good" style="font-size:0.78rem">前端 report-builder</div>
+            <div class="node node-good" style="font-size:0.78rem">后端 reportAI</div>
+          </div>
+          <div style="color:#6ee7b7;font-size:0.78rem;text-align:center;margin-top:8px">或：入库时预计算 expiry_year</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="top-rec">
+    <div class="section-label">🏆 Top Recommendation · 推荐先深化顺序</div>
+    <h2 style="margin-top:0">先做 #1 + #6（合并为"写入接缝深化"）</h2>
+    <p>
+      <strong>理由</strong>：#1（safeUpdate 绕过 13+ 处）和 #6（markFamilyMutated 手动调 15+ 处）是同一类问题——<strong>写入侧的安全/审计不变量未集中</strong>。
+      合并为单个深化任务后，可以一次性消除 28+ 处散落调用，且两者天然协同（writeSeam 在统一注入 _openid 的同时，统一触发 markMutated + advanceStage）。
+    </p>
+    <p>
+      <strong>影响范围可控</strong>：仅修改 dataWrite/handlers.js + 新增 _shared/writeSeam.js，无前端改动，无 API 形状变化。
+    </p>
+
+    <h2>然后做 #3（v2-context 接口收敛）</h2>
+    <p>
+      <strong>理由</strong>：#3 是 #2（postProcess 巨函数）的<strong>根因</strong>。v2-context 暴露 raw 使 conversationAI 必须有 _buildToolContext 重新组装，进而膨胀 postProcess。
+      先收敛 v2-context 接口，#2 的深化会自然简化（可能从 216 行降到 100 行以内）。
+    </p>
+
+    <h2>并行做 #4（PII 规则）和 #10（parseExpiry）</h2>
+    <p>
+      <strong>理由</strong>：两者都是"前后端双写/三写"问题，深化方向一致（CONTRACT_FILES 机制），可一次性扩展 sync-shared.js 的契约列表，共享同一基础设施改动。
+      #4 涉及安全，#10 涉及数据一致性，都是低风险高收益的"消除不一致"深化。
+    </p>
+
+    <h2>#5（_shared 陈旧文件）作为一次性清理</h2>
+    <p>
+      <strong>理由</strong>：跑一次 <code class="code-inline">sync-shared.js --prune</code> 即可，无需设计。建议同时把 --prune 改为默认行为，防止未来再次积累。
+    </p>
+
+    <h2>暂缓：#7（reportAI 重构）和 #8（member-store 删除）</h2>
+    <p>
+      <strong>理由</strong>：#7 在 #3 完成后会自然简化（部分上下文组装逻辑被 v2-context 吸收），现在重构会重复劳动。
+      #8 是 Speculative——删除桶模块虽通过删除测试，但收益微小，建议等 familyView/memberRepo 出现真正的横切关注点时再处理。
+    </p>
+  </div>
+
+  <hr class="divider">
+
+  <div style="color:var(--muted);font-size:0.88rem;text-align:center">
+    <p>报告生成于 2026-07-25 · 基于 CONTEXT.md 域语言 + LANGUAGE.md 架构词汇</p>
+    <p>无 ADR 冲突（项目 docs/adr/ 不存在） · 所有发现可自由推进</p>
+  </div>
+
+</div>
+
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'dark', themeVariables: { primaryColor: '#1f2430', primaryTextColor: '#e4e7ec', primaryBorderColor: '#c9a96e', lineColor: '#8b93a7' } });
+</script>
+</body>
+</html>

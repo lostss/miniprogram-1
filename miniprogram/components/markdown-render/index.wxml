@@ -1,0 +1,206 @@
+<view class="markdown-container {{compact ? 'markdown-container--compact' : ''}}">
+  <block wx:for="{{ nodes }}" wx:key="index">
+    <!-- 标题 -->
+    <view wx:if="{{ item.type === 'heading' }}" class="md-heading md-heading--{{ item.level }}">
+      {{ item.content }}
+    </view>
+
+    <!-- 段落 -->
+    <view wx:elif="{{ item.type === 'paragraph' }}" class="md-paragraph">
+      <block wx:if="{{ item.hasInlineStyles }}">
+        <block wx:for="{{ item.content }}" wx:for-item="part" wx:key="index">
+          <text wx:if="{{ part.type === 'strong' }}" class="md-strong">{{ part.content }}</text>
+          <text wx:elif="{{ part.type === 'link' }}" class="md-link" data-href="{{ part.href }}" bindtap="onLinkTap">{{ part.text }}</text>
+          <view wx:elif="{{ part.type === 'br' }}" class="md-br"></view>
+          <text wx:else>{{ part.content }}</text>
+        </block>
+      </block>
+      <text wx:else>{{ item.content[0].content }}</text>
+    </view>
+
+    <!-- 代码块 -->
+    <view wx:elif="{{ item.type === 'code' }}" class="md-code-block">
+      <view class="code-header">
+        <text class="code-lang">{{ item.lang }}</text>
+        <view class="code-copy" bindtap="copyCode" data-content="{{ item.content }}">
+          <view class="copy-icon"></view>
+          <text class="copy-text">复制</text>
+        </view>
+      </view>
+      <view class="code-content">
+        <text class="code-text">{{ item.content }}</text>
+      </view>
+    </view>
+
+    <!-- 表格 - 紧凑横滑 / 卡片重排 -->
+    <view wx:elif="{{ item.type === 'table' }}" class="md-table-wrapper">
+      <!-- 顶部工具栏 -->
+      <view class="table-toolbar">
+        <text class="table-label">表格</text>
+        <view class="table-actions">
+          <view class="table-action-btn" bindtap="copyTable" data-table="{{ item }}">
+            <view class="action-icon icon-copy"></view>
+          </view>
+          <view class="table-action-btn" bindtap="expandTable" data-table="{{ item }}">
+            <view class="action-icon icon-expand"></view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 紧凑横滑（数据少可比较时） -->
+      <block wx:if="{{ item.useCompact }}">
+        <scroll-view class="md-table" scroll-x enhanced show-scrollbar="{{ false }}">
+          <view class="table-container" style="display: grid; grid-template-columns: repeat({{ item.headers.length }}, minmax(180rpx, auto));">
+            <view wx:for="{{ item.headers }}" wx:for-item="header" wx:key="*this" class="table-header-cell">{{ header }}</view>
+            <block wx:for="{{ item.parsedRows }}" wx:for-item="row" wx:key="rowIdx">
+              <view wx:for="{{ row }}" wx:for-item="cell" wx:key="colIdx" class="table-body-cell">
+                <block wx:if="{{ cell.hasInlineStyles }}">
+                  <block wx:for="{{ cell.content }}" wx:for-item="part" wx:key="colIdx">
+                    <text wx:if="{{ part.type === 'strong' }}" class="md-strong">{{ part.content }}</text>
+                    <text wx:elif="{{ part.type === 'link' }}" class="md-link" data-href="{{ part.href }}" bindtap="onLinkTap">{{ part.text }}</text>
+                    <text wx:else>{{ part.content }}</text>
+                  </block>
+                </block>
+                <text wx:else>{{ cell.content }}</text>
+              </view>
+            </block>
+          </view>
+        </scroll-view>
+      </block>
+
+      <!-- 卡片重排（长文本多列时） -->
+      <block wx:else>
+        <view class="grid-cards">
+          <view wx:for="{{ item.parsedRows }}" wx:for-item="row" wx:for-index="rowIdx" wx:key="rowIdx" class="grid-card">
+            <view wx:for="{{ item.headers }}" wx:for-item="header" wx:for-index="colIdx" wx:key="colIdx" class="grid-card-row">
+              <view class="grid-card-key">{{ header }}</view>
+              <view class="grid-card-value">
+                <block wx:if="{{ row[colIdx].hasInlineStyles }}">
+                  <block wx:for="{{ row[colIdx].content }}" wx:for-item="part" wx:key="colIdx">
+                    <text wx:if="{{ part.type === 'strong' }}" class="md-strong">{{ part.content }}</text>
+                    <text wx:elif="{{ part.type === 'link' }}" class="md-link" data-href="{{ part.href }}" bindtap="onLinkTap">{{ part.text }}</text>
+                    <text wx:else>{{ part.content }}</text>
+                  </block>
+                </block>
+                <text wx:else>{{ row[colIdx].content }}</text>
+              </view>
+            </view>
+          </view>
+        </view>
+      </block>
+    </view>
+
+    <!-- 引用块 -->
+    <view wx:elif="{{ item.type === 'quote' }}" class="md-quote">
+      <view class="quote-toolbar">
+        <text class="quote-label">话术内容</text>
+        <view class="quote-copy" bindtap="copyQuote" data-content="{{ item.contentString || item.content }}">
+          <view class="quote-copy-icon"></view>
+          <text class="quote-copy-text">复制</text>
+        </view>
+      </view>
+      <view class="quote-body">
+        <view class="quote-border"></view>
+        <view wx:if="{{ item.hasInlineStyles }}" class="quote-content">
+          <block wx:for="{{ item.content }}" wx:for-item="part" wx:key="index">
+            <text wx:if="{{ part.type === 'strong' }}" class="md-strong">{{ part.content }}</text>
+            <text wx:elif="{{ part.type === 'link' }}" class="md-link" data-href="{{ part.href }}" bindtap="onLinkTap">{{ part.text }}</text>
+            <text wx:else>{{ part.content }}</text>
+          </block>
+        </view>
+        <view wx:else class="quote-content">{{ item.content }}</view>
+      </view>
+    </view>
+
+    <!-- 有序列表 -->
+    <view wx:elif="{{ item.type === 'orderedList' }}" class="md-list md-list--ordered">
+      <view wx:for="{{ item.items }}" wx:for-item="listItem" wx:for-index="liIdx" wx:key="liIdx" class="list-item {{ listItem.hasSubLines ? 'list-item--block' : '' }}">
+        <text class="list-num">{{ liIdx + 1 }}.</text>
+        <view class="list-text">
+          <block wx:for="{{ listItem.content }}" wx:for-item="part" wx:key="index">
+            <text wx:if="{{ part.type === 'strong' }}" class="md-strong">{{ part.content }}</text>
+            <text wx:elif="{{ part.type === 'link' }}" class="md-link" data-href="{{ part.href }}" bindtap="onLinkTap">{{ part.text }}</text>
+            <text wx:else>{{ part.content }}</text>
+          </block>
+          <view wx:if="{{ listItem.subLines && listItem.subLines.length }}" class="list-sublines">
+            <view wx:for="{{ listItem.subLines }}" wx:for-item="sl" wx:key="index" class="list-subline">{{ sl }}</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 无序列表（含任务列表和嵌套） -->
+    <view wx:elif="{{ item.type === 'list' }}" class="md-list">
+      <view wx:for="{{ item.items }}" wx:for-item="listItem" wx:for-index="liIdx" wx:key="liIdx" class="list-item" style="padding-left: {{ listItem.indent * 32 }}rpx">
+        <!-- 任务列表 -->
+        <view wx:if="{{ listItem.checked !== null }}" class="task-check {{ listItem.checked ? 'task-check--done' : '' }}"></view>
+        <view wx:else class="list-bullet"></view>
+        <view class="list-text">
+          <block wx:for="{{ listItem.content }}" wx:for-item="part" wx:key="index">
+            <text wx:if="{{ part.type === 'strong' }}" class="md-strong">{{ part.content }}</text>
+            <text wx:elif="{{ part.type === 'link' }}" class="md-link" data-href="{{ part.href }}" bindtap="onLinkTap">{{ part.text }}</text>
+            <text wx:else>{{ part.content }}</text>
+          </block>
+        </view>
+      </view>
+    </view>
+
+    <!-- 分割线 -->
+    <view wx:elif="{{ item.type === 'hr' }}" class="md-hr"></view>
+  </block>
+
+</view>
+
+<!-- 全屏表格弹窗 -->
+<view class="table-fullscreen-overlay {{ fullscreenTable ? 'table-fullscreen-overlay--show' : '' }}" bindtap="closeFullscreenTable">
+  <view class="table-fullscreen-panel" catchtap="preventClose">
+    <!-- 头部 -->
+    <view class="table-fullscreen-header">
+      <view class="table-fullscreen-title">
+        <view class="table-fullscreen-icon"></view>
+        <text>表格详情</text>
+      </view>
+      <view class="table-fullscreen-actions">
+        <view class="table-fullscreen-btn" bindtap="copyFullscreenTable">
+          <view class="table-fullscreen-btn-icon icon-copy"></view>
+          <text>复制</text>
+        </view>
+        <view class="table-fullscreen-close" bindtap="closeFullscreenTable">
+          <view class="table-fullscreen-close-icon"></view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 表格内容区 - 支持滚动 -->
+    <view class="table-fullscreen-body">
+      <scroll-view class="table-fullscreen-scroll-y" scroll-y enhanced show-scrollbar="{{ true }}">
+        <view class="table-fullscreen-content" wx:if="{{ fullscreenTable }}">
+            <!-- 表头 -->
+            <view class="table-fullscreen-header-row">
+              <view wx:for="{{ fullscreenTable.headers }}" wx:for-item="header" wx:key="*this" class="table-fullscreen-header-cell">
+                {{ header }}
+              </view>
+            </view>
+            <!-- 内容行 -->
+            <view wx:for="{{ fullscreenTable.parsedRows }}" wx:for-item="row" wx:for-index="rowIdx" wx:key="rowIdx" class="table-fullscreen-row">
+              <view wx:for="{{ row }}" wx:for-item="cell" wx:for-index="colIdx" wx:key="colIdx" class="table-fullscreen-cell">
+                <block wx:if="{{ cell.hasInlineStyles }}">
+                  <block wx:for="{{ cell.content }}" wx:for-item="part" wx:key="index">
+                    <text wx:if="{{ part.type === 'strong' }}" class="md-strong">{{ part.content }}</text>
+                    <text wx:elif="{{ part.type === 'link' }}" class="md-link" data-href="{{ part.href }}" bindtap="onLinkTap">{{ part.text }}</text>
+                    <text wx:else>{{ part.content }}</text>
+                  </block>
+                </block>
+                <text wx:else>{{ cell.content }}</text>
+              </view>
+            </view>
+          </view>
+        </scroll-view>
+    </view>
+
+    <!-- 底部提示 -->
+    <view class="table-fullscreen-footer">
+      <text>{{ fullscreenTable ? fullscreenTable.headers.length + ' 列 · ' + fullscreenTable.rows.length + ' 行' : '' }}</text>
+    </view>
+  </view>
+</view>

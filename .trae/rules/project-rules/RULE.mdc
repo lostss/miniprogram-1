@@ -1,0 +1,62 @@
+---
+description: 项目核心开发规范
+alwaysApply: true
+---
+
+# 核心开发规范
+
+**定位**：保险代理人外脑，对话AI（同步）+ 分析AI（异步），详见 CONTEXT.md。
+
+## 工程纪律
+
+**代码原则（来自 ponytail）**：
+1. YAGNI：不需要的东西不写，先问"这有必要吗"
+2. 标准库优先→原生能力→已有依赖→一行搞定→最后才是手写
+3. 删除优于新增；无聊优于聪明；最少文件数
+4. 复杂需求先 ship 最简版，同时质疑；代码先行，解释 ≤3 行
+5. 无预设抽象：一个实现的接口不写、一个产品的工厂不写、不变的值不配 config
+6. 有意简化标注 `// ponytail: this exists`
+
+**协作纪律**：
+| # | 规则 |
+|---|------|
+| 1 | 修改需用户确认；需求不清先澄清；多解列出，不暗选 |
+| 2 | 改动后自检：`npx jest`；同错≥2次→提取规避规则 |
+| 3 | 修改 `cloudfunctions/` 后部署对应函数，失败保留上一版 |
+| 4 | 非平凡变更先论证（分析→方案→风险）；跳过：Bug<20行、文案、CSS |
+| 5 | 手术式修改：只碰必须改的行，不改相邻代码格式/注释 |
+| 6 | 不新增文件/字段/组件，除非必须 |
+
+## 输出规范（来自 headroom）
+
+- 工具输出 >200 tokens→压缩再发送：保留前 3 后 2、不丢错误行、异常值
+- 上下文超限→从旧到新丢弃 tool_call+tool_result 对，不拆对，不丢系统提示
+- 回复默认 L2：跳过客套话、不重述屏幕上已有代码、引用用 `path:line`
+
+## 命名规范
+
+| 场景 | 风格 | 示例 |
+|------|------|------|
+| 云函数方法 / 前端 data | camelCase | `writeFact` `chatMessages` |
+| 私有方法/状态 | `_` 前缀 | `_doSave` |
+| DB 字段（例外：insights/agent_logs 用 camelCase） | snake_case | `family_id` |
+| 事件名 | 全小写无分隔符 | `uploadpolicy` |
+| 常量 | UPPER_SNAKE | `AI_TIMEOUT` |
+
+## 数据红线
+
+- 唯一主集合：`families`（`customers` 已废弃，仅做迁移回退）
+- families/policies/facts/messages 查询必须含 `_openid`
+- 禁存身份证/手机号/银行卡号/详细住址
+- members 必须含 `member_id`；birth_date 优先级高于 age
+
+## 常见坑
+
+- `wx:key="*this"` 对象数组→用 `wx:key="index"`
+- `setData` 异步：`this.setData({x:1}); this.data.x` 仍是旧值→用局部变量
+- `catchtouchmove` 在父元素上会阻断所有子 `scroll-view` 滚动→只放 overlay/非滚动区
+- WXML 模板不支持 `.toFixed()` `.slice()` 三元运算→所有计算在 JS 中预处理好再传入
+- `<rich-text>` 不支持 `rpx`→段落/加粗改用 WXML 原生 `<text>` 分段渲染
+- scroll-view padding 穿透→内边距放内部容器
+- CSS 变量加回退：`var(--xxx, fallback)`
+

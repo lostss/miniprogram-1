@@ -1,0 +1,84 @@
+<view class="md-root">
+  <view class="md-card" wx:for="{{cards}}" wx:key="key" id="ch-{{item.key}}" style="{{item.style}}">
+    <view wx:if="{{item.collapsible}}" class="fold-hd" catchtap="toggleChapter" data-k="{{item.key}}">
+      <text class="fold-title">{{item.num}} {{item.title}}</text>
+      <text class="fold-arrow">{{item.collapsed ? '展开 ▾' : '收起 ▴'}}</text>
+    </view>
+    <block wx:if="{{!item.collapsed}}">
+    <view class="h1n" wx:if="{{!item.collapsible}}"><text class="h1n-digit">{{item.num}}</text><text class="h1n-title">{{item.title}}</text></view>
+      <view wx:if="{{item.customBlocks}}" wx:for="{{item.customBlocks}}" wx:for-index="bi" wx:for-item="block" wx:key="bi">
+        <view wx:if="{{block.section}}" class="h2">{{block.section}}</view>
+        <view wx:if="{{block.t==='overview'}}" class="overview-wrap">
+          <view class="overview-gauge">
+            <view class="gauge-ring" style="background: conic-gradient(var(--accent) {{block.rate * 3.6}}deg, var(--bg-input) 0);">
+              <view class="gauge-center">
+                <text class="gauge-val anim-number">{{block.rate}}</text>
+                <text class="gauge-unit">%</text>
+              </view>
+            </view>
+            <text class="gauge-label">保障充足率</text>
+          </view>
+          <view class="overview-stats">
+            <view class="overview-stat">
+              <text class="os-val anim-number">{{block.totalGap}}</text>
+              <text class="os-unit">万</text>
+              <text class="os-lbl">总缺口</text>
+            </view>
+            <view class="overview-stat">
+              <text class="os-val anim-number">{{block.totalCoverage}}</text>
+              <text class="os-unit">万</text>
+              <text class="os-lbl">总保额</text>
+            </view>
+            <view class="overview-stat">
+              <text class="os-val anim-number">{{block.annualPremium}}</text>
+              <text class="os-unit">万</text>
+              <text class="os-lbl">年保费</text>
+            </view>
+            <view class="overview-stat">
+              <text class="os-val anim-number">{{block.debt}}</text>
+              <text class="os-unit">万</text>
+              <text class="os-lbl">家庭负债</text>
+            </view>
+          </view>
+        </view>
+        <view wx:if="{{block.t==='panorama'}}" class="pano-wrap">
+          <view class="pano-hd"><text class="pano-hd-cell pano-hd-first">{{block.heads[0]}}</text><text class="pano-hd-cell" wx:for="{{block.cats}}" wx:for-item="h" wx:key="index">{{h}}</text></view>
+          <view class="pano-row" wx:for="{{block.rows}}" wx:for-item="row" wx:for-index="ri" wx:key="name">
+            <text class="pano-cell pano-name">{{row.name}}</text>
+            <view class="pano-cell pano-status ps-{{c.s}}" wx:for="{{row.cells}}" wx:for-item="c" wx:for-index="ci" wx:key="ci"><text class="pano-val">{{c.v}}</text></view>
+          </view>
+        </view>
+        <view wx:if="{{block.t==='timeline'}}" class="tl-wrap">
+          <view class="tl-item {{e.soon ? 'tl-soon' : ''}}" wx:for="{{block.items}}" wx:for-item="e" wx:key="label">
+            <view class="tl-dot {{e.type === 'expiry' ? 'tl-red' : e.type === 'paydone' ? 'tl-green' : 'tl-yellow'}}"></view>
+            <view class="tl-content">
+              <text class="tl-year">{{e.y}}{{e.type === 'payment' ? '缴费' : '年'}}</text>
+              <text class="tl-label">{{e.label}}</text>
+            </view>
+          </view>
+        </view>
+        <view wx:if="{{block.t==='calendar'}}" class="cal-grid">
+          <view class="cal-cell" wx:for="{{block.items}}" wx:key="m">
+            <text class="cal-m">{{item.m}}月</text>
+            <text class="cal-v {{item.h?'':'cal-none'}}">{{item.v}}</text>
+          </view>
+        </view>
+        <view wx:if="{{block.t==='urgent_list'}}" class="urgent-wrap">
+          <view class="urgent-item" wx:for="{{block.items}}" wx:for-item="u" wx:key="action">
+            <view class="urgent-action"><text class="urgent-arrow">→</text><text class="urgent-text">{{u.action}}</text></view>
+            <view class="urgent-reason">{{u.reason}}</view>
+          </view>
+        </view>
+        <view wx:if="{{block.t==='insight_cards'}}" class="insight-wrap">
+          <view class="insight-card" wx:for="{{block.items}}" wx:for-item="ins" wx:key="index">
+            <view class="insight-icon">💡</view>
+            <view class="insight-text">{{ins}}</view>
+          </view>
+        </view>
+      </view>
+      <view wx:if="{{item.pre}}" class="md-pre"><text>{{item.pre}}</text></view>
+      <markdown-render wx:if="{{item.content}}" content="{{item.content}}" />
+    </block>
+    <view wx:if="{{item.collapsed}}" class="fold-hint">点击展开查看：保单明细 · 缴费月历 · 术语解释</view>
+  </view>
+</view>

@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review — miniprogram-1 (round 9)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 4 4; }
+      .leak { stroke: #dc2626; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); color: #e2e8f0; }
+      .badge-strong { background:#059669; }
+      .badge-worth  { background:#d97706; }
+      .badge-spec   { background:#475569; }
+      .module-box { border:1px solid #94a3b8; border-radius:6px; padding:8px 10px; background:#fff; font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+      .module-box.thick { border-width:3px; border-color:#0f172a; }
+      .module-box.deep  { border-width:3px; border-color:#0f172a; background:#0f172a; color:#e2e8f0; }
+      .module-box.dead  { border-style:dashed; border-color:#94a3b8; opacity:.55; }
+      .arrow { stroke:#475569; stroke-width:1.5; fill:none; marker-end:url(#arr); }
+      .arrow-leak { stroke:#dc2626; stroke-width:2; fill:none; marker-end:url(#arrRed); }
+      .arrow-seam { stroke:#475569; stroke-width:1.5; stroke-dasharray:4 4; fill:none; marker-end:url(#arr); }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+
+      <!-- HEADER -->
+      <header class="space-y-3">
+        <div class="flex items-baseline justify-between">
+          <h1 class="text-3xl font-serif text-slate-900">架构审计 · 第 9 轮</h1>
+          <span class="text-sm text-slate-500 font-mono">miniprogram-1 · 2026-07-27</span>
+        </div>
+        <div class="flex flex-wrap gap-4 text-xs text-slate-600 border-t border-slate-200 pt-4">
+          <span class="flex items-center gap-2"><span class="inline-block w-4 h-4 border border-slate-400 rounded-sm"></span>module</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-6 border-t-2 border-dashed border-slate-500"></span>seam</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-6 border-t-2 border-red-600"></span>leakage</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-4 h-4 border-2 border-slate-900 rounded-sm bg-slate-900"></span>deep module</span>
+        </div>
+        <p class="text-sm text-slate-700 leading-relaxed max-w-3xl">
+          第 8 轮把 <code class="font-mono text-xs bg-slate-100 px-1 rounded">dataWrite/handlers.js</code> 从 950 行拆为 5 个领域模块，并完成了 logSeam / writeSeam / errorHandler 瘦身。
+          本轮聚焦拆分后的 <em>循环依赖</em>、<em>跨云函数调用紧耦合</em>、<em>_shared 浅模块</em> 与 <em>前端 report-builder</em>。
+        </p>
+      </header>
+
+      <!-- CANDIDATES -->
+      <section id="candidates" class="space-y-10">
+
+        <!-- ============ CANDIDATE 1 ============ -->
+        <article class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div class="p-6 space-y-5">
+            <div class="flex items-start justify-between gap-4 flex-wrap">
+              <h2 class="text-xl font-serif text-slate-900">1. 打破 fact-write ↔ member-write 循环依赖</h2>
+              <div class="flex gap-2 flex-wrap">
+                <span class="badge-strong text-white text-xs px-2.5 py-1 rounded-full font-semibold">Strong</span>
+                <span class="bg-slate-200 text-slate-700 text-xs px-2.5 py-1 rounded-full">in-process</span>
+              </div>
+            </div>
+
+            <div>
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-1">Files</div>
+              <code class="font-mono text-sm bg-slate-50 px-2 py-1 rounded block">cloudfunctions/dataWrite/fact-write.js · cloudfunctions/dataWrite/member-write.js</code>
+            </div>
+
+            <!-- BEFORE / AFTER -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <!-- BEFORE -->
+              <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+                <div class="text-xs uppercase tracking-wider text-slate-500 mb-3 text-center">Before · 双向循环</div>
+                <pre class="mermaid">
+flowchart LR
+  FW["fact-write<br/>addFact()"]
+  MW["member-write<br/>recordField()"]
+  FW -.lazy require.-> MW
+  MW --top require--> FW
+  linkStyle 0 stroke:#dc2626,stroke-width:2px,stroke-dasharray:4 4;
+  linkStyle 1 stroke:#dc2626,stroke-width:2px;
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class FW,MW leak
+                </pre>
+                <p class="text-xs text-slate-600 mt-2 text-center">两套绕行方案：namespace 访问 + lazy require</p>
+              </div>
+              <!-- AFTER -->
+              <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+                <div class="text-xs uppercase tracking-wider text-slate-500 mb-3 text-center">After · 单向依赖</div>
+                <pre class="mermaid">
+flowchart LR
+  FW["fact-write<br/>addFact()"]
+  MW["member-write<br/>recordField()"]
+  SYNC["fact-member-sync<br/>FACT_TO_MEMBER_FIELD<br/>_syncFactToMember<br/>_writeMemberFact"]
+  FW --> SYNC
+  MW --> SYNC
+  classDef deep fill:#0f172a,color:#e2e8f0,stroke:#0f172a,stroke-width:3px;
+  class SYNC deep
+                </pre>
+                <p class="text-xs text-slate-600 mt-2 text-center">同步逻辑集中，无循环</p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
+              <div>
+                <div class="text-xs uppercase tracking-wider text-slate-500 mb-1">Problem</div>
+                <p class="text-sm text-slate-700">fact-write 与 member-write 互相 require。member-write 顶层 <code class="font-mono text-xs">const factWrite = require('./fact-write')</code> 走 namespace 访问；fact-write 在 addFact 内部 <code class="font-mono text-xs">lazy require</code> member-write。两套不同的绕行方案本身就是 friction 信号——sync 逻辑被劈成两半，locality 丢失。</p>
+              </div>
+              <div>
+                <div class="text-xs uppercase tracking-wider text-slate-500 mb-1">Solution</div>
+                <p class="text-sm text-slate-700">抽出 <code class="font-mono text-xs">fact-member-sync.js</code>，持有 <code class="font-mono text-xs">FACT_TO_MEMBER_FIELD</code> 映射与两个同步函数。fact-write 与 member-write 各自单向 require 该 module，循环消失。</p>
+              </div>
+            </div>
+
+            <div>
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Wins</div>
+              <ul class="text-sm text-slate-700 space-y-1">
+                <li class="flex gap-2"><span class="text-emerald-600">▸</span> locality: fact↔member sync 集中到一处</li>
+                <li class="flex gap-2"><span class="text-emerald-600">▸</span> 删除两套循环依赖绕行 hack</li>
+                <li class="flex gap-2"><span class="text-emerald-600">▸</span> interface 可独立测试 sync 逻辑</li>
+                <li class="flex gap-2"><span class="text-emerald-600">▸</span> 删除测试通过：复杂度集中而非消失</li>
+              </ul>
+            </div>
+
+            <div class="text-xs text-slate-500 border-t border-slate-100 pt-3">
+              <span class="font-semibold">Deletion test:</span> 删掉 sync module，逻辑会重新散回两个文件——它 earn its keep。
+            </div>
+          </div>
+        </article>
+
+        <!-- ============ CANDIDATE 2 ============ -->
+        <article class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div class="p-6 space-y-5">
+            <div class="flex items-start justify-between gap-4 flex-wrap">
+              <h2 class="text-xl font-serif text-slate-900">2. formalize conversationAI 的 dataGateway seam</h2>
+              <div class="flex gap-2 flex-wrap">
+                <span class="badge-worth text-white text-xs px-2.5 py-1 rounded-full font-semibold">Worth exploring</span>
+                <span class="bg-slate-200 text-slate-700 text-xs px-2.5 py-1 rounded-full">ports &amp; adapters</span>
+              </div>
+            </div>
+
+            <div>
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-1">Files</div>
+              <code class="font-mono text-sm bg-slate-50 px-2 py-1 rounded block">cloudfunctions/conversationAI/index.js (_callWrite / _callQuery / _dispatch)</code>
+            </div>
+
+            <!-- BEFORE / AFTER -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <!-- BEFORE -->
+              <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+                <div class="text-xs uppercase tracking-wider text-slate-500 mb-3 text-center">Before · dispatch 内联两种调用</div>
+                <pre class="mermaid">
+flowchart TD
+  D["_dispatch(tool, params)"]
+  D -->|"upsertMember"| IP1["memberRepo (in-process)"]
+  D -->|"updateFinances"| IP2["memberRepo (in-process)"]
+  D -->|"addPolicy"| CF1["_callWrite → dataWrite"]
+  D -->|"addFact"| CF1
+  D -->|"queryPolicies"| CF2["_callQuery → dataQuery"]
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class D leak
+                </pre>
+                <p class="text-xs text-slate-600 mt-2 text-center">同一 switch 混杂 in-process 与 cross-function</p>
+              </div>
+              <!-- AFTER -->
+              <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+                <div class="text-xs uppercase tracking-wider text-slate-500 mb-3 text-center">After · gateway 统一 seam</div>
+                <pre class="mermaid">
+flowchart TD
+  D["_dispatch(tool, params)"]
+  GW["dataGateway<br/>(interface)"]
+  A1["InProcessAdapter<br/>memberRepo"]
+  A2["CloudFunctionAdapter<br/>_callWrite / _callQuery"]
+  D --> GW
+  GW -.-> A1
+  GW -.-> A2
+  classDef deep fill:#0f172a,color:#e2e8f0,stroke:#0f172a,stroke-width:3px;
+  class GW deep
+                </pre>
+                <p class="text-xs text-slate-600 mt-2 text-center">两个 adapter 证明 seam 真实</p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
+              <div>
+                <div class="text-xs uppercase tracking-wider text-slate-500 mb-1">Problem</div>
+                <p class="text-sm text-slate-700">_dispatch 同时持有两条调用路径：成员/财务走 in-process <code class="font-mono text-xs">memberRepo</code>，保单/事实走 <code class="font-mono text-xs">cloud.callFunction('dataWrite'/'dataQuery')</code>。"写到哪"的决策散落在 switch case 里，测试时无法绕开 cloud.callFunction。</p>
+              </div>
+              <div>
+                <div class="text-xs uppercase tracking-wider text-slate-500 mb-1">Solution</div>
+                <p class="text-sm text-slate-700">引入 <code class="font-mono text-xs">dataGateway</code> interface，两个 adapter：InProcessAdapter（memberRepo）与 CloudFunctionAdapter（_callWrite/_callQuery）。_dispatch 只对 gateway 说话。</p>
+              </div>
+            </div>
+
+            <div>
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Wins</div>
+              <ul class="text-sm text-slate-700 space-y-1">
+                <li class="flex gap-2"><span class="text-amber-600">▸</span> leverage: 一个 interface，N 个 tool 调用点</li>
+                <li class="flex gap-2"><span class="text-amber-600">▸</span> tests: 注入 mock adapter，免 cloud.callFunction</li>
+                <li class="flex gap-2"><span class="text-amber-600">▸</span> locality: "写到哪"决策集中到 gateway</li>
+                <li class="flex gap-2"><span class="text-amber-600">▸</span> 两个 adapter 证明 seam 真实存在</li>
+              </ul>
+            </div>
+
+            <div class="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+              <span class="font-semibold">ADR 注意:</span> 第 8 轮注释明确 "成员/财务走 memberRepo（进程内）；保单/事实经 dataWrite 网关" 是有意为之（性能）。本候选不推翻该决策，只是把已有 seam 形式化。
+            </div>
+          </div>
+        </article>
+
+        <!-- ============ CANDIDATE 3 ============ -->
+        <article class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div class="p-6 space-y-5">
+            <div class="flex items-start justify-between gap-4 flex-wrap">
+              <h2 class="text-xl font-serif text-slate-900">3. 清理 _shared 浅模块 + 删除死代码 format.js</h2>
+              <div class="flex gap-2 flex-wrap">
+                <span class="badge-worth text-white text-xs px-2.5 py-1 rounded-full font-semibold">Worth exploring</span>
+                <span class="bg-slate-200 text-slate-700 text-xs px-2.5 py-1 rounded-full">local-substitutable</span>
+              </div>
+            </div>
+
+            <div>
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-1">Files</div>
+              <code class="font-mono text-sm bg-slate-50 px-2 py-1 rounded block">cloudfunctions/_shared/calc-age.js (26行) · completeness.js (16行) · cloudfunctions/dataWrite/_shared/format.js (死代码)</code>
+            </div>
+
+            <!-- BEFORE / AFTER -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <!-- BEFORE mass diagram -->
+              <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+                <div class="text-xs uppercase tracking-wider text-slate-500 mb-3 text-center">Before · 浅模块 + 死代码</div>
+                <div class="space-y-2">
+                  <div class="flex items-center gap-3">
+                    <div class="module-box flex-1 text-center" style="height:24px;line-height:22px;">interface: calcAge(birth)</div>
+                    <span class="text-xs text-slate-400">≈</span>
+                    <div class="module-box flex-1 text-center" style="height:24px;line-height:22px;">impl: 8 行</div>
+                  </div>
+                  <div class="flex items-center gap-3">
+                    <div class="module-box flex-1 text-center" style="height:20px;line-height:18px;">interface: calcCompletenessScore(fam,pol)</div>
+                    <span class="text-xs text-slate-400">≈</span>
+                    <div class="module-box flex-1 text-center" style="height:20px;line-height:18px;">impl: 12 行</div>
+                  </div>
+                  <div class="module-box dead text-center mt-2" style="height:28px;line-height:26px;">format.js · 0 引用 · 死代码</div>
+                  <p class="text-xs text-slate-600 mt-2 text-center">interface 面积 ≈ implementation 面积 → shallow</p>
+                </div>
+              </div>
+              <!-- AFTER -->
+              <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+                <div class="text-xs uppercase tracking-wider text-slate-500 mb-3 text-center">After · 合并 + 删除</div>
+                <div class="space-y-2">
+                  <div class="module-box thick text-center" style="height:48px;line-height:46px;">memberRepo / member-utils<br/><span class="normal-case text-xs">+ calcAge</span></div>
+                  <div class="module-box thick text-center" style="height:48px;line-height:46px;">familyView / familyPortrait<br/><span class="normal-case text-xs">+ calcCompletenessScore</span></div>
+                  <div class="text-center text-xs text-slate-400 line-through mt-2">format.js (deleted)</div>
+                  <p class="text-xs text-slate-600 mt-2 text-center">每个 module 变深，死代码消失</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
+              <div>
+                <div class="text-xs uppercase tracking-wider text-slate-500 mb-1">Problem</div>
+                <p class="text-sm text-slate-700">calc-age.js（26 行单函数）与 completeness.js（16 行单函数）是 shallow module——interface 与 implementation 几乎等宽。dataWrite/_shared/format.js 是 <strong>零引用死代码</strong>，因 sync-shared 只 prune 权威源中存在的文件，而 format.js 不在权威源，得以残留。</p>
+              </div>
+              <div>
+                <div class="text-xs uppercase tracking-wider text-slate-500 mb-1">Solution</div>
+                <p class="text-sm text-slate-700">① 删除 format.js（deletion test 通过：复杂度不重现）。② calc-age 并入 memberRepo 或新 member-utils（年龄计算仅服务于 member 上下文）。③ completeness 并入 familyView（它消费 family+members+policies，正是 familyView 的领域）。</p>
+              </div>
+            </div>
+
+            <div>
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Wins</div>
+              <ul class="text-sm text-slate-700 space-y-1">
+                <li class="flex gap-2"><span class="text-amber-600">▸</span> locality: 年龄计算贴着 member 逻辑</li>
+                <li class="flex gap-2"><span class="text-amber-600">▸</span> 完整度算法贴着 family 视图组装</li>
+                <li class="flex gap-2"><span class="text-amber-600">▸</span> 删除 1 个死文件，减少认知碎片</li>
+                <li class="flex gap-2"><span class="text-amber-600">▸</span> _shared 目录变浅，导航成本下降</li>
+              </ul>
+            </div>
+
+            <div class="text-xs text-slate-500 border-t border-slate-100 pt-3">
+              <span class="font-semibold">注意:</span> report-fields.js（28 行）虽小但是 write/read 双向契约的单一事实源，<em>不</em>属浅模块——不可合并。
+            </div>
+          </div>
+        </article>
+
+        <!-- ============ CANDIDATE 4 ============ -->
+        <article class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div class="p-6 space-y-5">
+            <div class="flex items-start justify-between gap-4 flex-wrap">
+              <h2 class="text-xl font-serif text-slate-900">4. 拆分前端 report-builder.js 章节构建</h2>
+              <div class="flex gap-2 flex-wrap">
+                <span class="badge-spec text-white text-xs px-2.5 py-1 rounded-full font-semibold">Speculative</span>
+                <span class="bg-slate-200 text-slate-700 text-xs px-2.5 py-1 rounded-full">in-process</span>
+              </div>
+            </div>
+
+            <div>
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-1">Files</div>
+              <code class="font-mono text-sm bg-slate-50 px-2 py-1 rounded block">miniprogram/utils/report-builder.js (583 行)</code>
+            </div>
+
+            <!-- BEFORE / AFTER call-graph collapse -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <!-- BEFORE -->
+              <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+                <div class="text-xs uppercase tracking-wider text-slate-500 mb-3 text-center">Before · 单文件 583 行</div>
+                <div class="border-2 border-slate-300 rounded p-3 bg-white">
+                  <div class="text-center font-mono text-xs font-semibold mb-2">report-builder.js</div>
+                  <div class="space-y-1 text-xs text-slate-600">
+                    <div class="border border-slate-200 rounded px-2 py-1">buildChapters()</div>
+                    <div class="border border-slate-200 rounded px-2 py-1">buildGaps()</div>
+                    <div class="border border-slate-200 rounded px-2 py-1">assessDataCompleteness()</div>
+                    <div class="border border-slate-200 rounded px-2 py-1">+ 5 章节构建逻辑</div>
+                    <div class="border border-slate-200 rounded px-2 py-1">+ 统计/投影 helper</div>
+                  </div>
+                </div>
+                <p class="text-xs text-slate-600 mt-2 text-center">改一章需打开 583 行文件</p>
+              </div>
+              <!-- AFTER -->
+              <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+                <div class="text-xs uppercase tracking-wider text-slate-500 mb-3 text-center">After · chapters/ 目录</div>
+                <div class="border-2 border-slate-900 rounded p-3 bg-slate-50">
+                  <div class="text-center font-mono text-xs font-semibold mb-2">report-builder.js (thin orchestrator)</div>
+                  <div class="grid grid-cols-2 gap-1 text-xs">
+                    <div class="border border-slate-300 rounded px-2 py-1 bg-white">chapters/overview.js</div>
+                    <div class="border border-slate-300 rounded px-2 py-1 bg-white">chapters/panorama.js</div>
+                    <div class="border border-slate-300 rounded px-2 py-1 bg-white">chapters/plan.js</div>
+                    <div class="border border-slate-300 rounded px-2 py-1 bg-white">chapters/timeline.js</div>
+                    <div class="border border-slate-300 rounded px-2 py-1 bg-white">chapters/urgent.js</div>
+                    <div class="border border-slate-300 rounded px-2 py-1 bg-white">shared/gaps.js</div>
+                  </div>
+                </div>
+                <p class="text-xs text-slate-600 mt-2 text-center">每章独立，orchestrator 变 thin</p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
+              <div>
+                <div class="text-xs uppercase tracking-wider text-slate-500 mb-1">Problem</div>
+                <p class="text-sm text-slate-700">report-builder.js 单文件承载 buildChapters、buildGaps、assessDataCompleteness 及多个章节构建逻辑。改一个章节要在 583 行里定位，locality 差；章节构建逻辑无法独立测试。</p>
+              </div>
+              <div>
+                <div class="text-xs uppercase tracking-wider text-slate-500 mb-1">Solution</div>
+                <p class="text-sm text-slate-700">按章节拆 <code class="font-mono text-xs">chapters/</code> 目录（overview / panorama / plan / timeline / urgent），共享 helper（buildGaps、统计）入 <code class="font-mono text-xs">shared/</code>。report-builder.js 退化为 thin orchestrator。</p>
+              </div>
+            </div>
+
+            <div>
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Wins</div>
+              <ul class="text-sm text-slate-700 space-y-1">
+                <li class="flex gap-2"><span class="text-slate-500">▸</span> locality: 每章逻辑贴在自己的文件</li>
+                <li class="flex gap-2"><span class="text-slate-500">▸</span> interface 可单章测试</li>
+                <li class="flex gap-2"><span class="text-slate-500">▸</span> orchestrator 变 thin，深度提升</li>
+              </ul>
+            </div>
+
+            <div class="text-xs text-slate-500 border-t border-slate-100 pt-3">
+              <span class="font-semibold">Speculative 因为:</span> 583 行不一定等于 shallow——若章节间共享 helper 密集，拆分后可能产生跨文件耦合。需先读全文确认章节边界是否干净。
+            </div>
+          </div>
+        </article>
+
+      </section>
+
+      <!-- TOP RECOMMENDATION -->
+      <section id="top-recommendation">
+        <div class="bg-gradient-to-br from-slate-900 to-slate-800 text-slate-100 rounded-xl p-8 shadow-lg">
+          <div class="flex items-center gap-3 mb-3">
+            <span class="badge-strong text-white text-xs px-2.5 py-1 rounded-full font-semibold">Top recommendation</span>
+          </div>
+          <h2 class="text-2xl font-serif mb-2">先做候选 1：打破 fact-write ↔ member-write 循环依赖</h2>
+          <p class="text-sm text-slate-300 leading-relaxed max-w-3xl">
+            循环依赖是 4 个候选里 friction 最明确、方案最干净的。两套绕行 hack（namespace + lazy require）本身就是信号；
+            抽出 <code class="font-mono text-xs bg-slate-700 px-1 rounded">fact-member-sync.js</code> 后，sync 逻辑获得 locality，
+            两个领域 module 各自单向依赖，测试面收敛到一个 interface。改动范围小（两个文件 + 一个新文件），
+            风险低，收益直接。其余三个候选可在本轮之后按 Worth exploring → Speculative 顺序排期。
+          </p>
+          <a href="#candidates" class="inline-block mt-4 text-xs text-emerald-400 hover:text-emerald-300 underline underline-offset-4">↑ 回到候选列表</a>
+        </div>
+      </section>
+
+      <footer class="text-xs text-slate-400 text-center pt-8 border-t border-slate-200">
+        architecture review · round 9 · improve-codebase-architecture methodology
+      </footer>
+
+    </main>
+  </body>
+</html>

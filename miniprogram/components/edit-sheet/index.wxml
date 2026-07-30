@@ -1,0 +1,20 @@
+<!-- 底部编辑表单 -->
+<view class="overlay" wx:if="{{visible}}" catchtap="onClose" aria-label="关闭表单">
+  <view class="sheet">
+    <view class="sheet-header">
+      <text class="sheet-title">{{title}}</text>
+      <view class="sheet-close pressable" bindtap="onClose" aria-label="关闭"><image class="sheet-close-icon" src="/images/close.svg" mode="aspectFit" /></view>
+    </view>
+    <view class="sheet-body">
+      <block wx:for="{{fields}}" wx:key="key">
+        <view class="form-row form-row-{{item.key}} {{item.error ? 'has-error' : ''}}">
+          <text class="form-label">{{item.label}}<text wx:if="{{item.required}}" class="req">*</text></text>
+          <input class="form-input" value="{{item.value}}" placeholder="{{item.placeholder}}" data-key="{{item.key}}" type="{{item.type || 'text'}}" bindinput="onFieldInput" bindblur="onFieldBlur" aria-label="{{item.label}}" />
+          <text wx:if="{{item.helper}}" class="form-helper">{{item.helper}}</text>
+          <text wx:if="{{item.error}}" class="form-error" role="alert">{{item.error}}</text>
+        </view>
+      </block>
+    </view>
+    <button class="save-btn pressable {{saving ? 'is-loading' : ''}}" bindtap="onSave" disabled="{{saving}}" aria-label="保存">{{saving ? '保存中...' : '保存'}}</button>
+  </view>
+</view>

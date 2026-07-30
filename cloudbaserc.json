@@ -1,0 +1,43 @@
+{
+  "version": "2.0",
+  "envId": "{{env.ENV_ID}}",
+  "functions": [
+    {
+      "name": "conversationAI",
+      "timeout": 30
+    },
+    {
+      "name": "dataQuery",
+      "timeout": 30
+    },
+    {
+      "name": "dataWrite",
+      "timeout": 60
+    },
+    {
+      "name": "login",
+      "timeout": 10
+    },
+    {
+      "name": "ocrService",
+      "timeout": 60,
+      "envVariables": {
+        "TENCENT_SECRET_ID": "",
+        "TENCENT_SECRET_KEY": ""
+      }
+    },
+    {
+      "name": "reportAI",
+      "timeout": 60
+    }
+  ],
+  "functionRoot": "./cloudfunctions",
+  "ai": {
+    "defaultAgent": "{{env.AI_DEFAULT_AGENT}}",
+    "agents": {
+      "codebuddy": {
+        "type": "none"
+      }
+    }
+  }
+}

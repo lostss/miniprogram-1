@@ -1,0 +1,242 @@
+/* ============================================================
+   保小秘 — Luxury/Refined 暖色主题（v2 高级感优化）
+   暖米白底 | 暖金点缀 | 深蓝黑文字 | 折纸质感 | 衬线标题
+   降饱和状态色 · 克制阴影 · 留白节奏
+   ============================================================ */
+
+page {
+  box-sizing: border-box;
+
+  /* 背景 — 暖奶油白，与 window 栏 #F5F0EB 一致 */
+  --bg-root: #F5F0EB;
+  --bg-surface: #FBF8F3;
+  --bg-card: #FFFFFF;
+  --bg-input: #F5F0EB;
+
+  /* 边框 */
+  --border: #E8E0D5;
+  --border-accent: rgba(201, 169, 110, 0.5);
+
+  /* 强调色 — 暖金 */
+  --accent: #C9A96E;
+  --accent-deep: #8B6F3C;
+  --accent-dim: rgba(201, 169, 110, 0.12);
+  --accent-glow: rgba(201, 169, 110, 0.35);
+  --accent-muted: #E0D4BD;
+  --color-on-accent: #FFFFFF;
+  --color-on-accent-soft: #F5EBD8;
+
+  /* 状态色（amber 偏黄拉开与金色强调的距离） */
+  --green: #6B8E6B;
+  --amber: #B8912E;
+  --red: #B85450;
+  --green-dim: #E8EDDF;
+  --amber-dim: #F5ECCE;
+  --red-dim: #EBD8D2;
+
+  /* 文字 */
+  --text-primary: #1A1A2E;
+  --text-secondary: #7A6548;
+  --text-tertiary: #6B5A3F;
+  --text-disabled: #9A8B7C;
+
+  /* 字体 */
+  --font: 'PingFang SC', 'Noto Sans CJK SC', -apple-system, 'Microsoft YaHei', sans-serif;
+  --font-serif: 'Songti SC', 'STSong', 'Source Han Serif SC', 'Noto Serif SC', serif;
+  --font-mono: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+
+  /* 字号阶梯（1.25 模数：20→25→31→39→48，UI 正文档位细化） */
+  --fs-tiny: 20rpx;
+  --fs-caption: 24rpx;
+  --fs-base: 26rpx;
+  --fs-body: 28rpx;
+  --fs-lg: 30rpx;
+  --fs-xl: 32rpx;
+  --fs-2xl: 36rpx;
+  --fs-display: 40rpx;
+  --fs-3xl: 48rpx;
+  --fs-hero: 52rpx;
+  --fs-mega: 56rpx;
+
+  --fw-normal: 400;
+  --fw-medium: 500;
+  --fw-semi: 600;
+  --fw-bold: 700;
+
+  --lh-none: 1;
+  --lh-tight: 1.2;
+  --lh-snug: 1.35;
+  --lh-body: 1.7;
+  --lh-loose: 1.85;
+
+  --ls-tight: -0.5rpx;
+  --ls-normal: 0;
+  --ls-wide: 1rpx;
+  --ls-wider: 4rpx;
+
+  /* 间距 */
+  --sp-1: 4rpx; --sp-1-5: 6rpx; --sp-2: 8rpx; --sp-3: 12rpx;
+  --sp-4: 16rpx; --sp-4-5: 20rpx; --sp-5: 24rpx;
+  --sp-6: 32rpx; --sp-7: 40rpx; --sp-8: 48rpx; --sp-9: 52rpx; --sp-10: 56rpx;
+
+  /* 圆角 */
+  --r-sm: 8rpx; --r-md: 16rpx; --r-lg: 20rpx;
+  --r-xl: 24rpx; --r-2xl: 32rpx; --r-full: 9999rpx;
+
+  /* 动画 */
+  --dur-fast: 0.15s; --dur-base: 0.25s; --dur-slow: 0.3s; --dur-glacial: 0.5s;
+  --ease-out: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.42, 0, 1, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* 阴影 — 暖色调多层级 */
+  --shadow-sm: 0 1rpx 3rpx rgba(60,50,30,0.04);
+  --shadow-md: 0 2rpx 8rpx rgba(60,50,30,0.05);
+  --shadow-lg: 0 4rpx 16rpx rgba(60,50,30,0.07);
+  --shadow-sheet: 0 -4rpx 24rpx rgba(60,50,30,0.08);
+
+  --z-base: 1; --z-overlay: 90; --z-panel: 100;
+  --z-sheet: 200; --z-modal: 300; --z-toast: 400;
+
+  --overlay-dim: rgba(26,26,46,0.35);
+  --overlay-strong: rgba(26,26,46,0.6);
+
+  background: var(--bg-root);
+  font-family: var(--font);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+
+  /* ② 全局选中色：暖金替代系统蓝 */
+  -webkit-tap-highlight-color: rgba(201,169,110,0.15);
+}
+
+page ::selection { background: rgba(201,169,110,0.25); color: var(--text-primary); }
+
+/* 全局页面容器动画（不放在 page 选择器上，避免破坏 position:fixed） */
+.page-view { animation: pageEnter 0.35s var(--ease-spring) both; }
+@keyframes pageEnter {
+  from { opacity: 0; transform: translateY(6rpx); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================================================
+   集中 keyframes（统一动画定义，避免各组件重复声明）
+   ============================================================ */
+@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16rpx); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@keyframes cardUp {
+  from { opacity: 0; transform: translateY(40rpx); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes cardReveal {
+  from { opacity: 0; transform: translateY(24rpx) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}
+@keyframes breathe {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.04); }
+}
+@keyframes dotFadeIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes dotBounce { 0%, 80%, 100% { transform: scale(0.6) } 40% { transform: scale(1) } }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes shimmer { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }
+@keyframes popIn {
+  0% { opacity: 0; transform: scale(0.85); }
+  60% { transform: scale(1.04); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes numberCountUp {
+  from { opacity: 0; transform: translateY(8rpx); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.anim-number { animation: numberCountUp var(--dur-base) var(--ease-out) forwards; }
+
+/* 卡片入场交错（通用工具类） */
+.card-stagger { animation: cardReveal var(--dur-glacial) var(--ease-out-expo) both; }
+.card-stagger:nth-child(1) { animation-delay: 0s; }
+.card-stagger:nth-child(2) { animation-delay: 0.08s; }
+.card-stagger:nth-child(3) { animation-delay: 0.16s; }
+.card-stagger:nth-child(4) { animation-delay: 0.22s; }
+.card-stagger:nth-child(5) { animation-delay: 0.28s; }
+.card-stagger:nth-child(6) { animation-delay: 0.34s; }
+
+/* 阅读卡片：纯功能，无装饰 */
+.paper-card {
+  border-radius: var(--r-xl); background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+/* 工具 */
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.safe-bottom { padding-bottom: 0px; padding-bottom: env(safe-area-inset-bottom); }
+.pressable { transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out); }
+.pressable:active { opacity: 0.85; transform: scale(0.98); }
+
+/* ⑤ 全局隐藏滚动条：小程序不支持 overflow: overlay，降级隐藏 */
+::-webkit-scrollbar { width: 0; height: 0; background: transparent; }
+
+/* ============================================================
+   OCR 进度蒙层（全局共享，避免 index / report 重复定义）
+   ============================================================ */
+.ocr-mask { position:fixed; top:0; left:0; right:0; bottom:0; background:var(--overlay-strong); z-index:var(--z-modal); display:flex; align-items:center; justify-content:center; animation:fadeIn var(--dur-base) var(--ease-out) }
+.ocr-card { width:600rpx; max-height:80vh; padding:var(--sp-10) var(--sp-7); display:flex; flex-direction:column; align-items:center; background:var(--bg-surface); border-radius:var(--r-xl); animation:cardUp var(--dur-base) var(--ease-out) }
+
+/* 进度条 */
+.ocr-bar-wrap { width:100%; margin-bottom:var(--sp-6); }
+.ocr-bar { width:100%; height:6rpx; background:var(--bg-input); border-radius:3rpx; overflow:hidden; }
+.ocr-bar-fill { height:100%; background:var(--accent); border-radius:3rpx; transition:width 0.3s var(--ease-out); }
+
+/* 进度数字：大号衬线体 + 渐变 */
+.ocr-phase-num { font-size:var(--fs-3xl); font-weight:var(--fw-bold); color:var(--text-primary); font-family:var(--font-serif); line-height:var(--lh-none); margin-bottom:var(--sp-4); font-variant-numeric:tabular-nums; }
+.ocr-phase-of { font-size:var(--fs-2xl); font-weight:var(--fw-normal); color:var(--text-tertiary); }
+
+.ocr-phase-title { font-size:var(--fs-xl); font-weight:var(--fw-semi); color:var(--text-primary); margin-bottom:var(--sp-3); text-align:center }
+.ocr-phase-sub { font-size:var(--fs-caption); color:var(--text-tertiary); text-align:center }
+
+/* 动画点：金/绿双色区分阶段，呼吸感替代脉冲 */
+.ocr-dot { width:16rpx; height:16rpx; border-radius:50%; margin-top:var(--sp-6); animation:breathe 2s var(--ease-out-expo) infinite; }
+.ocr-dot--gold { background:var(--accent); }
+.ocr-dot--green { background:var(--green); }
+
+.ocr-done-title { font-size:var(--fs-2xl); font-weight:var(--fw-semi); color:var(--text-primary); margin-bottom:var(--sp-2); animation:popIn 0.4s var(--ease-spring) }
+.ocr-done-sub { font-size:var(--fs-caption); color:var(--text-tertiary); margin-bottom:var(--sp-5); text-align:center }
+.ocr-summary-list { width:100%; max-height:300rpx; margin-bottom:var(--sp-6) }
+.ocr-actions { width:100% }
+.ocr-confirm-btn { width:100%; height:88rpx; background:var(--accent); color:var(--color-on-accent); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none }
+.ocr-confirm-btn.is-loading { background:var(--accent-dim); }
+.ocr-confirm-btn[disabled] { opacity:0.7; }
+
+/* OCR 结果：低置信度保单标注 */
+.low-conf { background:var(--amber-dim); border-radius:var(--r-sm); padding:0 var(--sp-2); }
+
+/* 尊重减少动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .anim-fade-up,
+  .anim-fade-in,
+  .thinking-dot,
+  .thinking-dots,
+  .refresh-icon,
+  .sk-shimmer,
+  .bubble,
+  .ocr-card,
+  .chat-panel,
+  .sheet,
+  .pressable {
+    animation: none !important;
+    transition: none !important;
+  }
+}

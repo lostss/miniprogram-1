@@ -1,0 +1,5 @@
+{
+  "usingComponents": {
+    "client-card": "/components/client-card/index"
+  }
+}

@@ -1,0 +1,24 @@
+<!-- 客户列表页 -->
+<view class="page page-view">
+  <!-- 搜索栏 -->
+  <view class="search-bar">
+    <input class="search-input" value="{{keyword}}" placeholder="搜索客户姓名..." bindinput="onSearch" aria-label="搜索客户" />
+  </view>
+
+  <!-- 加载中 -->
+  <view class="loading-hint" wx:if="{{loading}}"><view class="loading-pulse"></view>小秘正在查找...</view>
+
+  <!-- 列表 -->
+  <client-card wx:for="{{families}}" wx:key="_id" wx:for-index="idx" client="{{item}}" bindtap="onClientTap" bind:longpress="onClientLongPress" data-idx="{{idx}}" />
+
+  <!-- 空态 -->
+  <view class="empty" wx:if="{{!loading && families.length === 0}}">
+    <view class="empty-illu">
+      <view class="empty-step"><image class="empty-step-icon" src="/images/upload.svg" mode="aspectFit" /></view>
+      <view class="empty-arrow">—</view>
+      <view class="empty-step"><image class="empty-step-icon" src="/images/policy.svg" mode="aspectFit" /></view>
+    </view>
+    <text class="empty-text">尚无客户档案</text>
+    <text class="empty-sub">上传保单自动创建</text>
+  </view>
+</view>

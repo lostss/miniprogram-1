@@ -1,0 +1,7 @@
+node_modules
+cloudfunctions/*/node_modules
+miniprogram/node_modules
+miniprogram_npm
+**/*.min.js
+**/package.json
+**/project.config.json

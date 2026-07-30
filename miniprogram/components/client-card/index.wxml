@@ -1,0 +1,12 @@
+<view class="card stage-{{client.engagement_stage || 'new'}}" bindtap="onTap" bindlongpress="onLongPress" data-id="{{client._id}}">
+  <view class="card-body">
+    <view class="card-row">
+      <text class="card-name">{{client.name}}</text>
+      <text class="card-label">{{client.family_label || ''}}</text>
+    </view>
+    <text class="card-time">{{_fmtTime}}</text>
+  </view>
+  <view class="card-right">
+    <canvas wx:if="{{_completeness > 0}}" type="2d" id="ringCanvas" class="ring-canvas"></canvas>
+  </view>
+</view>

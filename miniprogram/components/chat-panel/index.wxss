@@ -1,0 +1,41 @@
+.chat-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:var(--overlay-dim); z-index:var(--z-overlay); animation:fadeIn var(--dur-base) var(--ease-out); -webkit-backdrop-filter:blur(8rpx); backdrop-filter:blur(8rpx); }
+.chat-panel { position:fixed; left:0; right:0; bottom:0; height:70vh; background:var(--bg-surface); border-radius:var(--r-2xl) var(--r-2xl) 0 0; display:flex; flex-direction:column; z-index:var(--z-panel); animation:slideUp var(--dur-base) var(--ease-spring); box-shadow:var(--shadow-sheet); }
+.drag-bar { width:56rpx; height:6rpx; background:var(--accent-muted); border-radius:3rpx; margin:var(--sp-5) auto var(--sp-4); flex-shrink:0 }
+.chat-title { text-align:center; margin-bottom:var(--sp-5); flex-shrink:0; display:flex; flex-direction:column; align-items:center; gap:var(--sp-1) }
+.chat-title-text { font-size:var(--fs-body); font-weight:var(--fw-semi); color:var(--text-primary); font-family:var(--font-serif); letter-spacing:var(--ls-wide) }
+.chat-title-sub { font-size:var(--fs-tiny); color:var(--text-tertiary); letter-spacing:var(--ls-wider) }
+.msg-list { flex:1; min-height:0; }
+.msg-inner { padding:var(--sp-3) var(--sp-5) calc(var(--sp-6) + 88rpx + env(safe-area-inset-bottom)) }
+.msg-row { margin-bottom:var(--sp-6) }
+.msg-row.assistant { text-align:left }
+.msg-row.user { text-align:right }
+
+.ai-msg { display:block; width:100%; font-size:var(--fs-body); line-height:var(--lh-loose); color:var(--text-primary); text-align:left; box-sizing:border-box; animation:fadeIn var(--dur-base) var(--ease-out); border-left:3rpx solid var(--accent-muted); padding-left:var(--sp-5) }
+.ai-msg-time { font-size:var(--fs-tiny); color:var(--text-disabled); margin-top:var(--sp-2); line-height:var(--lh-none); }
+
+.bubble { display:inline-block; max-width:82%; padding:var(--sp-4) var(--sp-5); font-size:var(--fs-base); line-height:var(--lh-body); word-break:break-word; text-align:left; box-sizing:border-box; animation:fadeUp var(--dur-slow) var(--ease-spring) }
+.bubble.user { background:var(--accent); color:var(--color-on-accent); border-radius:18rpx 6rpx 18rpx 18rpx; }
+
+.retry-btn { display:inline-block; margin-top:var(--sp-3); padding:var(--sp-2) var(--sp-5); border:1rpx solid var(--accent-muted); border-radius:var(--r-full); font-size:var(--fs-caption); color:var(--accent-deep); background:transparent }
+.sug-bar { display:flex; flex-wrap:wrap; gap:var(--sp-3); margin-top:var(--sp-5) }
+.sug-chip { padding:var(--sp-3) var(--sp-5); background:var(--accent-dim); border-radius:var(--r-full); font-size:var(--fs-caption); color:var(--accent-deep); letter-spacing:var(--ls-wide); }
+.sug-chip:active { background:var(--accent-glow); }
+
+.thinking-row { min-height:44rpx; display:flex; align-items:center; padding-left:var(--sp-5); border-left:3rpx solid var(--accent-muted); }
+
+.card-list { margin-top:var(--sp-5); display:flex; flex-direction:column; gap:var(--sp-5) }
+.info-card { background:var(--bg-card); border-radius:var(--r-lg); padding:var(--sp-5) var(--sp-5); border:1rpx solid var(--border); border-left:4rpx solid var(--accent); box-shadow:var(--shadow-sm); }
+.info-card-title { font-size:var(--fs-body); font-weight:var(--fw-semi); color:var(--text-primary); margin-bottom:var(--sp-4); font-family:var(--font-serif); }
+.info-card-conflict { font-size:var(--fs-caption); color:var(--amber); background:var(--amber-dim); border-radius:var(--r-md); padding:var(--sp-3) var(--sp-4); margin-bottom:var(--sp-4); }
+.info-card-fields { display:flex; flex-direction:column; gap:var(--sp-3); margin-bottom:var(--sp-5) }
+.info-card-field { display:flex; justify-content:space-between; font-size:var(--fs-base) }
+.icf-label { color:var(--text-disabled); font-size:var(--fs-caption); }
+.icf-value { color:var(--text-primary); font-weight:var(--fw-medium); }
+.info-card-actions { display:flex; gap:var(--sp-4) }
+.card-btn { flex:1; text-align:center; padding:var(--sp-3) 0; border-radius:var(--r-full); font-size:var(--fs-caption); border:1rpx solid var(--accent-muted); color:var(--accent-deep) }
+.card-btn-primary { background:var(--accent); color:var(--color-on-accent); border:none }
+.thinking-dots { display:flex; gap:var(--sp-2); padding:var(--sp-2) 0; opacity:0; animation:dotFadeIn var(--dur-base) var(--ease-out) .1s forwards }
+.thinking-dot { width:10rpx; height:10rpx; border-radius:50%; background:var(--accent); animation:dotBounce 1.4s var(--ease-out) infinite }
+.thinking-dot:nth-child(2){animation-delay:.2s}.thinking-dot:nth-child(3){animation-delay:.4s}
+
+
