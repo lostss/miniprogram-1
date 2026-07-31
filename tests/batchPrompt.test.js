@@ -30,16 +30,19 @@ describe('buildBatchExtractionPrompt', () => {
     expect(userPrompt).toContain('现价表C')
   })
 
-  test('置信度独立标注：每张图的置信度附在该图块下方', () => {
+  test('置信度独立标注：每张图的置信度附在该图块下方（含高置信项，全保留）', () => {
     const ocrResults = [
-      { fileId: 'cloud://f1', ocrText: 'text1', ocrConfInfo: [{ text: '张三', ocr_conf: 75 }] },
-      { fileId: 'cloud://f2', ocrText: 'text2', ocrConfInfo: [{ text: '李四', ocr_conf: 62 }] }
+      { fileId: 'cloud://f1', ocrText: 'text1', ocrConfInfo: [{ text: '张三', ocr_conf: 95 }] },
+      { fileId: 'cloud://f2', ocrText: 'text2', ocrConfInfo: [{ text: '李四', ocr_conf: 88 }] }
     ]
     const { userPrompt } = buildBatchExtractionPrompt(ocrResults)
     expect(userPrompt).toContain('[图片_1 字符级置信度参考]')
     expect(userPrompt).toContain('[图片_2 字符级置信度参考]')
     expect(userPrompt).toContain('张三')
     expect(userPrompt).toContain('李四')
+    // 全保留：高置信项（95/88）不被过滤
+    expect(userPrompt).toContain('95%')
+    expect(userPrompt).toContain('88%')
   })
 
   test('空 ocrConfInfo：显示无置信度信息', () => {
@@ -63,6 +66,7 @@ describe('buildBatchExtractionPrompt', () => {
     expect(systemPrompt).toContain('列标题与单元格内容分离')
     expect(systemPrompt).toContain('提取重点')
     expect(systemPrompt).toContain('保单号/保险合同号')
+    expect(systemPrompt).toContain('换行或分页撕裂')
   })
 
   test('OCR 文本不截断：超长 ocrText 完整保留', () => {

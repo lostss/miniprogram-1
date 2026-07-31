@@ -20,6 +20,7 @@ const SYSTEM_PROMPT = `你是保单信息提取 AI。从 OCR 文本中提取保�
 - 表格列标题与单元格内容分离排列，需根据语义自行关联（如"险种名称"与具体产品名、"基本保险金额"与具体金额）
 - 文本顺序不反映视觉布局顺序，请基于语义还原表格结构
 - 可能存在 OCR 误识别、缺字、多余换行，请结合上下文判断
+- 相邻行可能是同一表格单元格被换行或分页撕裂，需先合并理解再提取（如"至2044年04月22日"与"人30周岁"实为同一行内容）
 
 【提取重点】
 以下字段为核心提取目标，其他信息（客服电话、地址、保单说明、页脚等）忽略：
@@ -177,6 +178,7 @@ const BATCH_SYSTEM_PROMPT = `你是保单信息批量提取 AI。输入包含多
 - 表格列标题与单元格内容分离排列，需根据语义自行关联（如"险种名称"与具体产品名、"基本保险金额"与具体金额）
 - 文本顺序不反映视觉布局顺序，请基于语义还原表格结构
 - 可能存在 OCR 误识别、缺字、多余换行，请结合上下文判断
+- 相邻行可能是同一表格单元格被换行或分页撕裂，需先合并理解再提取（如"至2044年04月22日"与"人30周岁"实为同一行内容）
 
 【提取重点】
 以下字段为核心提取目标，其他信息（客服电话、地址、保单说明、页脚等）忽略：
@@ -256,8 +258,8 @@ function buildBatchExtractionPrompt(ocrResults) {
     var idx = i + 1
     var ocrText = item.ocrText || ''
     var confs = (item.ocrConfInfo || [])
-      .filter(function(c) { return c && typeof c.ocr_conf === 'number' && c.ocr_conf < 80 })
-      .slice(0, 10)
+      .filter(function(c) { return c && typeof c.ocr_conf === 'number' })
+      .slice(0, 30)
     var confLines = confs.length > 0
       ? confs.map(function(c) { return '  "' + c.text + '" ' + c.ocr_conf + '%' }).join('\n')
       : '  无字符级置信度信息'

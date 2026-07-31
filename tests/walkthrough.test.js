@@ -204,6 +204,7 @@ describe('G. OCR 提取', function() {
     expect(systemPrompt).toContain('field_confidence')
     expect(systemPrompt).toContain('输入特征')
     expect(systemPrompt).toContain('提取重点')
+    expect(systemPrompt).toContain('换行或分页撕裂')
     expect(userPrompt).toContain('OCR文本')
     expect(userPrompt).toContain('OCR字符级置信度参考')
     expect(userPrompt).toContain('95%')
