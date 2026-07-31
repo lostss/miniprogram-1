@@ -78,9 +78,15 @@ document_type 为 "policy" 或 "mixed" 时：
     "field_confidence": {
       "policy_number": 0.0,
       "insurance_company": 0.0,
+      "contract_effective_date": 0.0,
       "policyholder_name": 0.0,
       "insured_name": 0.0,
+      "beneficiary_name": 0.0,
+      "product_name": 0.0,
+      "insurance_period": 0.0,
       "sum_assured": 0.0,
+      "payment_method": 0.0,
+      "payment_period": 0.0,
       "annual_premium": 0.0
     },
     "overall_confidence": 0.0
@@ -117,15 +123,16 @@ document_type 为 "cash_value" 或 "mixed" 时，增加 cash_value_data 字段�
 1. 仅输出 JSON，不输出任何解释、markdown、注释
 2. 字段必须使用上述名称，禁止臆造字段名
 3. 字段值缺失时返回空字符串 ""，数字字段缺失返回 0
-4. field_confidence 取值 0.0-1.0，对每个核心字段都必填，不可省略
+4. field_confidence 取值 0.0-1.0，对 contract_basic 和 products 中实际输出的每个字段都必填，不可省略
 5. overall_confidence = field_confidence 各字段平均值（必须填，不可空）
+5.1 置信度语义：≥0.95 表示字段在 OCR 文本中明确、无歧义；0.8-0.95 表示基本可辨但有轻微噪音；<0.8 表示存在明显 OCR 错误或缺失。必须如实反映可信度，不得统一打高分
 6. 多产品保单：products 数组承载所有子产品
 7. result="fail" 仅当：OCR 文本既不是保单也不是现价表 / 完全无法识别
 8. 日期格式：YYYY-MM-DD；金额：数字（单位元，不要带"元"字）
-9. insurance_category 白名单：寿险/重疾/医疗/意外/年金/养老/教育/投连/万能/其他
-10. payment_method 白名单：趸交/年交/半年交/季交/月交
+9. insurance_category 值必须是下列之一：寿险、重疾、医疗、意外、年金、养老、教育、投连、万能、其他
+10. payment_method 值必须是下列之一：趸交、年交、半年交、季交、月交
 11. 投保人=被保人：若保单未明确区分投保人和被保人，且文本中仅出现一个姓名（如仅"投保人李阳勇"），则该姓名同时填入 policyholder_name 和 insured_name
-12. 特殊条款脱敏：special_agreement 中若含身份证号/银行卡号/手机号，原样提取，由后端负责脱敏`
+12. 特殊条款脱敏：special_agreement 中若含身份证号/银行卡号/手机号，直接用 *** 替换敏感数字段，不提取原文`
 
 // ======================== 构建函数 ========================
 /**
@@ -184,7 +191,7 @@ const BATCH_SYSTEM_PROMPT = `你是保单信息批量提取 AI。输入包含多
 - "unknown" → 无法识别，该图 result="fail"
 
 【输出格式 — JSON 数组】
-顶层必须是 JSON 数组，长度严格等于输入图片数 N。每个元素结构：
+顶层必须是 JSON 数组，为每张输入图片输出一个元素。每个元素结构：
 [
   {
     "idx": 1,
@@ -204,9 +211,10 @@ const BATCH_SYSTEM_PROMPT = `你是保单信息批量提取 AI。输入包含多
           "payment_period": "", "annual_premium": 0 }
       ],
       "field_confidence": {
-        "policy_number": 0.0, "insurance_company": 0.0,
-        "policyholder_name": 0.0, "insured_name": 0.0,
-        "sum_assured": 0.0, "annual_premium": 0.0
+        "policy_number": 0.0, "insurance_company": 0.0, "contract_effective_date": 0.0,
+        "policyholder_name": 0.0, "insured_name": 0.0, "beneficiary_name": 0.0,
+        "product_name": 0.0, "insurance_period": 0.0, "sum_assured": 0.0,
+        "payment_method": 0.0, "payment_period": 0.0, "annual_premium": 0.0
       },
       "overall_confidence": 0.0
     },
@@ -221,19 +229,20 @@ const BATCH_SYSTEM_PROMPT = `你是保单信息批量提取 AI。输入包含多
 document_type 为 "policy" 时只输出 data；"cash_value" 时只输出 cash_value_data；"mixed" 时两者都输出；"unknown" 时 data 和 cash_value_data 都省略。
 
 【不可变更的核心约束】
-1. 顶层必须是 JSON 数组，长度严格等于输入图片数 N
-2. 数组每个元素的 idx 必须从 1 递增到 N，与输入【图片_N】一一对应
+1. 顶层必须是 JSON 数组，为每张图片输出一个对象
+2. 每个对象必须带 idx 声明对应的图片编号（如【图片_3】→ idx=3）；若某张图无法提取，该元素 result="fail" 且仍保留该 idx；idx 不得重复
 3. 每张图独立判断 document_type 和 result，单张图失败不影响其他图
 4. 仅输出 JSON，不输出任何解释、markdown、注释
 5. 字段必须使用上述名称，禁止臆造字段名
 6. 字段值缺失返回空字符串 ""，数字字段缺失返回 0
-7. field_confidence 取值 0.0-1.0，overall_confidence = field_confidence 各字段平均值
+7. field_confidence 取值 0.0-1.0，对 contract_basic 和 products 中实际输出的每个字段都必填；overall_confidence = 各字段平均值
+7.1 置信度语义：≥0.95 表示字段明确无歧义；0.8-0.95 基本可辨但有轻微噪音；<0.8 存在明显 OCR 错误或缺失，不得统一打高分
 8. 日期格式 YYYY-MM-DD；金额数字（单位元，不带"元"字）
-9. insurance_category 白名单：寿险/重疾/医疗/意外/年金/养老/教育/投连/万能/其他
-10. payment_method 白名单：趸交/年交/半年交/季交/月交
+9. insurance_category 值必须是下列之一：寿险、重疾、医疗、意外、年金、养老、教育、投连、万能、其他
+10. payment_method 值必须是下列之一：趸交、年交、半年交、季交、月交
 11. 投保人=被保人：若保单未明确区分且仅出现一个姓名，同时填入 policyholder_name 和 insured_name
 12. cash_values 中 y=保单年度（整数），v=现金价值（元，纯数字），n=可选特殊标注
-13. special_agreement 含身份证号/银行卡号/手机号原样提取，由后端脱敏`
+13. special_agreement 含身份证号/银行卡号/手机号时用 *** 替换敏感数字段，不提取原文`
 
 /**
  * 构建批量提取提示词
@@ -247,8 +256,8 @@ function buildBatchExtractionPrompt(ocrResults) {
     var idx = i + 1
     var ocrText = item.ocrText || ''
     var confs = (item.ocrConfInfo || [])
-      .filter(function(c) { return c && typeof c.ocr_conf === 'number' })
-      .slice(0, 30)
+      .filter(function(c) { return c && typeof c.ocr_conf === 'number' && c.ocr_conf < 80 })
+      .slice(0, 10)
     var confLines = confs.length > 0
       ? confs.map(function(c) { return '  "' + c.text + '" ' + c.ocr_conf + '%' }).join('\n')
       : '  无字符级置信度信息'

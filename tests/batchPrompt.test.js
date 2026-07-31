@@ -32,8 +32,8 @@ describe('buildBatchExtractionPrompt', () => {
 
   test('置信度独立标注：每张图的置信度附在该图块下方', () => {
     const ocrResults = [
-      { fileId: 'cloud://f1', ocrText: 'text1', ocrConfInfo: [{ text: '张三', ocr_conf: 95 }] },
-      { fileId: 'cloud://f2', ocrText: 'text2', ocrConfInfo: [{ text: '李四', ocr_conf: 88 }] }
+      { fileId: 'cloud://f1', ocrText: 'text1', ocrConfInfo: [{ text: '张三', ocr_conf: 75 }] },
+      { fileId: 'cloud://f2', ocrText: 'text2', ocrConfInfo: [{ text: '李四', ocr_conf: 62 }] }
     ]
     const { userPrompt } = buildBatchExtractionPrompt(ocrResults)
     expect(userPrompt).toContain('[图片_1 字符级置信度参考]')
