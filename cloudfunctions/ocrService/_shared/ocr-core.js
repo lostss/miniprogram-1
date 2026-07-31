@@ -215,12 +215,19 @@ async function _callBatchAI(ocrResults, deps) {
     throw e
   }
   const parsed = _parseBatchJSON(res.text)
-  if (!Array.isArray(parsed)) {
+  // 兼容 AI 返回 {"results": [...]} / {"data": [...]} / {"policies": [...]} 包裹格式
+  let arr = parsed
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    arr = parsed.results || parsed.data || parsed.policies || parsed.list || null
+  }
+  if (!Array.isArray(arr)) {
+    console.error('[ocr-core] _callBatchAI ai_format: 原始返回前800字符=', (res.text || '').substring(0, 800))
+    console.error('[ocr-core] _callBatchAI ai_format: parsed=', JSON.stringify(parsed).substring(0, 300))
     const err = new Error('ai_format')
     err.code = 'ai_format'
     throw err
   }
-  return { aiResponse: parsed, tokens: res.usage || {}, aiCallCount: 1 }
+  return { aiResponse: arr, tokens: res.usage || {}, aiCallCount: 1 }
 }
 
 /**
