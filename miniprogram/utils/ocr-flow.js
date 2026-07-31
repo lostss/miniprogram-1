@@ -508,9 +508,24 @@ function errorToUI(e) {
   } else if (code === 'ai_format') {
     title = 'AI返回格式错误'
     content = '请重试'
+  } else if (code === 'ai_batch_failed') {
+    title = 'AI批量提取失败'
+    content = msg || 'AI 服务异常，请重试'
+  } else if (code === 'ai_extract_failed') {
+    title = 'AI提取失败'
+    content = msg || '该图 AI 提取失败，可重试'
+  } else if (code === 'ai_length_mismatch') {
+    title = 'AI返回结果不完整'
+    content = '请重试'
   } else if (code === 'ai_exception') {
     title = 'AI服务异常'
     content = '请重试'
+  } else if (code === 'ocr_api_error') {
+    title = '云函数调用失败'
+    content = msg || '请确认云函数已部署后重试'
+  } else if (code === 'ocr_exception' || code === 'ocr_failed') {
+    title = 'OCR识别异常'
+    content = msg || '请重试'
   } else if (code === 'ocr_empty') {
     title = 'OCR识别结果为空'
     content = '请确认图片清晰后重试'
