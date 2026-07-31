@@ -7,6 +7,7 @@
     "wx-server-sdk": "~2.6.3",
     "tencentcloud-sdk-nodejs-ocr": "^4.0.0",
     "@cloudbase/node-sdk": "^3.16.0",
-    "ws": "^8.16.0"
+    "ws": "^8.16.0",
+    "axios": "^1.7.0"
   }
 }

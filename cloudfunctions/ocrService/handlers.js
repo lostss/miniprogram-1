@@ -16,7 +16,10 @@ const { buildExtractionPrompt, buildBatchExtractionPrompt } = require('./prompts
 const { logOperation } = require('./_shared/logSeam')
 const { wrapError } = require('./_shared/errorHandler')
 const { matchPoliciesToMembers } = require('./_shared/member-matcher')
-const { AI_TIMEOUT } = require('./_shared/config')
+const { AI_TIMEOUT, AI } = require('./_shared/config')
+// DeepSeek 直连模式：USE_DIRECT=true 时走 callChatDirect，绕过 TokenHub 限流（并发 2500）
+const _aiClient = require('./_shared/ai-client')
+const _callFn = AI.USE_DIRECT ? _aiClient.callChatDirect : _aiClient.callChat
 
 /**
  * AI 错误分类 — 统一识别 429/超时/格式错误
@@ -365,7 +368,7 @@ async function aiExtractBatch(db, openid, event) {
     familyId: familyId || null,
     buildBatchExtractionPrompt: buildBatchExtractionPrompt,
     safeCallChat: require('./_shared/ai-gateway').safeCallChat,
-    callChat: require('./_shared/ai-client').callChat,
+    callChat: _callFn,
     AI_TIMEOUT: AI_TIMEOUT
   }
 

@@ -75,6 +75,8 @@ async function aiExtract(ocrText, ocrConfInfo, deps) {
         )
         const parsed = _parseAIJSON(res.text)
         if (!parsed) {
+          // 诊断日志：AI 返回内容但 JSON 解析失败时，记录前 500 字符
+          console.error('[ocr-extractor] ai_format, raw text (first 500):', String(res.text || '').substring(0, 500))
           const err = new Error('ai_format')
           err.code = 'ai_format'
           throw err
@@ -82,9 +84,11 @@ async function aiExtract(ocrText, ocrConfInfo, deps) {
         return { parsed, usage: res.usage }
       },
       {
-        maxAttempts: 1,
-        delayMs: 0,
-        retryOn: function(e) { return false },
+        // DeepSeek JSON Output 模式有概率返回空 content（官方已知问题）
+        // DeepSeek 并发 2500，重试无 429 风险，对 ai_empty 启用 1 次重试
+        maxAttempts: 2,
+        delayMs: 500,
+        retryOn: function(e) { return e.code === 'ai_empty' },
         label: 'ocr-extractor aiExtract'
       }
     )

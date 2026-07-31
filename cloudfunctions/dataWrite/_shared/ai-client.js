@@ -141,4 +141,79 @@ function _extractToolCalls(messages, rawResponses) {
   return []
 }
 
-module.exports = { callThink, callChat, callChatWithTools }
+/**
+ * DeepSeek 直连 — OpenAI 兼容格式，绕过 TokenHub 限流
+ * 并发上限 2500（flash） / 500（pro），429 几乎不会触发
+ * 文档: https://api-docs.deepseek.com/zh-cn/
+ */
+async function callChatDirect(messages, opts = {}) {
+  const { responseFormat, maxTokens, temperature, timeoutMs, cacheKey } = opts
+  const axios = require('axios')
+  const apiKey = process.env[AI.DIRECT_API_KEY_ENV]
+  if (!apiKey) {
+    const err = new Error('缺少 ' + AI.DIRECT_API_KEY_ENV + ' 环境变量')
+    err.code = 'missing_api_key'
+    throw err
+  }
+
+  const reqOpts = {
+    // 强制使用 DIRECT_MODEL，忽略上层传入的 model（TokenHub 的 hy3 不适用 DeepSeek API）
+    model: AI.DIRECT_MODEL,
+    messages,
+    stream: false
+  }
+  if (responseFormat) reqOpts.response_format = responseFormat
+  if (maxTokens) reqOpts.max_tokens = maxTokens
+  if (temperature != null) reqOpts.temperature = temperature
+  if (cacheKey) reqOpts.prompt_cache_key = cacheKey
+
+  const timeout = timeoutMs || 30000
+  try {
+    const res = await axios.post(AI.DIRECT_BASE_URL + '/chat/completions', reqOpts, {
+      headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+      timeout: timeout,
+      validateStatus: function () { return true }
+    })
+
+    if (res.status === 429) {
+      const err = new Error('RATE_LIMIT')
+      err.code = '429'
+      err.statusCode = 429
+      throw err
+    }
+
+    if (res.status < 200 || res.status >= 300) {
+      var errDetail = 'status=' + res.status
+      if (res.data) {
+        if (res.data.error && res.data.error.message) errDetail += ' msg=' + res.data.error.message
+        else errDetail += ' body=' + JSON.stringify(res.data).substring(0, 500)
+      }
+      console.error('[ai-client callChatDirect] non-2xx:', errDetail, '| req model:', reqOpts.model, '| msgs:', messages.length)
+      const err = new Error(errDetail)
+      err.code = res.status >= 500 ? 'ERR_BAD_RESPONSE' : 'ERR_BAD_REQUEST'
+      throw err
+    }
+
+    const content = (res.data.choices[0].message.content || '').trim()
+    if (!content) {
+      const err = new Error('ai_empty')
+      err.code = 'ai_empty'
+      throw err
+    }
+
+    return {
+      text: content,
+      usage: res.data.usage || {}
+    }
+  } catch (e) {
+    if (e.code === '429' || e.code === 'ai_empty' || e.code === 'missing_api_key' || e.code === 'ERR_BAD_REQUEST' || e.code === 'ERR_BAD_RESPONSE') throw e
+    if (e.code === 'ECONNABORTED') {
+      const err = new Error('CHAT_TIMEOUT')
+      err.code = 'CHAT_TIMEOUT'
+      throw err
+    }
+    throw e
+  }
+}
+
+module.exports = { callThink, callChat, callChatWithTools, callChatDirect }

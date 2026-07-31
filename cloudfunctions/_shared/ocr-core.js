@@ -93,9 +93,13 @@ async function aiPhase({ ocrText, ocrConfInfo, fileId, t0, t1, t2, cloud, db, bu
 
   // ---- Step 3: AI 提取（委托 ocr-extractor） ----
   // 架构审计 I：删除预构建 systemPrompt（原仅 retry 用，但 retry 已改为内部自行构建）
+  // DeepSeek 直连模式：USE_DIRECT=true 时走 callChatDirect，绕过 TokenHub 限流（并发 2500）
+  const { USE_DIRECT } = require('./config').AI
+  const aiClient = require('./ai-client')
+  const callFn = USE_DIRECT ? aiClient.callChatDirect : aiClient.callChat
   const aiDeps = { cloud, db, openid, familyId, buildExtractionPrompt, AI_TIMEOUT,
     safeCallChat: require('./ai-gateway').safeCallChat,
-    callChat: require('./ai-client').callChat
+    callChat: callFn
   }
 
   const extractResult = await aiExtract(ocrText, ocrConfInfo, aiDeps)
