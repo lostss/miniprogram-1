@@ -148,7 +148,7 @@ function buildExtractionPrompt(ocrText, ocrConfInfo) {
   const userPrompt = `请从以下 OCR 文本中提取保单信息，按系统提示词约定的 JSON 格式返回。
 
 【OCR文本】
-${(ocrText || '').substring(0, 4000)}
+${ocrText || ''}
 
 【OCR字符级置信度参考】
 ${confLines}
@@ -245,7 +245,7 @@ function buildBatchExtractionPrompt(ocrResults) {
 
   const blocks = ocrResults.map(function(item, i) {
     var idx = i + 1
-    var ocrText = (item.ocrText || '').substring(0, 4000)
+    var ocrText = item.ocrText || ''
     var confs = (item.ocrConfInfo || [])
       .filter(function(c) { return c && typeof c.ocr_conf === 'number' })
       .slice(0, 30)

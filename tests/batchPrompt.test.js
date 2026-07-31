@@ -65,14 +65,14 @@ describe('buildBatchExtractionPrompt', () => {
     expect(systemPrompt).toContain('保单号/保险合同号')
   })
 
-  test('OCR 文本超长截断：单张图 ocrText 截断到 4000 字符', () => {
+  test('OCR 文本不截断：超长 ocrText 完整保留', () => {
     const longText = 'A'.repeat(5000)
     const ocrResults = [
       { fileId: 'cloud://f1', ocrText: longText, ocrConfInfo: [] }
     ]
     const { userPrompt } = buildBatchExtractionPrompt(ocrResults)
-    // 截断后【图片_1】块内不应超过 4000 字符的 A
+    // 不截断：5000 个 A 应全部保留
     const aCount = (userPrompt.match(/A/g) || []).length
-    expect(aCount).toBeLessThanOrEqual(4000)
+    expect(aCount).toBe(5000)
   })
 })

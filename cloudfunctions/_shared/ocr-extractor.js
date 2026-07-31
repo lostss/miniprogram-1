@@ -64,7 +64,7 @@ async function aiExtract(ocrText, ocrConfInfo, deps) {
           ]
           : [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: ocrText.substring(0, 4000) }
+            { role: 'user', content: ocrText }
           ]
         const sessionId = (attempt === 0 ? 'ocr_' : 'ocr_retry_') + Date.now().toString(36)
         const res = await safeCallChat(
