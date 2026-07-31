@@ -151,4 +151,92 @@ ${confLines}
   return { systemPrompt, userPrompt }
 }
 
-module.exports = { buildExtractionPrompt, SYSTEM_PROMPT }
+// ======================== 批量提取系统提示词 ========================
+const BATCH_SYSTEM_PROMPT = `你是保单信息批量提取 AI。输入包含多张图片的 OCR 文本，每张图以【图片_N】标记分隔。你需要为每张图独立提取保单信息，输出严格 JSON 数组。
+
+【单图文档类型判断】
+对每张图独立判断 document_type：
+- "policy" → 保单，按保单格式输出
+- "cash_value" → 纯现价表，按现价表格式输出
+- "mixed" → 一张图同时含保单 + 现价表，两者都输出
+- "unknown" → 无法识别，该图 result="fail"
+
+【输出格式 — JSON 数组】
+顶层必须是 JSON 数组，长度严格等于输入图片数 N。每个元素结构：
+[
+  {
+    "idx": 1,
+    "document_type": "policy" | "cash_value" | "mixed" | "unknown",
+    "result": "success" | "fail",
+    "message": "失败原因（fail 时必填）",
+    "data": {
+      "contract_basic": {
+        "policy_number": "", "insurance_company": "", "contract_effective_date": "",
+        "policyholder_name": "", "insured_name": "", "beneficiary_name": "",
+        "special_agreement": "", "insured_birth_date": "",
+        "policyholder_birth_date": "", "beneficiary_birth_date": ""
+      },
+      "products": [
+        { "product_name": "", "insurance_category": "", "insurance_type": "",
+          "insurance_period": "", "sum_assured": 0, "payment_method": "",
+          "payment_period": "", "annual_premium": 0 }
+      ],
+      "field_confidence": {
+        "policy_number": 0.0, "insurance_company": 0.0,
+        "policyholder_name": 0.0, "insured_name": 0.0,
+        "sum_assured": 0.0, "annual_premium": 0.0
+      },
+      "overall_confidence": 0.0
+    },
+    "cash_value_data": {
+      "header_info": { "product_name": "", "insured_name": "", "policy_number": "", "insurance_type": "" },
+      "cash_values": [ { "y": 1, "v": 0, "n": "可选标注" } ],
+      "overall_confidence": 0.0
+    }
+  }
+]
+
+document_type 为 "policy" 时只输出 data；"cash_value" 时只输出 cash_value_data；"mixed" 时两者都输出；"unknown" 时 data 和 cash_value_data 都省略。
+
+【不可变更的核心约束】
+1. 顶层必须是 JSON 数组，长度严格等于输入图片数 N
+2. 数组每个元素的 idx 必须从 1 递增到 N，与输入【图片_N】一一对应
+3. 每张图独立判断 document_type 和 result，单张图失败不影响其他图
+4. 仅输出 JSON，不输出任何解释、markdown、注释
+5. 字段必须使用上述名称，禁止臆造字段名
+6. 字段值缺失返回空字符串 ""，数字字段缺失返回 0
+7. field_confidence 取值 0.0-1.0，overall_confidence = field_confidence 各字段平均值
+8. 日期格式 YYYY-MM-DD；金额数字（单位元，不带"元"字）
+9. insurance_category 白名单：寿险/重疾/医疗/意外/年金/养老/教育/投连/万能/其他
+10. payment_method 白名单：趸交/年交/半年交/季交/月交
+11. 投保人=被保人：若保单未明确区分且仅出现一个姓名，同时填入 policyholder_name 和 insured_name
+12. cash_values 中 y=保单年度（整数），v=现金价值（元，纯数字），n=可选特殊标注
+13. special_agreement 含身份证号/银行卡号/手机号原样提取，由后端脱敏`
+
+/**
+ * 构建批量提取提示词
+ * @param {Array<{fileId:string, ocrText:string, ocrConfInfo:Array, t0:number, t1:number, t2:number}>} ocrResults
+ * @returns {{systemPrompt: string, userPrompt: string}}
+ */
+function buildBatchExtractionPrompt(ocrResults) {
+  const systemPrompt = BATCH_SYSTEM_PROMPT
+
+  const blocks = ocrResults.map(function(item, i) {
+    var idx = i + 1
+    var ocrText = (item.ocrText || '').substring(0, 4000)
+    var confs = (item.ocrConfInfo || [])
+      .filter(function(c) { return c && typeof c.ocr_conf === 'number' })
+      .slice(0, 30)
+    var confLines = confs.length > 0
+      ? confs.map(function(c) { return '  "' + c.text + '" ' + c.ocr_conf + '%' }).join('\n')
+      : '  无字符级置信度信息'
+
+    return '【图片_' + idx + '】\n' + ocrText + '\n\n[图片_' + idx + ' 字符级置信度参考]\n' + confLines
+  })
+
+  var userPrompt = '请从以下多张图片的 OCR 文本中独立提取每张图的保单信息，按系统提示词约定的 JSON 数组格式返回。每张图独立判断 document_type 和 result。\n\n' + blocks.join('\n\n')
+
+  return { systemPrompt: systemPrompt, userPrompt: userPrompt }
+}
+
+module.exports = { buildExtractionPrompt, SYSTEM_PROMPT, buildBatchExtractionPrompt, BATCH_SYSTEM_PROMPT }
