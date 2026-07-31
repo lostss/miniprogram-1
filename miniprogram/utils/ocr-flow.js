@@ -97,13 +97,13 @@ function compress(path) {
 }
 
 // ============================================================
-// 并发压缩 + 上传（限流5并发，单张失败不休止）
+// 并发压缩 + 上传（限流9并发，单张失败不休止）
 // ============================================================
 async function compressAndUpload(paths, setData, prefix) {
   prefix = prefix || 'temp'
   var uploaded = 0
   var failures = 0
-  var batchSize = 5
+  var batchSize = 9
   var fileIds = new Array(paths.length)
 
   for (var b = 0; b < paths.length; b += batchSize) {
