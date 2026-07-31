@@ -133,7 +133,7 @@ document_type 为 "cash_value" 或 "mixed" 时，增加 cash_value_data 字段�
 9. insurance_category 值必须是下列之一：寿险、重疾、医疗、意外、年金、养老、教育、投连、万能、其他
 10. payment_method 值必须是下列之一：趸交、年交、半年交、季交、月交
 11. 投保人=被保人：若保单未明确区分投保人和被保人，且文本中仅出现一个姓名（如仅"投保人李阳勇"），则该姓名同时填入 policyholder_name 和 insured_name
-12. 特殊条款脱敏：special_agreement 中若含身份证号/银行卡号/手机号，直接用 *** 替换敏感数字段，不提取原文`
+12. 特殊条款脱敏：special_agreement 中含身份证号/银行卡号/手机号时原样提取，由后端统一脱敏。保单号/保险合同号（policy_number）是核心提取字段，须原样提取，不得脱敏`
 
 // ======================== 构建函数 ========================
 /**
@@ -244,7 +244,7 @@ document_type 为 "policy" 时只输出 data；"cash_value" 时只输出 cash_va
 10. payment_method 值必须是下列之一：趸交、年交、半年交、季交、月交
 11. 投保人=被保人：若保单未明确区分且仅出现一个姓名，同时填入 policyholder_name 和 insured_name
 12. cash_values 中 y=保单年度（整数），v=现金价值（元，纯数字），n=可选特殊标注
-13. special_agreement 含身份证号/银行卡号/手机号时用 *** 替换敏感数字段，不提取原文`
+13. special_agreement 中含身份证号/银行卡号/手机号时原样提取，由后端统一脱敏；保单号/保险合同号（policy_number）须原样提取，不得脱敏`
 
 /**
  * 构建批量提取提示词
