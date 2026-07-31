@@ -11,11 +11,12 @@
  */
 
 const cloud = require('wx-server-sdk')
-const { ocrPhase, aiPhase } = require('./_shared/ocr-core')
-const { buildExtractionPrompt } = require('./prompts')
+const { ocrPhase, aiPhase, aiExtractBatchPhase } = require('./_shared/ocr-core')
+const { buildExtractionPrompt, buildBatchExtractionPrompt } = require('./prompts')
 const { logOperation } = require('./_shared/logSeam')
 const { wrapError } = require('./_shared/errorHandler')
 const { matchPoliciesToMembers } = require('./_shared/member-matcher')
+const { AI_TIMEOUT } = require('./_shared/config')
 
 /**
  * AI 错误分类 — 统一识别 429/超时/格式错误
@@ -306,4 +307,155 @@ async function aiExtract(db, openid, event) {
   }
 }
 
-module.exports = { ocrSingle, ocrOnly, aiExtract, matchPolicies }
+// ======================== aiExtractBatch ========================
+/**
+ * 方案 C：批量拼接提取（N 张图 OCR 文本拼接后 1 次 AI 调用）
+ * 入参：{ ocr_results: [{fileId, ocrText, ocrConfInfo, t0, t1, t2}], familyId? }
+ * 出参：{ code, data: { results: [...], total_duration_ms, split_used, ai_call_count, tokens?, success_count, fail_count } }
+ *
+ * 设计要点：
+ *   - 空 ocrText 项在前端过滤标记 ocr_empty，不参与 AI 调用
+ *   - AI 整体异常时所有有效项标记 ai_batch_failed，但仍然返回 200 + results
+ *   - split_used=true 表示因超 OCR_BATCH_MAX_CHARS 触发对半拆分降级
+ */
+async function aiExtractBatch(db, openid, event) {
+  const { ocr_results, familyId } = event
+  if (!ocr_results || !Array.isArray(ocr_results) || ocr_results.length === 0) {
+    return { code: 400, msg: '缺少参数 ocr_results' }
+  }
+  if (ocr_results.length > 10) {
+    return { code: 400, msg: '单次最多 10 张图片' }
+  }
+
+  // 过滤空 ocrText 项（标记 ocr_empty），保留原始位置
+  var validResults = []
+  var emptyFileIds = []
+  for (var i = 0; i < ocr_results.length; i++) {
+    var item = ocr_results[i]
+    if (!item || !item.ocrText || typeof item.ocrText !== 'string' || item.ocrText.length === 0) {
+      emptyFileIds.push({ idx: i + 1, fileId: item && item.fileId })
+    } else {
+      validResults.push(item)
+    }
+  }
+
+  // 全部为空：直接返回，不调用 AI
+  if (validResults.length === 0) {
+    var allEmpty = emptyFileIds.map(function(e) {
+      return { idx: e.idx, fileId: e.fileId, success: false, error: 'OCR识别结果为空', errorCode: 'ocr_empty' }
+    })
+    return {
+      code: 200,
+      data: {
+        results: allEmpty,
+        total_duration_ms: 0,
+        split_used: false,
+        ai_call_count: 0,
+        tokens: {},
+        success_count: 0,
+        fail_count: allEmpty.length
+      }
+    }
+  }
+
+  var deps = {
+    cloud: cloud,
+    db: db,
+    openid: openid,
+    familyId: familyId || null,
+    buildBatchExtractionPrompt: buildBatchExtractionPrompt,
+    safeCallChat: require('./_shared/ai-gateway').safeCallChat,
+    callChat: require('./_shared/ai-client').callChat,
+    AI_TIMEOUT: AI_TIMEOUT
+  }
+
+  var batchRes
+  try {
+    batchRes = await aiExtractBatchPhase(validResults, deps)
+  } catch (e) {
+    // 整体异常：所有有效项标记 ai_batch_failed
+    logOperation(db, {
+      openid, familyId: familyId || undefined, action: 'ai_extract_batch',
+      result: { status: 'fail', summary: 'AI批量提取异常', errorCode: 'ai_batch_failed' },
+      meta: { validCount: validResults.length, error: (e && e.message) || '' }
+    }).catch(function() {})
+    var failedResults = validResults.map(function(r, i) {
+      return { idx: i + 1, fileId: r.fileId, success: false, error: (e && e.message) || 'AI批量提取异常', errorCode: 'ai_batch_failed' }
+    })
+    return {
+      code: 200,
+      data: {
+        results: _mergeBatchResults(ocr_results, failedResults, emptyFileIds),
+        total_duration_ms: 0,
+        split_used: false,
+        ai_call_count: 0,
+        tokens: {},
+        success_count: 0,
+        fail_count: ocr_results.length
+      }
+    }
+  }
+
+  // 合并结果：保留原始位置顺序
+  var mergedResults = _mergeBatchResults(ocr_results, batchRes.results, emptyFileIds)
+  var successCount = 0, failCount = 0
+  for (var k = 0; k < mergedResults.length; k++) {
+    if (mergedResults[k].success) successCount++
+    else failCount++
+  }
+
+  logOperation(db, {
+    openid, familyId: familyId || undefined, action: 'ai_extract_batch',
+    result: { status: failCount > 0 ? 'partial' : 'ok', summary: '批量提取 ' + ocr_results.length + '张, 成功' + successCount + '/失败' + failCount },
+    meta: {
+      total: ocr_results.length, validCount: validResults.length, emptyCount: emptyFileIds.length,
+      successCount: successCount, failCount: failCount,
+      aiCallCount: batchRes.aiCallCount, splitUsed: batchRes.splitUsed, totalDurationMs: batchRes.totalDurationMs,
+      tokens: batchRes.tokens || {}
+    }
+  }).catch(function() {})
+
+  return {
+    code: 200,
+    data: {
+      results: mergedResults,
+      total_duration_ms: batchRes.totalDurationMs,
+      split_used: batchRes.splitUsed,
+      ai_call_count: batchRes.aiCallCount,
+      tokens: batchRes.tokens || {},
+      success_count: successCount,
+      fail_count: failCount
+    }
+  }
+}
+
+/**
+ * 合并批量结果：按原始 ocr_results 顺序，空 ocrText 项标记 ocr_empty，有效项从 batchResults 按 fileId 匹配
+ */
+function _mergeBatchResults(originalOcrResults, batchResults, emptyFileIds) {
+  var emptyByFileId = {}
+  for (var i = 0; i < emptyFileIds.length; i++) {
+    emptyByFileId[emptyFileIds[i].fileId] = true
+  }
+  var batchByFileId = {}
+  for (var j = 0; j < batchResults.length; j++) {
+    if (batchResults[j] && batchResults[j].fileId) {
+      batchByFileId[batchResults[j].fileId] = batchResults[j]
+    }
+  }
+  var merged = []
+  for (var k = 0; k < originalOcrResults.length; k++) {
+    var item = originalOcrResults[k]
+    var fid = item && item.fileId
+    if (emptyByFileId[fid]) {
+      merged.push({ idx: k + 1, fileId: fid, success: false, error: 'OCR识别结果为空', errorCode: 'ocr_empty' })
+    } else if (batchByFileId[fid]) {
+      merged.push(batchByFileId[fid])
+    } else {
+      merged.push({ idx: k + 1, fileId: fid, success: false, error: '结果缺失', errorCode: 'ai_batch_failed' })
+    }
+  }
+  return merged
+}
+
+module.exports = { ocrSingle, ocrOnly, aiExtract, aiExtractBatch, matchPolicies }
