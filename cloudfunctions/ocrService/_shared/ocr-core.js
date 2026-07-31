@@ -194,11 +194,26 @@ async function _callBatchAI(ocrResults, deps) {
     { role: 'user', content: userPrompt }
   ]
   const sessionId = 'ocr_batch_' + Date.now().toString(36)
-  const res = await safeCallChat(
-    messages, callChat,
-    { cloud, db, openid, familyId, sessionId, model: AI.OCR_MODEL, action: 'ocr_extract_batch', skipInjection: true, skipOutputAudit: true, skipContentSafety: true },
-    { maxTokens: AI.OCR_BATCH_MAX_TOKENS, temperature: AI.OCR_BATCH_TEMPERATURE, responseFormat: { type: 'json_object' }, timeoutMs: AI.OCR_BATCH_TIMEOUT, cacheKey: 'ocr-batch-v1' }
-  )
+  let res
+  try {
+    res = await safeCallChat(
+      messages, callChat,
+      { cloud, db, openid, familyId, sessionId, model: AI.OCR_MODEL, action: 'ocr_extract_batch', skipInjection: true, skipOutputAudit: true, skipContentSafety: true },
+      { maxTokens: AI.OCR_BATCH_MAX_TOKENS, temperature: AI.OCR_BATCH_TEMPERATURE, responseFormat: { type: 'json_object' }, timeoutMs: AI.OCR_BATCH_TIMEOUT, cacheKey: 'ocr-batch-v1' }
+    )
+  } catch (e) {
+    const status = (e && e.response && (e.response.status || e.response.statusCode)) || null
+    console.error('[ocr-core] _callBatchAI AI调用失败:', {
+      message: e && e.message, code: e && e.code, status: status,
+      responseData: e && e.response && e.response.data ? JSON.stringify(e.response.data).substring(0, 500) : null
+    })
+    if (status === 429 || (e && e.code === '429') || /429/.test(e && e.message)) {
+      const err = new Error('AI服务繁忙(429)')
+      err.code = '429'
+      throw err
+    }
+    throw e
+  }
   const parsed = _parseBatchJSON(res.text)
   if (!Array.isArray(parsed)) {
     const err = new Error('ai_format')
@@ -315,7 +330,8 @@ async function aiExtractBatchPhase(ocrResults, deps) {
       const t1 = Date.now()
       return _summarizeBatch(results, tokens, aiCallCount, t1 - t0, false)
     } catch (e) {
-      const results = ocrResults.map(r => ({ idx: r._batchIdx, fileId: r.fileId, success: false, error: (e && e.message) || 'AI异常', errorCode: e.code === 'ai_format' ? 'ai_format' : 'ai_batch_failed' }))
+      const errorCode = e.code === 'ai_format' ? 'ai_format' : (e.code === '429' ? '429' : 'ai_batch_failed')
+      const results = ocrResults.map(r => ({ idx: r._batchIdx, fileId: r.fileId, success: false, error: (e && e.message) || 'AI异常', errorCode: errorCode }))
       const t1 = Date.now()
       return _summarizeBatch(results, {}, 1, t1 - t0, false)
     }
