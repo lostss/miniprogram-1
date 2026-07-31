@@ -17,6 +17,11 @@ module.exports = {
     MAX_RETRIES: 2,
     OCR_MAX_TOKENS: 1200,
     OCR_TEMPERATURE: 0,
+    // 批量拼接提取（aiExtractBatch）
+    OCR_BATCH_MAX_CHARS: 84000,       // 拼接上限字符数（约 56K input token）
+    OCR_BATCH_MAX_TOKENS: 4000,       // 批量模式输出 token 上限
+    OCR_BATCH_TIMEOUT: 30000,         // 批量模式 AI 超时
+    OCR_BATCH_TEMPERATURE: 0
   },
 
   // -- AI 超时（按场景） --
