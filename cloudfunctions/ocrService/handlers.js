@@ -555,6 +555,107 @@ async function aiExtractParallel(db, openid, event) {
   }
 }
 
+// ======================== ocrExtractParallel ========================
+/**
+ * 方案 E：云端 OCR→AI 流水线并行（OCR 时间被隐藏）
+ * 入参：{ fileIds: string[], familyId? }
+ * 出参：与 aiExtractParallel 对齐（{ code, data: { results, total_duration_ms, ai_call_count, tokens, success_count, fail_count } }），前端可复用同一填充逻辑
+ *
+ * 流水线原理：_withConcurrency 并发启动 N 个「OCR→AI」任务，
+ * 各任务 OCR 完成后立即进入该张 AI，与其余任务仍在进行的 OCR 重叠。
+ * 相比前端两阶段（ocrOnly 全部完成后才 AI），OCR 阶段时间被完全隐藏。
+ */
+async function ocrExtractParallel(db, openid, event) {
+  const { fileIds, familyId } = event
+  if (!fileIds || !Array.isArray(fileIds) || fileIds.length === 0) {
+    return { code: 400, msg: '缺少参数 fileIds' }
+  }
+  if (fileIds.length > 10) {
+    return { code: 400, msg: '单次最多 10 张图片' }
+  }
+  for (const fid of fileIds) {
+    if (typeof fid !== 'string' || !fid.startsWith('cloud://')) {
+      return { code: 400, msg: 'fileId 格式非法，必须为 cloud:// 协议' }
+    }
+  }
+
+  var t0 = Date.now()
+  // 并发启动 N 个「OCR→AI」任务；OCR 20 QPS / DeepSeek 并发 2500，全并发安全
+  var tasks = fileIds.map(function(fid, i) {
+    return function() { return _ocrThenAi(fid, i, familyId || null, db, openid, t0) }
+  })
+  var results = await _withConcurrency(tasks, Math.min(fileIds.length, 10))
+
+  // tokens 汇总 + 统计
+  var successCount = 0, failCount = 0
+  var tokens = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+  for (var k = 0; k < results.length; k++) {
+    if (results[k].success) successCount++
+    else failCount++
+    var t = results[k].tokens
+    if (t) {
+      tokens.prompt_tokens += t.prompt_tokens || 0
+      tokens.completion_tokens += t.completion_tokens || 0
+      tokens.total_tokens += t.total_tokens || 0
+    }
+  }
+
+  logOperation(db, {
+    openid, familyId: familyId || undefined, action: 'ocr_extract_parallel',
+    result: { status: failCount > 0 ? 'partial' : 'ok', summary: '流水线提取 ' + fileIds.length + '张, 成功' + successCount + '/失败' + failCount },
+    meta: {
+      total: fileIds.length, successCount: successCount, failCount: failCount,
+      aiCallCount: successCount, totalDurationMs: Date.now() - t0, tokens: tokens
+    }
+  }).catch(function() {})
+
+  return {
+    code: 200,
+    data: {
+      results: results,
+      total_duration_ms: Date.now() - t0,
+      ai_call_count: successCount,
+      tokens: tokens,
+      success_count: successCount,
+      fail_count: failCount
+    }
+  }
+}
+
+/** 单张「OCR→AI」流水线任务：OCR 完成立即 AI，失败各自独立标记 */
+async function _ocrThenAi(fid, i, familyId, db, openid, t0) {
+  try {
+    var ocr = await ocrPhase({ cloud: cloud, fileId: fid, openid: openid, familyId: familyId })
+    if (!ocr.ocrText || typeof ocr.ocrText !== 'string' || ocr.ocrText.length === 0) {
+      return { idx: i + 1, fileId: fid, success: false, error: 'OCR识别结果为空', errorCode: 'ocr_empty' }
+    }
+    var aiRes = await aiPhase({
+      ocrText: ocr.ocrText,
+      ocrConfInfo: ocr.ocrConfInfo,
+      fileId: fid,
+      t0: ocr.t0, t1: ocr.t1, t2: ocr.t2,
+      cloud: cloud, db: db,
+      buildExtractionPrompt: buildExtractionPrompt,
+      familyId: familyId, openid: openid
+    })
+    if (aiRes.success) {
+      return {
+        idx: i + 1, fileId: fid, success: true,
+        policies: aiRes.policies || [],
+        cashValueData: aiRes.cashValueData || null,
+        documentType: aiRes.document_type || 'policy',
+        tokens: aiRes.tokens || {}
+      }
+    }
+    return {
+      idx: i + 1, fileId: fid, success: false,
+      error: aiRes.error || 'AI提取失败', errorCode: aiRes.error_code || 'ai_exception'
+    }
+  } catch (e) {
+    return { idx: i + 1, fileId: fid, success: false, error: (e && e.message) || 'OCR异常', errorCode: 'ocr_failed' }
+  }
+}
+
 /**
  * 合并批量结果：按原始 ocr_results 顺序，空 ocrText 项标记 ocr_empty，有效项从 batchResults 按 fileId 匹配
  */
@@ -584,4 +685,4 @@ function _mergeBatchResults(originalOcrResults, batchResults, emptyFileIds) {
   return merged
 }
 
-module.exports = { ocrSingle, ocrOnly, aiExtract, aiExtractBatch, aiExtractParallel, matchPolicies }
+module.exports = { ocrSingle, ocrOnly, aiExtract, aiExtractBatch, aiExtractParallel, ocrExtractParallel, matchPolicies }

@@ -31,6 +31,7 @@ const DIRECT_FN = {
   aiExtract:              ['ocrService', { action: 'aiExtract' }],
   aiExtractBatch:         ['ocrService', { action: 'aiExtractBatch' }],
   aiExtractParallel:      ['ocrService', { action: 'aiExtractParallel' }],
+  ocrExtractParallel:     ['ocrService', { action: 'ocrExtractParallel' }],
 
   // conversationAI
   conversationAI:         ['conversationAI', null],

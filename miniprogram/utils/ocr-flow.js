@@ -6,9 +6,9 @@
  */
 
 // ============================================================
-// 方案切换开关：'merged' = 批量拼接（1次AI）| 'parallel' = DeepSeek并行（每张1次AI） | 'split' = 原方案分批
+// 方案切换开关：'merged' = 批量拼接（1次AI）| 'parallel' = DeepSeek并行（每张1次AI）| 'pipeline' = 云端OCR→AI流水线 | 'split' = 原方案分批
 // ============================================================
-var OCR_BATCH_MODE = 'parallel'
+var OCR_BATCH_MODE = 'pipeline'
 
 var _dedupCache = new Map()
 var DEDUP_TTL_MS = 5 * 60 * 1000
@@ -208,36 +208,41 @@ async function batchOCR_merged(fileIds, setData, opts, aiAction) {
   var batchIds = fileIds.filter(function(id) { return id !== null })
   if (!batchIds.length) return { policies: [], cashValues: [], errors: [] }
 
-  // ===== 阶段 1：ocrOnly 并发 OCR（无 AI，无 429） =====
-  var ocrRes
-  try {
-    var ocrRaw = await api('ocrOnly', { fileIds: batchIds, familyId: opts.familyId || '' })
-    if (!ocrRaw.result || ocrRaw.result.code !== 200) {
-      return {
-        policies: [], cashValues: [],
-        errors: [{ error: (ocrRaw.result && ocrRaw.result.msg) || 'OCR阶段失败', error_code: 'ocr_api_error' }]
+  // 云端流水线（ocrExtractParallel）：OCR+AI 在云函数内重叠，无需前端 ocrOnly
+  var pipeline = aiAction === 'ocrExtractParallel'
+
+  var ocrResults = null
+  if (!pipeline) {
+    // ===== 阶段 1：ocrOnly 并发 OCR（无 AI，无 429） =====
+    var ocrRes
+    try {
+      var ocrRaw = await api('ocrOnly', { fileIds: batchIds, familyId: opts.familyId || '' })
+      if (!ocrRaw.result || ocrRaw.result.code !== 200) {
+        return {
+          policies: [], cashValues: [],
+          errors: [{ error: (ocrRaw.result && ocrRaw.result.msg) || 'OCR阶段失败', error_code: 'ocr_api_error' }]
+        }
       }
+      ocrRes = ocrRaw.result.data
+    } catch (e) {
+      return { policies: [], cashValues: [], errors: [{ error: (e && e.message) || 'OCR异常', error_code: 'ocr_exception' }] }
     }
-    ocrRes = ocrRaw.result.data
-  } catch (e) {
-    return { policies: [], cashValues: [], errors: [{ error: (e && e.message) || 'OCR异常', error_code: 'ocr_exception' }] }
+
+    ocrResults = ocrRes.ocr_results || []
+    if (ocrRes.failures) { for (var f = 0; f < ocrRes.failures.length; f++) { errors.push(ocrRes.failures[f]) } }
+    if (ocrResults.length === 0) return { policies: [], cashValues: [], errors: errors }
   }
 
-  var ocrResults = ocrRes.ocr_results || []
-  if (ocrRes.failures) { for (var f = 0; f < ocrRes.failures.length; f++) { errors.push(ocrRes.failures[f]) } }
-  if (ocrResults.length === 0) return { policies: [], cashValues: [], errors: errors }
-
-  // ===== 初始化流式槽位（骨架屏，aiExtractBatch 期间显示） =====
-  var totalSlots = ocrResults.length
+  // ===== 初始化流式槽位（骨架屏，批量 AI 期间显示） =====
+  var totalSlots = pipeline ? batchIds.length : (ocrResults ? ocrResults.length : 0)
   if (setData) setData(setStreamingSlots(totalSlots))
 
-  // ===== 阶段 2：1 次批量 AI 调用（aiAction：'aiExtractBatch' 拼接 | 'aiExtractParallel' 并行） =====
+  // ===== 阶段 2：1 次批量 AI 调用（'aiExtractBatch' 拼接 | 'aiExtractParallel' 并行 | 'ocrExtractParallel' 流水线） =====
   var aiRes
   try {
-    aiRes = await api(aiAction, {
-      ocr_results: ocrResults,
-      familyId: opts.familyId || ''
-    })
+    aiRes = await api(aiAction, pipeline
+      ? { fileIds: batchIds, familyId: opts.familyId || '' }
+      : { ocr_results: ocrResults, familyId: opts.familyId || '' })
   } catch (e) {
     return { policies: [], cashValues: [], errors: [{ error: (e && e.message) || aiAction + '异常', error_code: 'ocr_exception' }] }
   }
@@ -322,13 +327,25 @@ async function batchOCR_parallel(fileIds, setData, opts) {
   return batchOCR_merged(fileIds, setData, opts, 'aiExtractParallel')
 }
 
+// ============================================================
+// 方案 E：云端 OCR→AI 流水线并行（一次云函数调用，OCR 与 AI 时间重叠）
+//   阶段1+2 合并：ocrExtractParallel（云函数内「OCR完成立即AI」并发）
+//   填充逻辑与 batchOCR_merged 完全一致（results 格式对齐）
+// ============================================================
+async function batchOCR_pipeline(fileIds, setData, opts) {
+  return batchOCR_merged(fileIds, setData, opts, 'ocrExtractParallel')
+}
+
 async function batchOCR(fileIds, setData, opts) {
-  // 方案切换：'merged' = 批量拼接（1次AI）| 'parallel' = DeepSeek并行 | 'split' = 原方案分批
+  // 方案切换：'merged' = 批量拼接（1次AI）| 'parallel' = DeepSeek并行 | 'pipeline' = 云端OCR→AI流水线 | 'split' = 原方案分批
   if (OCR_BATCH_MODE === 'merged') {
     return batchOCR_merged(fileIds, setData, opts)
   }
   if (OCR_BATCH_MODE === 'parallel') {
     return batchOCR_parallel(fileIds, setData, opts)
+  }
+  if (OCR_BATCH_MODE === 'pipeline') {
+    return batchOCR_pipeline(fileIds, setData, opts)
   }
   opts = opts || {}
   var all = []
@@ -573,6 +590,7 @@ module.exports = {
   batchOCR,
   batchOCR_merged,
   batchOCR_parallel,
+  batchOCR_pipeline,
   OCR_BATCH_MODE,
   saveCashValuesWithRetry,
   confirmWritePolicies,
