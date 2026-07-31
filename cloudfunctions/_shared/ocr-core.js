@@ -208,7 +208,9 @@ async function _callBatchAI(ocrResults, deps) {
       res = await safeCallChat(
         messages, callChat,
         { cloud, db, openid, familyId, sessionId, model: AI.OCR_MODEL, action: 'ocr_extract_batch', skipInjection: true, skipOutputAudit: true, skipContentSafety: true },
-        { maxTokens: AI.OCR_BATCH_MAX_TOKENS, temperature: AI.OCR_BATCH_TEMPERATURE, responseFormat: { type: 'json_object' }, timeoutMs: AI.OCR_BATCH_TIMEOUT, cacheKey: 'ocr-batch-v1' }
+        // 不使用 response_format: json_object（DeepSeek JSON 模式有概率返回空 content）
+        // 改用普通模式 + prompt 严格约束 JSON 输出
+        { maxTokens: AI.OCR_BATCH_MAX_TOKENS, temperature: AI.OCR_BATCH_TEMPERATURE, timeoutMs: AI.OCR_BATCH_TIMEOUT, cacheKey: 'ocr-batch-v1' }
       )
     } catch (e) {
       const status = (e && e.response && (e.response.status || e.response.statusCode)) || null
