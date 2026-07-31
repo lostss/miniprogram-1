@@ -6,9 +6,9 @@
  */
 
 // ============================================================
-// 方案切换开关：'merged' = 批量拼接（1次AI） | 'split' = 原方案分批
+// 方案切换开关：'merged' = 批量拼接（1次AI）| 'parallel' = DeepSeek并行（每张1次AI） | 'split' = 原方案分批
 // ============================================================
-var OCR_BATCH_MODE = 'merged'
+var OCR_BATCH_MODE = 'parallel'
 
 var _dedupCache = new Map()
 var DEDUP_TTL_MS = 5 * 60 * 1000
@@ -201,7 +201,8 @@ function _aiExtractOne(ocr, idx, familyId) {
 // 对外契约：返回 { policies, cashValues, errors }
 // opts.onBatchComplete(filledCount, total) — 完成回调（可选）
 // ============================================================
-async function batchOCR_merged(fileIds, setData, opts) {
+async function batchOCR_merged(fileIds, setData, opts, aiAction) {
+  aiAction = aiAction || 'aiExtractBatch'
   opts = opts || {}
   var all = [], cashValues = [], errors = []
   var batchIds = fileIds.filter(function(id) { return id !== null })
@@ -230,15 +231,15 @@ async function batchOCR_merged(fileIds, setData, opts) {
   var totalSlots = ocrResults.length
   if (setData) setData(setStreamingSlots(totalSlots))
 
-  // ===== 阶段 2：1 次 aiExtractBatch =====
+  // ===== 阶段 2：1 次批量 AI 调用（aiAction：'aiExtractBatch' 拼接 | 'aiExtractParallel' 并行） =====
   var aiRes
   try {
-    aiRes = await api('aiExtractBatch', {
+    aiRes = await api(aiAction, {
       ocr_results: ocrResults,
       familyId: opts.familyId || ''
     })
   } catch (e) {
-    return { policies: [], cashValues: [], errors: [{ error: (e && e.message) || 'aiExtractBatch异常', error_code: 'ocr_exception' }] }
+    return { policies: [], cashValues: [], errors: [{ error: (e && e.message) || aiAction + '异常', error_code: 'ocr_exception' }] }
   }
 
   var data = (aiRes.result && aiRes.result.code === 200) ? aiRes.result.data : null
@@ -311,10 +312,23 @@ async function batchOCR_merged(fileIds, setData, opts) {
   return { policies: deduped, cashValues: cashValues, errors: errors }
 }
 
+// ============================================================
+// 方案 D：DeepSeek 并行提取 — N 张图每张独立 1 次 AI 调用（并发）
+//   阶段1：ocrOnly 并发 OCR（复用）
+//   阶段2：aiExtractParallel（云函数内并发调用 aiPhase）
+//   填充逻辑与 batchOCR_merged 完全一致（results 格式对齐）
+// ============================================================
+async function batchOCR_parallel(fileIds, setData, opts) {
+  return batchOCR_merged(fileIds, setData, opts, 'aiExtractParallel')
+}
+
 async function batchOCR(fileIds, setData, opts) {
-  // 方案切换：'merged' = 批量拼接（1次AI） | 'split' = 原方案分批
+  // 方案切换：'merged' = 批量拼接（1次AI）| 'parallel' = DeepSeek并行 | 'split' = 原方案分批
   if (OCR_BATCH_MODE === 'merged') {
     return batchOCR_merged(fileIds, setData, opts)
+  }
+  if (OCR_BATCH_MODE === 'parallel') {
+    return batchOCR_parallel(fileIds, setData, opts)
   }
   opts = opts || {}
   var all = []
@@ -558,6 +572,7 @@ module.exports = {
   compressAndUpload,
   batchOCR,
   batchOCR_merged,
+  batchOCR_parallel,
   OCR_BATCH_MODE,
   saveCashValuesWithRetry,
   confirmWritePolicies,

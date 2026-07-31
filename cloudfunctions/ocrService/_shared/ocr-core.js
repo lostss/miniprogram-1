@@ -172,7 +172,7 @@ async function aiPhase({ ocrText, ocrConfInfo, fileId, t0, t1, t2, cloud, db, bu
     meta: { total: newPolicies.length, docType, hasCashValue: !!cashValueData, autoConfirmed, durations, tokens: tokens || {} }
   }).catch(() => {})
 
-  return { success: true, policiesCount: newPolicies.length, policies: newPolicies, document_type: docType, cashValueData }
+  return { success: true, policiesCount: newPolicies.length, policies: newPolicies, document_type: docType, cashValueData, tokens: tokens || {} }
 }
 
 // 兼容旧调用：整体流程 = OCR 阶段 + AI 阶段

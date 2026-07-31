@@ -432,6 +432,129 @@ async function aiExtractBatch(db, openid, event) {
   }
 }
 
+// ======================== aiExtractParallel ========================
+/**
+ * 方案 D：DeepSeek 并行提取（每张图独立 AI 调用，N 张并发）
+ * 入参：{ ocr_results: [{fileId, ocrText, ocrConfInfo, t0, t1, t2}], familyId? }
+ * 出参：与 aiExtractBatch 对齐（{ code, data: { results, total_duration_ms, ai_call_count, tokens, success_count, fail_count } }），前端可复用同一填充逻辑
+ *
+ * 设计要点：
+ *   - 复用单图 aiPhase（直连 DeepSeek），每张图独立 prompt，无跨图依赖
+ *   - DeepSeek 直连并发上限 2500，N 张全并发安全（_withConcurrency 控并发数）
+ *   - 单张失败不影响其他张（各自独立 error_code）
+ */
+async function aiExtractParallel(db, openid, event) {
+  const { ocr_results, familyId } = event
+  if (!ocr_results || !Array.isArray(ocr_results) || ocr_results.length === 0) {
+    return { code: 400, msg: '缺少参数 ocr_results' }
+  }
+  if (ocr_results.length > 10) {
+    return { code: 400, msg: '单次最多 10 张图片' }
+  }
+
+  // 过滤空 ocrText 项（标记 ocr_empty），保留原始位置
+  var validResults = []
+  var emptyFileIds = []
+  for (var i = 0; i < ocr_results.length; i++) {
+    var item = ocr_results[i]
+    if (!item || !item.ocrText || typeof item.ocrText !== 'string' || item.ocrText.length === 0) {
+      emptyFileIds.push({ idx: i + 1, fileId: item && item.fileId })
+    } else {
+      validResults.push(item)
+    }
+  }
+
+  // 全部为空：直接返回，不调用 AI
+  if (validResults.length === 0) {
+    var allEmpty = emptyFileIds.map(function(e) {
+      return { idx: e.idx, fileId: e.fileId, success: false, error: 'OCR识别结果为空', errorCode: 'ocr_empty' }
+    })
+    return {
+      code: 200,
+      data: {
+        results: allEmpty,
+        total_duration_ms: 0,
+        ai_call_count: 0,
+        tokens: {},
+        success_count: 0,
+        fail_count: allEmpty.length
+      }
+    }
+  }
+
+  var t0 = Date.now()
+  // 每张图独立并发调用 aiPhase；DeepSeek 直连并发上限 2500，全并发安全
+  var tasks = validResults.map(function(item, i) {
+    return function() {
+      return aiPhase({
+        ocrText: item.ocrText,
+        ocrConfInfo: item.ocrConfInfo || [],
+        fileId: item.fileId,
+        t0: item.t0 || t0,
+        t1: item.t1 || t0,
+        t2: item.t2 || t0,
+        cloud: cloud,
+        db: db,
+        buildExtractionPrompt: buildExtractionPrompt,
+        familyId: familyId || null,
+        openid: openid
+      }).then(function(aiRes) {
+        if (aiRes.success) {
+          return {
+            idx: i + 1, fileId: item.fileId, success: true,
+            policies: aiRes.policies || [],
+            cashValueData: aiRes.cashValueData || null,
+            documentType: aiRes.document_type || 'policy',
+            tokens: aiRes.tokens || {}
+          }
+        }
+        return {
+          idx: i + 1, fileId: item.fileId, success: false,
+          error: aiRes.error || 'AI提取失败', errorCode: aiRes.error_code || 'ai_exception'
+        }
+      })
+    }
+  })
+  var results = await _withConcurrency(tasks, Math.min(validResults.length, 10))
+
+  // 合并结果：保留原始位置顺序
+  var mergedResults = _mergeBatchResults(ocr_results, results, emptyFileIds)
+  var successCount = 0, failCount = 0
+  var tokens = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+  for (var k = 0; k < results.length; k++) {
+    if (results[k].success) successCount++
+    else failCount++
+    var t = results[k].tokens
+    if (t) {
+      tokens.prompt_tokens += t.prompt_tokens || 0
+      tokens.completion_tokens += t.completion_tokens || 0
+      tokens.total_tokens += t.total_tokens || 0
+    }
+  }
+
+  logOperation(db, {
+    openid, familyId: familyId || undefined, action: 'ai_extract_parallel',
+    result: { status: failCount > 0 ? 'partial' : 'ok', summary: '并行提取 ' + ocr_results.length + '张, 成功' + successCount + '/失败' + failCount },
+    meta: {
+      total: ocr_results.length, validCount: validResults.length, emptyCount: emptyFileIds.length,
+      successCount: successCount, failCount: failCount,
+      aiCallCount: validResults.length, totalDurationMs: Date.now() - t0, tokens: tokens
+    }
+  }).catch(function() {})
+
+  return {
+    code: 200,
+    data: {
+      results: mergedResults,
+      total_duration_ms: Date.now() - t0,
+      ai_call_count: validResults.length,
+      tokens: tokens,
+      success_count: successCount,
+      fail_count: failCount
+    }
+  }
+}
+
 /**
  * 合并批量结果：按原始 ocr_results 顺序，空 ocrText 项标记 ocr_empty，有效项从 batchResults 按 fileId 匹配
  */
@@ -461,4 +584,4 @@ function _mergeBatchResults(originalOcrResults, batchResults, emptyFileIds) {
   return merged
 }
 
-module.exports = { ocrSingle, ocrOnly, aiExtract, aiExtractBatch, matchPolicies }
+module.exports = { ocrSingle, ocrOnly, aiExtract, aiExtractBatch, aiExtractParallel, matchPolicies }
