@@ -92,7 +92,7 @@ function reset() { return defaultState() }
 // ============================================================
 function compress(path) {
   return new Promise(function(resolve, reject) {
-    wx.compressImage({ src: path, quality: 65, success: function(res) { resolve(res.tempFilePath) }, fail: reject })
+    wx.compressImage({ src: path, quality: 80, success: function(res) { resolve(res.tempFilePath) }, fail: reject })
   })
 }
 
