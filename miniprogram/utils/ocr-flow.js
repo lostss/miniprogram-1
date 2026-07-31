@@ -7,8 +7,9 @@
 
 // ============================================================
 // 方案切换开关：'merged' = 批量拼接（1次AI）| 'parallel' = DeepSeek并行（每张1次AI）| 'pipeline' = 云端OCR→AI流水线 | 'split' = 原方案分批
+// 实测：parallel（6.6s 云函数）快于 pipeline（8s 同实例争抢），为默认
 // ============================================================
-var OCR_BATCH_MODE = 'pipeline'
+var OCR_BATCH_MODE = 'parallel'
 
 var _dedupCache = new Map()
 var DEDUP_TTL_MS = 5 * 60 * 1000
@@ -96,13 +97,13 @@ function compress(path) {
 }
 
 // ============================================================
-// 并发压缩 + 上传（限流3并发，单张失败不休止）
+// 并发压缩 + 上传（限流5并发，单张失败不休止）
 // ============================================================
 async function compressAndUpload(paths, setData, prefix) {
   prefix = prefix || 'temp'
   var uploaded = 0
   var failures = 0
-  var batchSize = 3
+  var batchSize = 5
   var fileIds = new Array(paths.length)
 
   for (var b = 0; b < paths.length; b += batchSize) {
