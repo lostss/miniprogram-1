@@ -160,7 +160,11 @@ async function callChatDirect(messages, opts = {}) {
     // 强制使用 DIRECT_MODEL，忽略上层传入的 model（TokenHub 的 hy3 不适用 DeepSeek API）
     model: AI.DIRECT_MODEL,
     messages,
-    stream: false
+    stream: false,
+    // DeepSeek-V4-Flash 默认开启 thinking 模式，思考消耗大量 token 导致 content 为空（ai_empty）
+    // OCR 提取是结构化任务，不需要深度思考，关闭 thinking 模式
+    // 文档: https://api-docs.deepseek.com/guides/thinking_mode
+    thinking: { type: 'disabled' }
   }
   if (responseFormat) reqOpts.response_format = responseFormat
   if (maxTokens) reqOpts.max_tokens = maxTokens
