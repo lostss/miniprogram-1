@@ -19,8 +19,8 @@ module.exports = {
     OCR_TEMPERATURE: 0,
     // 批量拼接提取（aiExtractBatch）
     OCR_BATCH_MAX_CHARS: 84000,       // 拼接上限字符数（约 56K input token）
-    OCR_BATCH_MAX_TOKENS: 8000,       // 批量模式输出 token 上限（7张图约需 5000-7000 tokens）
-    OCR_BATCH_TIMEOUT: 90000,         // 批量模式 AI 超时（DeepSeek 生成 8000 token 可能需 60-80s）
+    OCR_BATCH_MAX_TOKENS: 16000,      // 批量模式输出 token 上限（实测3张图4800 token，按1600/张，10张图足够）
+    OCR_BATCH_TIMEOUT: 90000,         // 批量模式 AI 超时（3张图7s，10张图约25-30s）
     OCR_BATCH_TEMPERATURE: 0,
     // DeepSeek 直连（绕过 TokenHub 限流，并发 2500）
     USE_DIRECT: true,
