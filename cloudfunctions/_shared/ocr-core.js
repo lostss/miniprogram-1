@@ -198,47 +198,62 @@ async function _callBatchAI(ocrResults, deps) {
     { role: 'user', content: userPrompt }
   ]
   const sessionId = 'ocr_batch_' + Date.now().toString(36)
-  let res
-  try {
-    res = await safeCallChat(
-      messages, callChat,
-      { cloud, db, openid, familyId, sessionId, model: AI.OCR_MODEL, action: 'ocr_extract_batch', skipInjection: true, skipOutputAudit: true, skipContentSafety: true },
-      { maxTokens: AI.OCR_BATCH_MAX_TOKENS, temperature: AI.OCR_BATCH_TEMPERATURE, responseFormat: { type: 'json_object' }, timeoutMs: AI.OCR_BATCH_TIMEOUT, cacheKey: 'ocr-batch-v1' }
-    )
-  } catch (e) {
-    const status = (e && e.response && (e.response.status || e.response.statusCode)) || null
-    console.error('[ocr-core] _callBatchAI AI调用失败:', {
-      message: e && e.message, code: e && e.code, status: status,
-      responseData: e && e.response && e.response.data ? JSON.stringify(e.response.data).substring(0, 500) : null
-    })
-    if (status === 429 || (e && e.code === '429') || /429/.test(e && e.message)) {
-      const err = new Error('AI服务繁忙(429)')
-      err.code = '429'
+
+  // DeepSeek JSON 模式有概率返回空 content（官方已知问题），启用 1 次重试
+  const maxAttempts = 2
+  let lastErr = null
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let res
+    try {
+      res = await safeCallChat(
+        messages, callChat,
+        { cloud, db, openid, familyId, sessionId, model: AI.OCR_MODEL, action: 'ocr_extract_batch', skipInjection: true, skipOutputAudit: true, skipContentSafety: true },
+        { maxTokens: AI.OCR_BATCH_MAX_TOKENS, temperature: AI.OCR_BATCH_TEMPERATURE, responseFormat: { type: 'json_object' }, timeoutMs: AI.OCR_BATCH_TIMEOUT, cacheKey: 'ocr-batch-v1' }
+      )
+    } catch (e) {
+      const status = (e && e.response && (e.response.status || e.response.statusCode)) || null
+      console.error('[ocr-core] _callBatchAI AI调用失败:', {
+        message: e && e.message, code: e && e.code, status: status,
+        responseData: e && e.response && e.response.data ? JSON.stringify(e.response.data).substring(0, 500) : null
+      })
+      if (status === 429 || (e && e.code === '429') || /429/.test(e && e.message)) {
+        const err = new Error('AI服务繁忙(429)')
+        err.code = '429'
+        throw err
+      }
+      // ai_empty 重试（DeepSeek JSON 模式已知问题）
+      if (e && e.code === 'ai_empty' && attempt < maxAttempts) {
+        console.warn('[ocr-core] _callBatchAI ai_empty, 重试 attempt ' + (attempt + 1))
+        lastErr = e
+        await new Promise(r => setTimeout(r, 500))
+        continue
+      }
+      throw e
+    }
+
+    const parsed = _parseBatchJSON(res.text)
+    // 兼容 AI 返回的多种格式：
+    //   1. [{...}] — 标准数组
+    //   2. {"results":[...]} / {"data":[...]} / {"policies":[...]} — object 包裹数组
+    //   3. {"idx":1, "document_type":"policy", ...} — 单张图时 AI 直接返回单个对象
+    let arr = parsed
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      arr = parsed.results || parsed.data || parsed.policies || parsed.list || null
+      // 单对象格式：含 idx + (document_type 或 result) 字段时，包装为单元素数组
+      if (!arr && (parsed.idx != null) && (parsed.document_type || parsed.result)) {
+        arr = [parsed]
+      }
+    }
+    if (!Array.isArray(arr)) {
+      console.error('[ocr-core] _callBatchAI ai_format: 原始返回前800字符=', (res.text || '').substring(0, 800))
+      console.error('[ocr-core] _callBatchAI ai_format: parsed=', JSON.stringify(parsed).substring(0, 300))
+      const err = new Error('ai_format')
+      err.code = 'ai_format'
       throw err
     }
-    throw e
+    return { aiResponse: arr, tokens: res.usage || {}, aiCallCount: attempt }
   }
-  const parsed = _parseBatchJSON(res.text)
-  // 兼容 AI 返回的多种格式：
-  //   1. [{...}] — 标准数组
-  //   2. {"results":[...]} / {"data":[...]} / {"policies":[...]} — object 包裹数组
-  //   3. {"idx":1, "document_type":"policy", ...} — 单张图时 AI 直接返回单个对象
-  let arr = parsed
-  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    arr = parsed.results || parsed.data || parsed.policies || parsed.list || null
-    // 单对象格式：含 idx + (document_type 或 result) 字段时，包装为单元素数组
-    if (!arr && (parsed.idx != null) && (parsed.document_type || parsed.result)) {
-      arr = [parsed]
-    }
-  }
-  if (!Array.isArray(arr)) {
-    console.error('[ocr-core] _callBatchAI ai_format: 原始返回前800字符=', (res.text || '').substring(0, 800))
-    console.error('[ocr-core] _callBatchAI ai_format: parsed=', JSON.stringify(parsed).substring(0, 300))
-    const err = new Error('ai_format')
-    err.code = 'ai_format'
-    throw err
-  }
-  return { aiResponse: arr, tokens: res.usage || {}, aiCallCount: 1 }
+  throw lastErr || new Error('ai_batch_failed')
 }
 
 /**
