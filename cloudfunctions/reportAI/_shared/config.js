@@ -1,20 +1,25 @@
 /**
  * _shared/config.js — 统一配置常量（单一事实源）
  */
+const cloud = require('wx-server-sdk')
+cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
+
 module.exports = {
 
   // -- 环境 --
-  ENV_ID: process.env.TCB_ENV || 'cloud1-3gan2ae3d3b400f1',
+  // I-1 修复：移除硬编码生产 ENV_ID 兜底（避免本地误连生产）；IS_DEV 由部署时 NODE_ENV 注入
+  ENV_ID: process.env.TCB_ENV || cloud.DYNAMIC_CURRENT_ENV,
+  IS_DEV: process.env.NODE_ENV !== 'production',
 
   // -- AI 模型 --
   AI: {
-    GROUP: 'cloudbase',
+    // GROUP: 小程序成长计划免费额度走 'hunyuan-exp'；'cloudbase' 为付费 TokenHub
+    GROUP: 'hunyuan-exp',
     THINK_MODEL: 'hy3',
     CHAT_MODEL: 'hy3',
     OCR_MODEL: 'hy3',
     SDK_TIMEOUT: 60000,
     THINK_TIMEOUT: 55000,
-    MAX_RETRIES: 2,
     OCR_MAX_TOKENS: 2000,
     OCR_TEMPERATURE: 0,
     // 批量拼接提取（aiExtractBatch）
@@ -29,8 +34,8 @@ module.exports = {
     DIRECT_API_KEY_ENV: 'DEEPSEEK_API_KEY'
   },
 
-  // -- AI 超时（按场景） --
-  AI_TIMEOUT: { CHAT: 30000, ANALYSIS: 55000, REPORT: 30000, OCR: 15000 },
+  // -- AI 超时（OCR 专用；CHAT/ANALYSIS/REPORT 无消费者已删） --
+  AI_TIMEOUT: { OCR: 15000 },
 
   // -- 安全 --
   SECURITY: {

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * reportAI — 保障报告生成（AI 产出画像/点评/规划/建议）
  *
  * 架构（#7 重构后）：
@@ -18,10 +18,11 @@ const db = cloud.database()
 const { calcCompletenessScore } = require('./_shared/completeness')
 const { buildFamilyContext: buildV2Context } = require('./_shared/v2-context')
 const { getFamily } = require('./_shared/db-helpers')
+const { loadFamilyView } = require('./_shared/familyView')
 const { ensureStatusBatch } = require('./_shared/policy-status')
 const { loadActivePolicies } = require('./_shared/policy-read')
 const { toWriteFields, toReadReport } = require('./_shared/report-fields')
-const { REPORT_THROTTLE_MS, REPORT_KEEP_VERSIONS } = require('./_shared/config')
+const { REPORT_THROTTLE_MS, REPORT_KEEP_VERSIONS, AI } = require('./_shared/config')
 const { parseAIJSON } = require('./_shared/parse-ai-json')
 const { writeSeam, advanceStage } = require('./_shared/writeSeam')
 const { REPORT_PROMPT } = require('./prompts')
@@ -98,24 +99,20 @@ exports.main = async (event, context) => {
         }
       }
       if (!parsed || !parsed.portrait) {
-        // 解析失败：记录日志，返回错误（不写假数据到 families，保持 insight_stale=true 允许重试）
-        try {
-          await db.collection('agent_logs').add({
-            data: {
-              openid, family_id: familyId,
-              action: 'report_parse_fail',
-              timestamp: new Date(),
-              status: 'fail',
-              rawText: lastRawText,
-              summary: 'AI 返回非预期 JSON 格式（含 1 次重试）'
-            }
-          })
-        } catch (e) { console.error('[reportAI] 写入格式错误日志失败:', e.message) }
+        // 解析失败：经 logSeam 记录日志（统一 _openid 注入 + schema），返回错误
+        // （不写假数据到 families，保持 insight_stale=true 允许重试）
+        await logAI(db, {
+          openid, familyId,
+          action: 'report_parse_fail',
+          status: 'fail',
+          rawText: lastRawText,
+          error: { message: 'AI 返回非预期 JSON 格式（含 1 次重试）' }
+        })
         return { code: 500, msg: '报告生成失败，请重试' }
       }
       const now = new Date()
       // 归档/写回需完整 family 记录（last_*/completeness_score 等），冷路径单独查一次
-      const f = await getFamily(db, familyId, openid)
+      const f = await loadFamilyView(db, openid, familyId)
       // B4: 归档上一版报告到 reports 集合，保留最近 REPORT_KEEP_VERSIONS 版
       await archivePrevious(db, {
         familyId, openid,
@@ -158,7 +155,7 @@ async function _callAI(context, deps) {
   const { text: aiText, usage, logId } = await require('./_shared/ai-gateway').safeCallChat(
     [{ role: 'system', content: REPORT_PROMPT }, { role: 'user', content: context }],
     require('./_shared/ai-client').callChat,
-    { cloud: deps.cloud, db: deps.db, openid: deps.openid, familyId: deps.familyId, sessionId: 'report_' + Date.now().toString(36), model: 'hy3-preview', action: 'report_generate' },
+    { cloud: deps.cloud, db: deps.db, openid: deps.openid, familyId: deps.familyId, sessionId: 'report_' + Date.now().toString(36), model: AI.CHAT_MODEL, action: 'report_generate' },
     { maxTokens: 2600, temperature: 0.5, responseFormat: { type: 'json_object' }, timeoutMs: 30000 }
   )
   return { text: aiText, usage, logId }

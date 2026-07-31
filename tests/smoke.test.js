@@ -4,7 +4,7 @@
  */
 const path = require('path')
 
-const FUNCTIONS = ['conversationAI', 'dataQuery', 'dataWrite', 'login', 'ocrService', 'reportAI']
+const FUNCTIONS = ['conversationAI', 'dataQuery', 'dataWrite', 'login', 'ocrService', 'reportAI', 'cleanup']
 
 test('smoke: 所有云函数入口 require 不抛错', () => {
   const errors = []

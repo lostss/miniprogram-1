@@ -10,9 +10,10 @@ async function devLogin(openid) {
   try {
     const r = await db.collection('agents').where({ openid }).limit(1).get()
     if (r.data && r.data.length > 0) {
-      // 经 writeSeam.silentUpdateDoc：自动附加 updated_at
+      // R-1 修复：agents 归属以 openid 字段为准，登录是建立 _openid 的信任锚点；
+      // safeUpdateDoc 的 _openid 预校验对未绑定记录会误拒，故直接更新并写入 _openid
       const ws = writeSeam(db, openid)
-      await ws.silentUpdateDoc('agents', r.data[0]._id, { last_login_at: new Date() })
+      await db.collection('agents').doc(r.data[0]._id).update({ data: { last_login_at: new Date(), _openid: openid, updated_at: new Date() } })
       return { code: 200, msg: '调试登录成功', data: { openid, agent_id: r.data[0]._id, phone: r.data[0].phone, nickname: r.data[0].nickname, role: r.data[0].role, plan: r.data[0].plan } }
     }
     const now = new Date()
@@ -34,9 +35,16 @@ async function phoneLogin(code, openid) {
     const r = await db.collection('agents').where({ phone }).limit(1).get()
     const now = new Date()
     if (r.data && r.data.length > 0) {
-      // 经 writeSeam.silentUpdateDoc：自动附加 updated_at
+      // 安全守卫：openid 不一致时拒绝登录（防止不同微信用户用同手机号劫持账号）
+      if (r.data[0].openid && r.data[0].openid !== openid) {
+        return { code: 403, msg: '该手机号已绑定其他微信账号' }
+      }
+      // R-1 修复：登录是信任锚点，直接更新并确保 _openid 写入（建立后续 writeSeam 所需归属不变量）
       const ws = writeSeam(db, openid)
-      await ws.silentUpdateDoc('agents', r.data[0]._id, { openid, last_login_at: now })
+      const updateData = { last_login_at: now, _openid: openid, updated_at: now }
+      // openid 字段为空时首次绑定（不覆盖已有 openid）
+      if (!r.data[0].openid) updateData.openid = openid
+      await db.collection('agents').doc(r.data[0]._id).update({ data: updateData })
       return { code: 200, msg: '登录成功', data: { openid, agent_id: r.data[0]._id, phone, nickname: r.data[0].nickname, role: r.data[0].role, plan: r.data[0].plan } }
     }
     // 经 writeSeam.silentAdd：自动注入 _openid
@@ -54,9 +62,9 @@ exports.main = async (event, context) => {
   const openid = wxContext && (wxContext.OPENID || wxContext.openId)
   if (!openid) return { code: 401, msg: '获取用户身份失败' }
 
-  const envId = String(cloud.DYNAMIC_CURRENT_ENV || process.env.ENV_ID || '')
-  // 守卫：生产环境禁止 dev 登录（devMode:true 仅限非 prod 环境调试用）
-  if (envId.includes('prod') && event.devMode) return { code: 403, msg: 'dev 登录仅限开发环境' }
+  // S-3 修复：dev 登录守卫改用显式 IS_DEV 标志
+  const { IS_DEV } = require('./_shared/config')
+  if (!IS_DEV && event.devMode) return { code: 403, msg: 'dev 登录仅限开发环境' }
 
   if (event.code) return await phoneLogin(event.code, openid)
   if (event.devMode) return await devLogin(openid)

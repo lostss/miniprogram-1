@@ -2,8 +2,8 @@
   display: flex; align-items: center;
   padding: var(--sp-5) var(--sp-5) var(--sp-5) 0; margin-bottom:0;
   background: var(--bg-card); border-radius: var(--r-xl);
-  box-shadow: var(--shadow-md);
-  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+  border: 1rpx solid rgba(0,0,0,0.04);
+  transition: transform var(--dur-fast) var(--ease-out);
   position: relative; overflow: hidden;
 }
 .card::before {
@@ -12,14 +12,15 @@
   background: var(--accent);
 }
 
-.card:active { transform: scale(0.98); box-shadow: var(--shadow-sm); }
+.card:active { transform: scale(0.98) }
 .card-body { flex: 1; min-width: 0; padding-left: var(--sp-5); }
 .card-row { display: flex; align-items: baseline; line-height: var(--lh-snug); }
 .card-name { font-size: var(--fs-lg); font-weight: var(--fw-semi); color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-label { font-size: var(--fs-caption); color: var(--accent-deep); background: var(--accent-dim); padding: 2rpx var(--sp-3); border-radius: var(--r-full); margin-left: var(--sp-3); flex-shrink: 0; line-height:1.6 }
 .card-time { font-size: var(--fs-caption); color: var(--text-secondary); margin-top: var(--sp-1-5); }
 .card-right { display: flex; flex-direction: column; align-items: center; margin-left: var(--sp-4-5); flex-shrink: 0; padding-right: var(--sp-5); }
-.ring-canvas { width: 80rpx; height: 80rpx; }
-.completeness-ring { width: 72rpx; height: 12rpx; background: var(--border); border-radius: 6rpx; overflow: hidden; }
-.ring-fill { height: 100%; background: var(--accent); border-radius: 6rpx; }
-.completeness-text { font-size: var(--fs-tiny); color: var(--accent-deep); margin-top: var(--sp-1-5); }
+/* CSS 圆环（conic-gradient）：轨道 + 进度 + 中心孔 + 百分比 */
+.ring-wrap { position: relative; width: 80rpx; height: 80rpx; }
+.ring { position: absolute; top: 0; left: 0; width: 80rpx; height: 80rpx; border-radius: 50%; }
+.ring-hole { position: absolute; top: 8rpx; left: 8rpx; width: 64rpx; height: 64rpx; border-radius: 50%; background: var(--bg-card); display: flex; align-items: center; justify-content: center; }
+.ring-text { font-size: var(--fs-tiny); color: var(--text-primary); font-weight: var(--fw-semi); font-variant-numeric: tabular-nums; }

@@ -34,7 +34,7 @@ async function createFamily(db, openid, event) {
   const familyId = result._id
   const created = await createMembersForFamily(db, familyId, openid, members)
   const structure = { roles: created.map(m => m.role), member_count: created.length, created_with_roles: family_structure || created.map(m => m.role) }
-  updateFamily(db, familyId, openid, { family_structure: structure }).catch(e => console.error('[dataWrite] createFamily 结构更新失败:', e.message))
+  try { await updateFamily(db, familyId, openid, { family_structure: structure }) } catch (e) { console.error('[dataWrite] createFamily 结构更新失败:', e.message) }
   const lockedMembers = created.map(m => ({ member_id: m.member_id, name: m.name, gender: m.gender, age: m.age, role: m.role, occupation: m.occupation, health: m.health, income: m.income }))
   return { code: 200, msg: '创建成功', data: { _id: familyId, family_name: family_name.trim(), members: lockedMembers, family_structure: structure } }
 }
@@ -107,6 +107,11 @@ async function _updateFamilyHandleUpdateData(db, familyId, openid, updateDataInp
 // 新成员（member_id 不在库中）创建；库中存在但不在 incoming 列表的成员软删除。
 async function _syncMembers(db, familyId, openid, incoming) {
   const existing = await safeQuery(db, 'members', { family_id: familyId }, openid)
+  // R-2 修复：原 50% 阈值会误拦正常批量删除；改为仅拦截 incoming 为空导致的整表误清空
+  const existingActive = (existing.data || []).filter(m => m.status !== 'deleted')
+  if (existingActive.length > 0 && incoming.length === 0) {
+    throw new Error('成员列表为空，请确认后重试')
+  }
   const existingMap = new Map()
   for (const m of (existing.data || [])) {
     if (m.member_id) existingMap.set(m.member_id, m)
@@ -126,6 +131,9 @@ async function _syncMembers(db, familyId, openid, incoming) {
     if (ex) {
       // 原地更新（仅写传入字段，保留 _id 与 member_id）
       const patch = { updated_at: now }
+      // S3-6 修复：重添同 member_id 的已软删成员时恢复 status='active'
+      // 原实现不写 status，用户重新添加后得到"更新成功"但成员仍处于 deleted 状态，前端列表看不到
+      if (ex.status === 'deleted') patch.status = 'active'
       if (m.name !== undefined) patch.name = m.name
       if (m.age !== undefined) patch.age = Number(m.age) || 0
       if (m.income !== undefined) patch.income = Number(m.income) || 0
@@ -149,7 +157,7 @@ async function _syncMembers(db, familyId, openid, incoming) {
   }
   // 成员同步（增/改/删）→ 显式触发 markMutated + advanceStage（ws.shouldHook=false 时 triggerHooks 为 no-op）
   await markFamilyMutated(db, familyId, openid)
-  advanceStage(db, familyId, openid).catch(e => console.error('[dataWrite] _syncMembers advanceStage 失败:', e.message))
+  await advanceStage(db, familyId, openid)
 }
 
 async function _updateCompletenessAsync(db, familyId, openid) {

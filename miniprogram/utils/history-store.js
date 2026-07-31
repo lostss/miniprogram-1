@@ -38,8 +38,8 @@ function createHistoryStore() {
         params.mode = 'latest'
       }
       const r = await api('queryMessages', params)
-      if (r.result && r.result.code === 200) {
-        const raw = (r.result.data && r.result.data.messages) || []
+      if (r.ok) {
+        const raw = (r.data && r.data.messages) || []
         const ms = raw.map(m => ({
           role: m.role || 'assistant',
           content: m.content || '',

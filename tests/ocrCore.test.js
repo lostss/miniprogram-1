@@ -3,7 +3,6 @@
  * matchPoliciesToMembers 的成员匹配算法
  * Plan A：成员来自 members 集合（getMembers 走 members 集合）
  */
-jest.mock('wx-server-sdk', () => require('./__mocks__/cloudSDKMock'))
 
 const MEMBERS = [
   { member_id: 'm1', name: '李牧云', role: '本人' },
@@ -30,7 +29,7 @@ const mockDb = {
   }
 }
 
-const { processOneImage, matchPoliciesToMembers } = require('../cloudfunctions/ocrService/_shared/ocr-core')
+const { matchPoliciesToMembers } = require('../cloudfunctions/ocrService/_shared/ocr-core')
 
 describe('matchPoliciesToMembers', () => {
   test('精确匹配被保人到成员', async () => {

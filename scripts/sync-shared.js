@@ -57,7 +57,7 @@ const TARGET_FUNCTIONS = fs.readdirSync(CF_DIR, { withFileTypes: true })
 
 // 跨树契约文件：_shared 权威源 → miniprogram/utils/，使前端与云函数共用同一事实源
 // ponytail: 只列确需前端引用的文件，避免把云函数专用逻辑泄漏进小程序
-const CONTRACT_FILES = ['thresholds.js', 'pii-rules.js', 'parse-expiry.js']
+const CONTRACT_FILES = ['thresholds.js', 'pii-rules.js', 'parse-expiry.js', 'ocr-confidence.js']
 
 // 扫描一个 .js 文件中、解析到 _shared/ 下的 require 目标（返回相对 _shared 的路径，'/' 分隔）
 // fileAbs 可能是：

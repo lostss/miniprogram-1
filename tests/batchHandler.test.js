@@ -10,8 +10,7 @@ jest.mock('../cloudfunctions/ocrService/_shared/ocr-core', () => ({
   aiExtractBatchPhase: jest.fn(),
   matchPoliciesToMembers: jest.fn(),
   buildPolicyFromExtract: jest.fn(),
-  _toNum: jest.fn(),
-  processOneImage: jest.fn()
+  _toNum: jest.fn()
 }))
 
 // mock 间接依赖（ocr-extractor 加载 tencentcloud-sdk 会触发循环）
@@ -52,11 +51,11 @@ describe('aiExtractBatch handler', () => {
     expect(res.code).toBe(400)
   })
 
-  test('参数校验：超过 10 张返回 400', async () => {
-    var ocrResults = Array.from({ length: 11 }, function(_, i) { return { fileId: 'cloud://f' + i, ocrText: 'text', ocrConfInfo: [] } })
+  test('参数校验：超过 9 张返回 400', async () => {
+    var ocrResults = Array.from({ length: 10 }, function(_, i) { return { fileId: 'cloud://f' + i, ocrText: 'text', ocrConfInfo: [] } })
     var res = await handlers.aiExtractBatch(mockDb, 'o1', { ocr_results: ocrResults })
     expect(res.code).toBe(400)
-    expect(res.msg).toContain('10')
+    expect(res.msg).toContain('9')
   })
 
   test('空 ocrText 过滤：标记 ocr_empty，不参与 AI 调用', async () => {

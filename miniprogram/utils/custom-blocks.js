@@ -14,10 +14,14 @@
  * 类型契约（字段说明）：
  *  - overview:     { rate, totalGap, annualPremium, debt, totalCoverage }
  *  - panorama:     { heads, cats, rows: [{name, cells: [{v, s}]}] }
- *  - timeline:     { items: [{y, label, type, soon?}] }
- *  - calendar:     { items: [{m, v, h}] }
+ *  - timeline:     { items: [{y, label, type, soon?, date?, premium?, note?}] }
+ *  - calendar:     { items: [{m, v, h}] }   h: 1=有缴费 2=峰值月
  *  - urgent_list:  { items: [{action, reason}] }
  *  - insight_cards:{ items: [string] }
+ *  - dashboard:    { familyPlan: {}, matrix: { heads, rows } }
+ *  - family_tree:  { nodes: [{name, role, age}], finance: {income, debt, expense} }
+ *  - risk_alerts:  { items: [{name, issue}], disclaimer }
+ *  - policy_cards: { groups: [{name, policies: [{product_name, category, sum_assured, annual_premium, effective_date, policy_id}]}] }
  */
 
 // 字段契约：必填字段（缺失则 normalize 时 console.warn 并补默认值）
@@ -45,6 +49,22 @@ const BLOCK_REGISTRY = {
   insight_cards: {
     required: ['items'],
     defaults: { items: [] }
+  },
+  dashboard: {
+    required: ['familyPlan', 'matrix'],
+    defaults: { familyPlan: {}, matrix: { heads: [], rows: [] } }
+  },
+  family_tree: {
+    required: ['nodes'],
+    defaults: { nodes: [], finance: { income: 0, debt: 0, expense: 0 } }
+  },
+  risk_alerts: {
+    required: ['items'],
+    defaults: { items: [], disclaimer: '' }
+  },
+  policy_cards: {
+    required: ['groups'],
+    defaults: { groups: [] }
   }
 }
 

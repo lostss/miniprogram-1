@@ -91,7 +91,9 @@ async function writeNote(db, openid, event) {
     const nmRes = await db.collection('members').where({ family_id: familyId, _openid: openid, member_id: data.memberId }).limit(1).get()
     if (nmRes.data && nmRes.data.length > 0) noteSubject = nmRes.data[0].name || ''
   }
-  await addFact(db, openid, {
+  // S2-3 修复：用 addFact 返回的 factId 直接更新，消除 where+orderBy 重查的竞态
+  // 原实现：并发 writeNote（同内容）各自重查拿到对方刚写入的 factId，category 写到错的 fact 上
+  const addRes = await addFact(db, openid, {
     familyId,
     subjectId: data.memberId || '',
     subjectType: data.memberId ? 'member' : 'family',
@@ -102,13 +104,9 @@ async function writeNote(db, openid, event) {
     confidence: data.confidence || 1
   })
   // 补充备注特有字段（addFact 不处理 content/category）
-  if (data.category) {
+  if (data.category && addRes.code === 200 && addRes.data && addRes.data.factId) {
     const ws = writeSeam(db, openid, familyId, { advanceStageHook: false })
-    const r = await db.collection('facts').where({ family_id: familyId, _openid: openid, predicate: '备注', object_value: content, status: 'active' })
-      .orderBy('created_at', 'desc').limit(1).get()
-    if (r.data && r.data[0]) {
-      await ws.updateDoc('facts', r.data[0]._id, { content, category: data.category }).catch(e => console.error('[dataWrite] writeNote category 更新失败:', e.message))
-    }
+    await ws.updateDoc('facts', addRes.data.factId, { content, category: data.category }).catch(e => console.error('[dataWrite] writeNote category 更新失败:', e.message))
   }
   // addFact 已触发 markFamilyMutated，无需重复
   return { code: 200, data: { written: true } }
@@ -172,9 +170,12 @@ async function deleteMember(db, openid, event) {
   if (!target) return { code: 404, msg: '未找到该成员' }
   const mid = target.member_id
   const ws = writeSeam(db, openid, familyId)
-  await ws.silentRemoveDoc('members', target._id).catch(e => console.error('[dataWrite] deleteMember 失败:', e.message))
-  await ws.silentUpdateWhere('facts', { subject_type: 'member', subject_id: mid, status: 'active' }, { status: 'superseded' }).catch(e => console.error('[dataWrite] deleteMember supersede 失败:', e.message))
+  // S2-4 修复：不再静默吞错，失败时聚合标记返回 partial，让用户知道删除未完成
+  const failures = []
+  await ws.silentRemoveDoc('members', target._id).catch(e => { console.error('[dataWrite] deleteMember 失败:', e.message); failures.push('members') })
+  await ws.silentUpdateWhere('facts', { subject_type: 'member', subject_id: mid, status: 'active' }, { status: 'superseded' }).catch(e => { console.error('[dataWrite] deleteMember supersede 失败:', e.message); failures.push('facts') })
   await ws.triggerHooks()
+  if (failures.length > 0) return { code: 207, partial: true, msg: '部分删除失败：' + failures.join(','), data: { deleted: failures.length === 0, memberId: mid, name: target.name } }
   return { code: 200, data: { deleted: true, memberId: mid, name: target.name } }
 }
 

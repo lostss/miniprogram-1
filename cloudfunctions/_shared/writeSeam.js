@@ -28,7 +28,7 @@ function _mutationMarker(now = new Date()) {
   return { insight_stale: true, updated_at: now }
 }
 
-async function _markFamilyMutated(db, familyId, openid) {
+async function markFamilyMutated(db, familyId, openid) {
   if (!openid) { console.warn('[writeSeam] markFamilyMutated 缺少 openid，跳过（防越权）'); return }
   try {
     await db.collection('families').where({ _id: familyId, _openid: openid }).update({ data: _mutationMarker() })
@@ -62,6 +62,9 @@ async function safeUpdateWhere(db, collection, where, data, openid) {
  */
 async function safeUpdateDoc(db, collection, docId, data, openid) {
   if (!openid) throw new Error('[writeSeam] safeUpdateDoc 缺少 openid')
+  // S-2 修复：doc(id).update() 无法注入 where，先校验 _openid 归属再更新
+  const owner = await db.collection(collection).where({ _id: docId, _openid: openid }).get()
+  if (!owner.data || !owner.data.length) throw new Error('[writeSeam] safeUpdateDoc 文档不存在或无权操作')
   const finalData = { ...data, updated_at: new Date() }
   return db.collection(collection).doc(docId).update({ data: finalData })
 }
@@ -79,6 +82,9 @@ async function safeRemoveWhere(db, collection, where, openid) {
  */
 async function safeRemoveDoc(db, collection, docId, openid) {
   if (!openid) throw new Error('[writeSeam] safeRemoveDoc 缺少 openid')
+  // S-2 修复：先校验 _openid 归属再删除
+  const owner = await db.collection(collection).where({ _id: docId, _openid: openid }).get()
+  if (!owner.data || !owner.data.length) throw new Error('[writeSeam] safeRemoveDoc 文档不存在或无权操作')
   return db.collection(collection).doc(docId).remove()
 }
 
@@ -116,7 +122,7 @@ function writeSeam(db, openid, familyId, opts = {}) {
 
   async function _triggerHooks() {
     if (!shouldHook) return
-    if (markMutated) await _markFamilyMutated(db, familyId, openid)
+    if (markMutated) await markFamilyMutated(db, familyId, openid)
     // Bug-16 修复：await advanceStage 避免 fire-and-forget 在 serverless 函数返回后被冻结
     // advanceStage 内部已有 try/catch 吞错，await 不会让 _triggerHooks 抛出
     if (advanceStageHook) await advanceStage(db, familyId, openid)
@@ -154,8 +160,18 @@ function writeSeam(db, openid, familyId, opts = {}) {
         while (hasMore) {
           const res = await db.collection(collection).where({ ...where, _openid: openid }).limit(batchSize).get()
           if (!res.data || res.data.length === 0) { hasMore = false; break }
-          await Promise.all(res.data.map(d => db.collection(collection).doc(d._id).remove().catch(e => console.error('[writeSeam] batchRemove 单文档失败:', e.message))))
-          deleted += res.data.length
+          const results = await Promise.all(res.data.map(d =>
+            db.collection(collection).doc(d._id).remove()
+              .then(() => true)
+              .catch(e => { console.error('[writeSeam] batchRemove 单文档失败:', e.message); return false })
+          ))
+          const actuallyDeleted = results.filter(Boolean).length
+          deleted += actuallyDeleted
+          // 全批失败：文档未减少，继续循环会查到同样的数据 → 死循环，终止
+          if (actuallyDeleted === 0) {
+            console.error('[writeSeam] batchRemove 本批全部失败，终止避免死循环:', collection)
+            hasMore = false; break
+          }
           if (res.data.length < batchSize) hasMore = false
         }
         return deleted
@@ -200,5 +216,6 @@ function writeSeam(db, openid, familyId, opts = {}) {
 
 module.exports = {
   writeSeam,
-  advanceStage
+  advanceStage,
+  markFamilyMutated
 }

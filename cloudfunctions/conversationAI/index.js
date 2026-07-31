@@ -1,4 +1,4 @@
-/**
+﻿/**
  * conversationAI v5.0 — 三模式架构（PRD v1.4 对齐）
  *
  * 模式划分：
@@ -15,14 +15,14 @@ const { sanitize, checkRateLimit, auditOutput } = require('./_shared/guard')
 const { buildAdvisorSystemPrompt, buildStreamingPrompt, stripToolCardMarkers } = require('./prompts')
 const { upsertMember, upsertFinances } = require('./_shared/memberRepo')
 const { buildFamilyContext: buildV2Context } = require('./_shared/v2-context')
-const { getFamily, updateFamily } = require('./_shared/db-helpers')
+const { getFamily } = require('./_shared/db-helpers')
 // 工具 schema 单一事实源（架构审计 A1：从编排文件外移）
 const { TOOL_DEFINITIONS } = require('./tools')
 // 架构审计第 15 轮候选 #1：UI 文案契约外移到 tool-summaries.js，编排文件聚焦"调谁"
 const { TOOL_SUMMARIES } = require('./tool-summaries')
 
 // ponytail: 成员/财务走 memberRepo（进程内）；保单/事实经 dataWrite 网关（Fork A 统一写入缝）
-const _REPORT_THROTTLE_MS = require('./_shared/config').REPORT_THROTTLE_MS
+const { REPORT_THROTTLE_MS: _REPORT_THROTTLE_MS, AI: _AI_CONFIG } = require('./_shared/config')
 // 架构审计第 10 轮：跨函数调用统一委托 cross-fn-call seam（消除 _callWrite/_callQuery/_runReport 三处重复模板）
 const { callSibling } = require('./_shared/cross-fn-call')
 // 架构审计第 12 轮：补 logAI 导入（原 postProcess 引用未导入，回归 bug）
@@ -40,26 +40,23 @@ async function _callQuery(action, payload, openid) {
   return callSibling(cloud, 'dataQuery', { action, ...payload }, openid, { label: 'dataQuery.' + action })
 }
 
-// 报告再生：节流 + 2 次重试 + 时间戳回写，全部委托 callSibling
+// 报告再生：节流 + fire-and-forget（不阻塞对话返回）
+// S1-2/S2-1 修复：reportAI timeout=60s，await 必然导致 conversationAI(30s) 超时
+// 改为 fire-and-forget：节流校验后立即返回 triggered:true，reportAI 后台异步执行
+// S2-1 修复：retry:0 遵守 maxAttempts=1 硬约束，避免双倍 AI 调用
 async function _runReport(familyId, openid) {
   const fam = await getFamily(db, familyId, openid)
   const lastAt = (fam && fam.last_analysis_at) ? new Date(fam.last_analysis_at).getTime() : 0
   const now = Date.now()
-  if (now - lastAt < _REPORT_THROTTLE_MS) return { success: true, skipped: true }
+  if (now - lastAt < _REPORT_THROTTLE_MS) return { code: 200, skipped: true }
 
-  const result = await callSibling(cloud, 'reportAI', { familyId }, openid, {
+  // fire-and-forget：不 await，错误仅记录日志，不影响对话返回
+  callSibling(cloud, 'reportAI', { familyId }, openid, {
     label: 'reportAI',
-    retry: 2,
-    retryDelayMs: 2000,
-    onSuccess: (_res, ctx) => {
-      // 异步回写时间戳，不阻塞返回
-      updateFamily(db, ctx.familyId, ctx.openid, { last_analysis_at: new Date(ctx.now) })
-        .catch(e => console.error('[conversationAI] _runReport 时间戳更新失败:', e.message))
-    }
-  })
+    retry: 0
+  }).catch(e => console.error('[conversationAI] reportAI 后台失败:', e.message))
 
-  if (result.code === 200) return { triggered: true }
-  return { success: false, error: result.msg }
+  return { code: 200, triggered: true }
 }
 
 // 策略表：tool → { exec, needsConfirm?, pending? }
@@ -234,7 +231,7 @@ async function _handleGenerateText(event, openid) {
 
   const result = await safeCallChat(
     fullMessages, callChat,
-    { cloud, db, openid, familyId, sessionId: sessionId || ('s_' + Date.now().toString(36)), model: 'hy3', action: 'conversation_generate' },
+    { cloud, db, openid, familyId, sessionId: sessionId || ('s_' + Date.now().toString(36)), model: _AI_CONFIG.CHAT_MODEL, action: 'conversation_generate' },
     { maxTokens: 1200 }
   )
 
@@ -282,6 +279,16 @@ async function _handlePostProcess(event, openid) {
     }
   }
 
+  // N-2 修复：流式模式下 postProcess 是实际入口，补齐与 generateText 一致的频控
+  // （CONFIRM/KEEP/sug 为确认动作不消耗 AI，已在上方放行）
+  const rate = await checkRateLimit(db, openid)
+  if (!rate.allowed) {
+    if (cleanedUserText) await _writeMessage(familyId, openid, 'user', cleanedUserText, { sessionId: sid })
+    const limitText = rate.reason || '操作过于频繁，请稍后再试'
+    await _writeMessage(familyId, openid, 'assistant', limitText, { sessionId: sid })
+    return { code: 200, data: { cleanText: limitText, toolResults: [], auditBlocked: false, userWritten: !!cleanedUserText, assistantWritten: true } }
+  }
+
   if (!text) return { code: 400, msg: '缺少 text（AI 输出）' }
 
   // 1. 输出审计（禁止承诺 + PII 脱敏）
@@ -326,7 +333,7 @@ async function _handlePostProcess(event, openid) {
   await logAI(db, {
     openid, familyId, sessionId: sid,
     action: 'conversation_postprocess',
-    model: 'hy3',
+    model: _AI_CONFIG.CHAT_MODEL,
     status: 'success',
     userText: (cleanedUserText || '').substring(0, 200),
     replyText: cleanText.substring(0, 800),

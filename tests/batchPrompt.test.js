@@ -63,7 +63,7 @@ describe('buildBatchExtractionPrompt', () => {
   test('systemPrompt 包含输入特征说明（OCR表格语义还原）', () => {
     const { systemPrompt } = buildBatchExtractionPrompt([])
     expect(systemPrompt).toContain('输入特征')
-    expect(systemPrompt).toContain('列标题与单元格内容分离')
+    expect(systemPrompt).toContain('N 型排布')
     expect(systemPrompt).toContain('提取重点')
     expect(systemPrompt).toContain('保单号/保险合同号')
     expect(systemPrompt).toContain('换行或分页撕裂')

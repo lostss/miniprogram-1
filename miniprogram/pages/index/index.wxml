@@ -1,27 +1,42 @@
-<!-- 保小秘 首页 v1.3 -->
-<view class="page page-view">
+<!-- 保小秘 首页 -->
+<view class="page page-view {{recentClients.length === 0 && !loadingClients && !ocrBusy ? 'page-fixed' : ''}}">
+  <!-- 品牌头 -->
   <view class="brand-header">
-    <view class="brand-name">保小秘</view>
+    <view class="brand-title">上传保单，秒出报告</view>
     <view class="brand-slogan">AI保单整理助手</view>
   </view>
 
-  <view class="upload-card pressable" bindtap="onUploadTap" aria-label="上传保单">
-    <view class="upload-orb">
-      <image class="upload-orb-icon" src="/images/upload.svg" mode="aspectFit" />
+  <!-- 空态：上传引导 -->
+  <view class="orb-stage {{recentClients.length > 0 ? 'orb-stage--done' : ''}}" wx:if="{{!ocrBusy && !loadingClients}}">
+    <view class="upload-box pressable" bindtap="onUploadTap" aria-label="拍照上传保单">
+      <image class="upload-box-icon" src="/images/upload.svg" mode="aspectFit" />
+      <text class="upload-box-text">点击上传保单</text>
     </view>
-    <view class="upload-title">上传保单，秒出报告</view>
-    <view class="upload-dropzone">
-      <text class="upload-dropzone-text">拍照或从相册选择</text>
-      <text class="upload-dropzone-hint">支持 JPG / PNG，单张 ≤ 10MB</text>
+    <view class="onboard-steps" wx:if="{{recentClients.length === 0}}">
+      <view class="ob-step">
+        <view class="ob-step-num">1</view>
+        <text class="ob-step-text">拍照上传保单</text>
+      </view>
+      <view class="ob-step-line"></view>
+      <view class="ob-step">
+        <view class="ob-step-num">2</view>
+        <text class="ob-step-text">AI 智能识别分析</text>
+      </view>
+      <view class="ob-step-line"></view>
+      <view class="ob-step">
+        <view class="ob-step-num">3</view>
+        <text class="ob-step-text">生成保障报告</text>
+      </view>
     </view>
   </view>
 
+  <!-- 客户列表 -->
   <view class="clients-section" wx:if="{{recentClients.length > 0 || loadingClients}}">
     <view class="section-header">
-      <text class="section-title">最近服务</text>
+      <text class="section-title">最近客户</text>
       <view class="section-more pressable" bindtap="onViewAll" aria-label="查看全部客户">
-        <text>查看全部</text>
-        <text class="section-more-arrow">›</text>
+        <text>全部</text>
+        <text class="section-more-arrow">→</text>
       </view>
     </view>
     <block wx:if="{{loadingClients}}">
@@ -34,95 +49,22 @@
       </view>
     </block>
     <block wx:else>
-      <view class="client-stagger" wx:for="{{recentClients}}" wx:key="_id" wx:for-index="idx">
+      <view class="client-stagger {{removingId === item._id ? 'card-removing' : ''}}" wx:for="{{recentClients}}" wx:key="_id" wx:for-index="idx">
         <client-card client="{{item}}" bindtap="onClientTap" bind:longpress="onClientLongPress" data-idx="{{idx}}" />
       </view>
     </block>
   </view>
 
-  <view class="empty" wx:if="{{recentClients.length === 0 && !ocrMask.visible}}">
-    <view class="empty-illu">
-      <view class="empty-step"><image class="empty-step-icon" src="/images/upload.svg" mode="aspectFit" /></view>
-      <view class="empty-arrow">—</view>
-      <view class="empty-step"><image class="empty-step-icon" src="/images/policy.svg" mode="aspectFit" /></view>
-    </view>
-    <text class="empty-text">开始您的第一份报告</text>
-    <text class="empty-sub">上传保单，AI 自动生成保障方案</text>
-  </view>
-
-  <!-- OCR 蒙层 -->
-  <view class="ocr-mask" wx:if="{{ocrMask.visible}}">
-    <view class="ocr-card">
-      <!-- 进度条（upload/recognize 通用，saving/done 隐藏） -->
-      <view class="ocr-bar-wrap" wx:if="{{ocrMask.phase === 'upload' || ocrMask.phase === 'recognize'}}">
-        <view class="ocr-bar"><view class="ocr-bar-fill" style="width:{{ocrMask.phase === 'upload' ? ocrMask.uploaded * 100 / ocrMask.total : ocrMask.processed * 100 / ocrMask.total}}%"></view></view>
-      </view>
-      <block wx:if="{{ocrMask.phase === 'upload'}}">
-        <view class="ocr-phase-num">{{ocrMask.uploaded}}<text class="ocr-phase-of"> / {{ocrMask.total}}</text></view>
-        <view class="ocr-phase-title">{{ocrMask.phaseText || '正在上传保单图片'}}</view>
-        <view class="ocr-phase-sub">请稍候，小秘在接收...</view>
-      </block>
-      <block wx:if="{{ocrMask.phase === 'recognize'}}">
-        <view class="ocr-phase-num">{{ocrMask.processed}}<text class="ocr-phase-of"> / {{ocrMask.total}}</text></view>
-        <view class="ocr-phase-title">{{ocrMask.phaseText || '小秘正在认真看...'}}</view>
-        <view class="ocr-phase-sub">OCR 文字提取 + AI 保单分析，约 13 秒/张</view>
-        <view class="ocr-dot ocr-dot--gold"></view>
-      </block>
-      <!-- 流式回填：批1完成即展示部分结果，批2继续填充 -->
-      <block wx:if="{{ocrMask.phase === 'recognize-stream'}}">
-        <view class="ocr-phase-num">{{ocrMask.streamFilled}}<text class="ocr-phase-of"> / {{ocrMask.total}}</text></view>
-        <view class="ocr-phase-title">小秘正在逐张识别...</view>
-        <view class="ocr-phase-sub">已识别 {{ocrMask.streamFilled}} 张，共 {{ocrMask.total}} 张</view>
-        <scroll-view class="ocr-stream-list" scroll-y>
-          <view class="ocr-stream-item {{item.kind === 'error' ? 'is-error' : ''}}" wx:for="{{ocrMask.streamSlots}}" wx:key="index">
-            <block wx:if="{{item}}">
-              <text class="stream-name {{item.low ? 'low-conf' : ''}}">{{item.product_name || '未知'}}</text>
-              <text class="stream-cat {{item.low ? 'low-conf' : ''}}">{{item.kind === 'cash' ? '现价表' : (item.insurance_category || (item.kind === 'error' ? '识别失败' : '未知'))}}</text>
-            </block>
-            <block wx:else>
-              <view class="skeleton-line"></view>
-              <view class="skeleton-line short"></view>
-            </block>
-          </view>
-        </scroll-view>
-        <view class="ocr-dot ocr-dot--gold"></view>
-      </block>
-      <block wx:if="{{ocrMask.phase === 'saving'}}">
-        <view class="ocr-phase-title">正在保存...</view>
-        <view class="ocr-phase-sub">小秘正在整理数据</view>
-        <view class="ocr-dot ocr-dot--green"></view>
-      </block>
-      <block wx:if="{{ocrMask.phase === 'done'}}">
-        <view class="ocr-done-title">{{ocrMask.lowConf > 0 ? '小秘已填写，请确认' : '识别完成'}}</view>
-        <view class="ocr-done-sub">{{ocrMask.lowConf > 0 ? '下划线字段 AI 不确定，请核对' : ('识别到 ' + ocrMask.totalPolicies + ' 份保单' + (ocrMask.cashCount > 0 ? ' + ' + ocrMask.cashCount + ' 份现价表' : '') + '，' + (ocrMask.matched ? '匹配已有客户' : '已新建客户'))}}</view>
-        <scroll-view class="ocr-summary-list" scroll-y>
-          <view class="ocr-summary-item" wx:for="{{ocrMask.preview}}" wx:key="index">
-            <text class="summary-name {{item.low ? 'low-conf' : ''}}">{{item.product_name || '未知'}}</text>
-            <text class="summary-cat {{item.low ? 'low-conf' : ''}}">{{item.insurance_category || '未知'}}</text>
-          </view>
-        </scroll-view>
-        <view class="ocr-actions">
-          <button class="ocr-confirm-btn pressable {{ocrMask.confirming ? 'is-loading' : ''}}" bindtap="onOcrConfirm" disabled="{{ocrMask.confirming}}" aria-label="确认保单信息">{{ocrMask.confirming ? '保存中...' : '确认'}}</button>
-          <button class="ocr-modify-btn pressable" wx:if="{{ocrMask.lowConf > 0}}" catchtap="onOcrModify" aria-label="修改保单信息">修改</button>
-        </view>
-      </block>
-      <!-- 角色确认卡片（全体） -->
-      <block wx:if="{{ocrMask.showRoles}}">
-        <view class="ocr-done-title">请确认家庭成员角色</view>
-        <view class="role-list">
-          <view class="role-row" wx:for="{{ocrMask.roleList}}" wx:key="memberId">
-            <text class="role-name">{{item.name}}</text>
-            <view class="role-opts">
-              <text class="role-opt {{item.role === '本人' ? 'role-opt--on' : ''}}" data-idx="{{index}}" data-role="本人" bindtap="onRolePick">本人</text>
-              <text class="role-opt {{item.role === '配偶' ? 'role-opt--on' : ''}}" data-idx="{{index}}" data-role="配偶" bindtap="onRolePick">配偶</text>
-              <text class="role-opt {{item.role === '子女' ? 'role-opt--on' : ''}}" data-idx="{{index}}" data-role="子女" bindtap="onRolePick">子女</text>
-              <text class="role-opt {{item.role === '父母' ? 'role-opt--on' : ''}}" data-idx="{{index}}" data-role="父母" bindtap="onRolePick">父母</text>
-            </view>
-          </view>
-        </view>
-        <view class="ocr-done-sub role-tip">已根据年龄自动推测，可直接确认</view>
-        <button class="ocr-confirm-btn pressable" bindtap="onRoleConfirm">确认</button>
-      </block>
-    </view>
+  <!-- 空态无客户：底部提示 -->
+  <view class="empty-hint" wx:if="{{recentClients.length === 0 && !ocrBusy && !loadingClients}}">
+    <text>支持 JPG / PNG · 一次最多 9 张</text>
   </view>
 </view>
+
+<!-- FAB（非空态显示） -->
+<view class="fab {{recentClients.length > 0 && !ocrBusy ? 'fab--show' : ''}}" bindtap="onUploadTap" aria-label="拍照上传保单">
+  <image class="fab-icon" src="/images/upload.svg" mode="aspectFit" />
+</view>
+
+<!-- OCR 全流程组件 -->
+<ocr-flow id="ocrFlow" bind:busychange="onOcrBusy" bind:saved="onOcrSaved" bind:savedhome="onOcrSavedHome" bind:discarded="onOcrDiscarded" />

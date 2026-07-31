@@ -11,6 +11,45 @@
  * 此测试是防止 ocrService/ocr-core 与 dataWrite/policy-write 字段映射漂移的护栏。
  */
 const { buildPolicyFromExtract, _toNum } = require('../cloudfunctions/_shared/ocr-core')
+const { assessPolicy, assessCoreCompleteness } = require('../cloudfunctions/_shared/ocr-confidence')
+
+describe('assessCoreCompleteness — 核心字段值完整性（审计 #1）', () => {
+  const contract = { insured_name: '张三', effective_date: '2026-01-01' }
+  const product = { product_name: '康宁', insurance_category: '重疾', sum_assured: '500000' }
+  test('5 字段齐全 → 完整', () => {
+    expect(assessCoreCompleteness(contract, [product])).toBe(true)
+  })
+  test('缺 1 字段（4/5 ≥ 80%）→ 完整', () => {
+    expect(assessCoreCompleteness({ ...contract, insured_name: '' }, [product])).toBe(true)
+  })
+  test('缺 2 字段（3/5 < 80%）→ 不完整', () => {
+    expect(assessCoreCompleteness({ ...contract, insured_name: '' }, [{ ...product, sum_assured: '' }])).toBe(false)
+  })
+  test('products 为空 → 不完整', () => {
+    expect(assessCoreCompleteness(contract, [])).toBe(false)
+  })
+  test('多产品任一不达标 → 不完整', () => {
+    expect(assessCoreCompleteness(contract, [product, { ...product, product_name: '', insurance_category: '' }])).toBe(false)
+  })
+})
+
+describe('assessPolicy — 复核判定（0.9 阈值单一真相源）', () => {
+  test('auto_confirmed 布尔权威优先', () => {
+    expect(assessPolicy({ auto_confirmed: true, confidence: 0.5 })).toBe(false)
+    expect(assessPolicy({ auto_confirmed: false, confidence: 0.99 })).toBe(true)
+  })
+  test('无 auto_confirmed：逐字段任一 < 0.9 → needsReview', () => {
+    expect(assessPolicy({ field_confidence: { product_name: 0.95, sum_assured: 0.85 } })).toBe(true)
+    expect(assessPolicy({ field_confidence: { product_name: 0.95, sum_assured: 0.95 } })).toBe(false)
+  })
+  test('无逐字段：整体 confidence 边界 0.9', () => {
+    expect(assessPolicy({ confidence: 0.89 })).toBe(true)
+    expect(assessPolicy({ confidence: 0.9 })).toBe(false)
+  })
+  test('空对象视为待核对（无置信度）', () => {
+    expect(assessPolicy({})).toBe(true)
+  })
+})
 
 describe('buildPolicyFromExtract', () => {
   const baseConf = { overallConf: 0.95, fieldConf: { product_name: 0.97 }, ocrReliable: true, autoConfirmed: false }
@@ -77,6 +116,19 @@ describe('buildPolicyFromExtract', () => {
     test('ID 格式：pol_<timestamp>_<random6>', () => {
       const policies = buildPolicyFromExtract([baseProduct], baseContract, baseConf)
       expect(policies[0].id).toMatch(/^pol_\d+_[a-z0-9]{6}$/)
+    })
+
+    test('autoConfirmed=true 但核心字段缺失 2 项 → auto_confirmed=false（审计 #1）', () => {
+      const rich = { ...baseConf, autoConfirmed: true }
+      // 缺 2 项（3/5 < 80%）→ 不自动确认
+      const sparse = buildPolicyFromExtract([{ ...baseProduct, sum_assured: '', product_name: '' }], baseContract, rich)[0]
+      expect(sparse.auto_confirmed).toBe(false)
+      // 缺 1 项（4/5 ≥ 80%）→ 容错，仍自动确认
+      const near = buildPolicyFromExtract([{ ...baseProduct, sum_assured: '' }], baseContract, rich)[0]
+      expect(near.auto_confirmed).toBe(true)
+      // 完整 → 自动确认
+      const full = buildPolicyFromExtract([baseProduct], baseContract, rich)[0]
+      expect(full.auto_confirmed).toBe(true)
     })
 
     test('每个 product 生成独立 ID', () => {
@@ -165,6 +217,17 @@ describe('buildPolicyFromExtract', () => {
       expect(p.policy_number).toBe('')
       expect(p.insurer).toBe('')
       expect(p.effective_date).toBe('')
+      expect(p.insured_birth_date).toBe('')
+    })
+    test('birth_date 格式校验：非 YYYY-MM-DD 清空（防身份证号误存为生日）', () => {
+      const bad = { ...baseContract, insured_birth_date: '110101199001011234', policyholder_birth_date: '1990年1月', beneficiary_birth_date: '1990-05-05' }
+      const p = buildPolicyFromExtract([baseProduct], bad, baseConf)[0]
+      expect(p.insured_birth_date).toBe('') // 身份证号 → 清空
+      expect(p.policyholder_birth_date).toBe('') // 非规范日期 → 清空
+      expect(p.beneficiary_birth_date).toBe('1990-05-05') // 合法日期透传
+    })
+    test('birth_date 空白/undefined 兜底空串', () => {
+      const p = buildPolicyFromExtract([baseProduct], { ...baseContract, insured_birth_date: '  ' }, baseConf)[0]
       expect(p.insured_birth_date).toBe('')
     })
     test('product 缺失字段：sum_assured/annual_premium 兜底 0', () => {

@@ -2,9 +2,12 @@ const api = require('../../utils/apiClient')
 const { navigateToFamily, confirmDeleteFamily } = require('../../utils/family-actions')
 
 Page({
-  data: { families: [], keyword: '', loading: false },
+  data: { families: [], keyword: '', loading: false, removingId: '' },
   onShow() {
     this._fetch()
+  },
+  onUnload() {
+    if (this._timer) clearTimeout(this._timer)
   },
   _fetch() {
     if (this.data.loading) return
@@ -13,7 +16,7 @@ Page({
     const params = this.data.keyword ? { keyword: this.data.keyword } : {}
     api(action, params)
       .then(res => {
-        if (res.result && res.result.code === 200) this.setData({ families: (res.result.data && res.result.data.families) || [] })
+        if (res.ok) this.setData({ families: (res.data && res.data.families) || [] })
       })
       .catch(e => {
         console.error(e)
@@ -26,6 +29,13 @@ Page({
     clearTimeout(this._timer)
     this._timer = setTimeout(() => this._fetch(), 300)
   },
+  onClearSearch() {
+    this.setData({ keyword: '' })
+    this._fetch()
+  },
+  onGoUpload() {
+    wx.navigateBack()
+  },
   onClientTap(e) {
     const { _id } = e.detail
     navigateToFamily(_id)
@@ -37,7 +47,13 @@ Page({
     confirmDeleteFamily({
       familyId: c._id,
       name: c.name || c.family_name || '',
-      onSuccess: () => this._fetch()
+      onSuccess: () => {
+        this.setData({ removingId: c._id })
+        setTimeout(() => {
+          this._fetch()
+          this.setData({ removingId: '' })
+        }, 250)
+      }
     })
   }
 })

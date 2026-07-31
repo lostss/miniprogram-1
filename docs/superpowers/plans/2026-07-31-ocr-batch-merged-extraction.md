@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **状态：✅ 已执行（2026-08-01）。** 后续演进：拆分降级机制删除（死路径）、prompt 收敛共享模板、保单/现价两步独立判定、上限 5→9。
+
 **Goal:** 新增 `aiExtractBatch` action，将 N 张图 OCR 结果拼接为 1 次 AI 调用，超限时对半拆分降级，前端通过 `OCR_BATCH_MODE` 开关切换新旧方案。
 
 **Architecture:** 云函数侧新增 `buildBatchExtractionPrompt`（prompt 构建）+ `aiExtractBatchPhase`（编排层，含拆分降级）+ `aiExtractBatch` handler。前端 `ocr-flow.js` 新增 `batchOCR_merged` 函数，与原 `batchOCR` 并存，通过顶部 `OCR_BATCH_MODE` 变量切换。阶段1 `ocrOnly` 完全复用。

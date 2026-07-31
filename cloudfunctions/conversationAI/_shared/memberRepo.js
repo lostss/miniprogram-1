@@ -37,10 +37,13 @@ function _shapeMember(m) {
   }
 }
 
-/** 加载家庭成员（形状对齐旧 families.members） */
+/** 加载家庭成员（形状对齐旧 families.members）
+ * S2-2 修复：统一过滤 status='deleted'，消除 family-detail/_updateCompletenessAsync/member-matcher 的口径分裂
+ * family-list/entity-query 中重复的过滤可保留（防御性），但源头在此统一
+ */
 async function getMembers(db, familyId, openid) {
   const res = await safeQuery(db, 'members', { family_id: familyId }, openid)
-  return (res.data || []).map(_shapeMember)
+  return (res.data || []).filter(m => m.status !== 'deleted').map(_shapeMember)
 }
 
 /** 加载家庭财务（形状对齐旧 families.financial_snapshot） */

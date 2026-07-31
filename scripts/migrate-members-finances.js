@@ -62,7 +62,7 @@ async function migrateFamily(fam) {
   // 1. 内嵌 members → 集合（去重：同 member_id 已存在则跳过）
   const embedded = fam.members || []
   for (const em of embedded) {
-    const mid = em.member_id || ('mem_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6))
+    const mid = em.member_id || ('mem_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8))
     if (byMemberId.has(mid)) continue
     const doc = _shapeFromEmbedded(em)
     doc.member_id = mid
@@ -82,10 +82,10 @@ async function migrateFamily(fam) {
       await db.collection('finances').add({
         data: {
           _openid: openid, family_id: familyId,
-          income: snap.income != null ? snap.income : null,
-          debt: (debt && debt.amount != null) ? debt.amount : (typeof debt === 'object' ? null : debt),
+          annual_income: snap.income != null ? snap.income : null,
+          total_debt: (debt && debt.amount != null) ? debt.amount : (typeof debt === 'object' ? null : debt),
           debt_type: (debt && debt.type) || '',
-          fixed_expense: snap.fixed_expense != null ? snap.fixed_expense : null,
+          fixed_annual_expense: snap.fixed_expense != null ? snap.fixed_expense : null,
           created_at: new Date(), updated_at: new Date()
         }
       })
@@ -115,7 +115,7 @@ async function migrateFamily(fam) {
       financial_snapshot: { income: null, debt: { amount: null, type: '' }, fixed_expense: null },
       updated_at: new Date()
     }
-  }).catch(() => {})
+  }).catch(e => console.error('[migrate] 清理 families 内嵌字段失败:', e.message))
 
   return { familyId, createdMembers, createdFinances, policyFix, factFix }
 }

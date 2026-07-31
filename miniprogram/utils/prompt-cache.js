@@ -24,8 +24,8 @@ function createPromptCache() {
     }
     try {
       const pr = await api('conversationAI', { familyId, mode: 'getPrompt' })
-      if (pr.result && pr.result.code === 200) {
-        const d = pr.result.data
+      if (pr.ok) {
+        const d = pr.data
         let text = d.systemPrompt || ''
         if (d.context) text += '\n\n## 当前客户信息\n' + d.context
         cached = { familyId, text, fetchedAt: now }

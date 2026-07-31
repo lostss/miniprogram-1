@@ -1,9 +1,11 @@
+const { desensitize } = require('./pii-rules')
+
 /**
  * errorHandler — 全局错误处理策略
- * 
+ *
  * 统一错误码 → 用户提示映射
  * 支持场景：云函数返回错误、网络异常、权限错误、数据校验错误
- * 
+ *
  * 用法：
  *   const errorHandler = require('./errorHandler.js')
  *   errorHandler.handle(err)                    // 自动判断类型并提示
@@ -91,7 +93,7 @@ function handle(err, options) {
   if (!opts.silent && info.code !== 'NETWORK' && info.code !== 'TIMEOUT') {
     try {
       const app = getApp()
-      if (app && app._uploadError) app._uploadError(opts.context || 'handler', { message: info.detail })
+      if (app && app._uploadError) app._uploadError(opts.context || 'handler', { message: desensitize(info.detail) })
     } catch (e) { console.error('[errorHandler] 云端上报失败:', (e && e.message) || e) }
   }
 

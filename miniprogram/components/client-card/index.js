@@ -1,19 +1,13 @@
-// P2-5：canvas 颜色集中（canvas 不读 CSS 变量，需 JS 端单一来源）
-// 与 app.wxss 的 --border / --accent / --text-primary 保持视觉一致
-const COLORS = {
-  ringTrack: '#E8E0D5',   // 轨道色（对应 --border）
-  ringFill:  '#C9A96E',   // 进度色（对应 --accent）
-  text:      '#1A1A2E'     // 文本色（对应 --text-primary）
-}
-
+// 完整度圆环改用 CSS conic-gradient 绘制（lib 3.15+ 支持），
+// 移除每卡一个 canvas 2d 实例，避免客户列表 10+ 卡片的冷启动开销
 Component({
   properties: { client: { type: Object, value: {} } },
   data: { _fmtTime: '', _completeness: 0 },
   observers: {
     'client'(c) {
       if (!c) return
-      this.setData({ _fmtTime: this._fmt(c.updated_at), _completeness: c.completeness || (c.report && c.report.completeness) || 0, _name: c.name || c.family_name || '', _id: c._id || '' })
-      if (this.data._completeness > 0) this._drawRing()
+      const comp = c.completeness || (c.report && c.report.completeness) || 0
+      this.setData({ _fmtTime: this._fmt(c.updated_at), _completeness: comp, _name: c.name || c.family_name || '', _id: c._id || '' })
     }
   },
   methods: {
@@ -28,36 +22,6 @@ Component({
       if (diff < 36e5) return Math.floor(diff / 6e4) + '分钟前'
       if (diff < 864e5) return Math.floor(diff / 36e5) + '小时前'
       return (t.getMonth() + 1) + '/' + t.getDate()
-    },
-    _drawRing() {
-      const query = this.createSelectorQuery()
-      query.select('#ringCanvas').fields({ node: true, size: true }).exec(res => {
-        if (!res || !res[0] || !res[0].node) return
-        const canvas = res[0].node
-        const ctx = canvas.getContext('2d')
-        const dpr = wx.getWindowInfo().pixelRatio
-        const w = res[0].width || 40
-        const h = res[0].height || 40
-        canvas.width = w * dpr
-        canvas.height = h * dpr
-        ctx.scale(dpr, dpr)
-
-        const c = Math.min(this.data._completeness / 100, 1)
-        const r = Math.min(w, h) / 2 - 4
-        const x = w / 2, y = h / 2
-
-        ctx.lineWidth = 3
-        ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI)
-        ctx.strokeStyle = COLORS.ringTrack; ctx.stroke()
-
-        ctx.beginPath(); ctx.arc(x, y, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * c)
-        ctx.strokeStyle = COLORS.ringFill; ctx.stroke()
-
-        ctx.fillStyle = COLORS.text
-        ctx.font = '12px sans-serif'
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-        ctx.fillText(Math.round(c * 100) + '%', x, y)
-      })
     }
   }
 })

@@ -2,7 +2,7 @@
  * report-builder 单测 — 纯函数（buildGaps / assessDataCompleteness / buildChapters）
  * 不依赖 wx，可直接 node 运行
  */
-const { buildGaps, assessDataCompleteness, buildChapters } = require('../miniprogram/utils/report-builder')
+const { buildGaps, assessDataCompleteness, buildChapters, buildHero, buildCoverageMatrix } = require('../miniprogram/utils/report-builder')
 
 // 基准家庭：李阳勇(本人,收入30) / 谢敏(配偶,收入15) / 李牧云(子女)
 // 负债150万，仅李阳勇有寿险100万
@@ -88,90 +88,172 @@ describe('assessDataCompleteness — 完整度透视', () => {
   })
 })
 
-describe('buildChapters — 章节结构（结论先行：概览/紧急行动/规划/建议/关键发现/深度分析/附录）', () => {
-  const report = {
-    portrait: '家庭画像内容',
-    review: '点评内容',
-    gap_plan: '这是一个超过20字的保障规划建议文本用于测试章节渲染',
-    suggestions: '这是一个超过20字的行动建议文本用于测试章节渲染',
-    raw_analysis: '这是一个超过15个字的深度分析章节内容文本',
-    disclaimer: '免责'
+describe('buildCoverageMatrix — 保障覆盖矩阵（第 2 章数据源）', () => {
+  test('成员×险种矩阵：缺失格 missing / 覆盖格 ok / 合计行', () => {
+    const c = baseCustomer() // 李阳勇仅寿险100万
+    const m = buildCoverageMatrix(c.members, c.policies)
+    expect(m.heads).toEqual(['成员', '重疾险', '医疗险', '意外险', '寿险', '合计'])
+    expect(m.rows.length).toBe(4) // 3 成员 + 合计行
+    const ly = m.rows.find(r => r.name === '李阳勇')
+    expect(ly.cells[0].s).toBe('missing') // 重疾险缺失
+    expect(ly.cells[3]).toEqual({ v: '100', s: 'ok' }) // 寿险
+    expect(ly.cells[4]).toEqual({ v: '100', s: 'total' }) // 行合计
+    const total = m.rows[3]
+    expect(total.name).toBe('合计')
+    expect(total.cells[3].v).toBe('100') // 寿险列合计
+    expect(total.cells[4].s).toBe('grand') // 总合计
+  })
+
+  test('deleted/cancelled 保单不计入矩阵', () => {
+    const c = baseCustomer()
+    c.policies = [
+      { insured_name: '李阳勇', insurance_category: '寿险', sum_assured: 1000000, status: 'deleted' },
+      { insured_name: '谢敏', insurance_category: '医疗险', sum_assured: 500000, status: 'active' }
+    ]
+    const m = buildCoverageMatrix(c.members, c.policies)
+    const total = m.rows[3]
+    expect(total.cells[1].v).toBe('50') // 医疗险合计 50 万（deleted 不计入）
+    expect(total.cells[3].v).toBe('—') // 寿险无 active 保单 → 缺失格
+  })
+})
+
+describe('buildHero — 保障覆盖检查（Hero 数据源）', () => {
+  test('缺口成员警示 + 完整成员勾选 + 总结', () => {
+    const c = baseCustomer()
+    const gaps = buildGaps(c)
+    const h = buildHero(c, gaps)
+    expect(h.alerts.length).toBe(3)
+    const ly = h.alerts.find(a => a.name === '李阳勇')
+    expect(ly.ok).toBe(false)
+    expect(ly.missing).toContain('重疾')
+    expect(ly.missing).toContain('寿险') // gap>0 即视为缺口
+    expect(ly.display).toContain('缺少')
+    expect(h.summary).toBe('3位成员中，3位存在缺口')
+    expect(h.topAdvice).toContain('补充')
+  })
+
+  test('无缺口成员显示覆盖完整', () => {
+    const c = baseCustomer()
+    // 给所有成员补齐四险
+    c.policies = [
+      { insured_name: '李阳勇', insurance_category: '重疾险', sum_assured: 500000, status: 'active' },
+      { insured_name: '李阳勇', insurance_category: '医疗险', sum_assured: 2000000, status: 'active' },
+      { insured_name: '李阳勇', insurance_category: '意外险', sum_assured: 5000000, status: 'active' },
+      { insured_name: '李阳勇', insurance_category: '寿险', sum_assured: 10000000, status: 'active' },
+      { insured_name: '谢敏', insurance_category: '重疾险', sum_assured: 500000, status: 'active' },
+      { insured_name: '谢敏', insurance_category: '医疗险', sum_assured: 2000000, status: 'active' },
+      { insured_name: '谢敏', insurance_category: '意外险', sum_assured: 5000000, status: 'active' },
+      { insured_name: '谢敏', insurance_category: '寿险', sum_assured: 10000000, status: 'active' },
+      { insured_name: '李牧云', insurance_category: '重疾险', sum_assured: 500000, status: 'active' },
+      { insured_name: '李牧云', insurance_category: '医疗险', sum_assured: 2000000, status: 'active' },
+      { insured_name: '李牧云', insurance_category: '意外险', sum_assured: 5000000, status: 'active' }
+    ]
+    const gaps = buildGaps(c)
+    const h = buildHero(c, gaps)
+    expect(h.alerts.every(a => a.ok)).toBe(true)
+    expect(h.summary).toBe('3位成员中，0位存在缺口')
+    expect(h.topAdvice).toBe('')
+  })
+})
+
+describe('buildChapters — 基础版报告 6 章单页结构', () => {
+  // 带完整字段的报告样本（含生效日/保费，供缴费月历/年历测试）
+  function reportCustomer() {
+    const c = baseCustomer()
+    c.policies = [
+      { insured_name: '李阳勇', insurance_category: '寿险', sum_assured: 1000000, annual_premium: 8000, effective_date: '1980-01-01', status: 'active' }
+    ]
+    return c
   }
+  const report = { disclaimer: '免责' }
 
-  test('章节顺序：overview → plan → suggestions → analysis → appendix_timeline...（无 urgent/insights 时）', () => {
-    const ch = buildChapters(baseCustomer(), report)
+  test('章节顺序：1家庭结构 → 2保障汇总 → 3缴费月历 → 4缴费年历 → 5风险提示 → 6附录保单明细', () => {
+    const ch = buildChapters(reportCustomer(), report)
     const keys = ch.map(x => x.key)
-    expect(keys[0]).toBe('overview')
-    expect(keys).toContain('plan')
-    expect(keys).toContain('suggestions')
-    expect(keys).toContain('analysis')
-    // 附录已拆为独立章节，末尾应为 appendix_disclaimer
-    expect(keys[keys.length - 1]).toBe('appendix_disclaimer')
+    expect(keys).toEqual(['family_structure', 'coverage_summary', 'premium_calendar', 'premium_timeline', 'risk_alerts', 'appendix_policies'])
   })
 
-  test('画像内容作为 analysis 章 pre 渲染（结论先行后折叠展示）', () => {
-    const ch = buildChapters(baseCustomer(), report)
-    const analysis = ch.find(x => x.key === 'analysis')
-    expect(analysis).toBeDefined()
-    expect(analysis.pre).toContain('家庭画像内容')
+  test('家庭结构章：成员节点（角色分组排序）+ 财务聚合', () => {
+    const ch = buildChapters(reportCustomer(), report)
+    const ft = ch[0].customBlocks.find(b => b.t === 'family_tree')
+    expect(ft).toBeDefined()
+    expect(ft.nodes.length).toBe(3)
+    expect(ft.nodes[0].name).toBe('李阳勇') // 本人组排前
+    expect(ft.nodes[0].display).toBe('本人')
+    expect(ft.finance.income).toBe(45) // 30+15
   })
 
-  test('概览章含 familyPlan 与全景矩阵（数据驱动）', () => {
-    const ch = buildChapters(baseCustomer(), report)
-    const overview = ch.find(x => x.key === 'overview')
-    const db = overview.customBlocks.find(b => b.t === 'dashboard')
-    expect(db).toBeDefined()
-    expect(db.matrix.heads[0]).toBe('成员')
-    expect(db.matrix.rows.length).toBe(3) // 3 成员
-    expect(db.familyPlan['李阳勇'].role).toBe('本人')
-  })
-
-  test('分析章含缺口全景矩阵（成员×险种），含经济支柱寿险缺口', () => {
-    const ch = buildChapters(baseCustomer(), report)
-    const analysis = ch.find(x => x.key === 'analysis')
-    expect(analysis).toBeDefined()
-    const pano = analysis.customBlocks.find(b => b.t === 'panorama')
+  test('保障汇总章：覆盖矩阵（成员×险种 + 合计行）+ 缺失提示', () => {
+    const ch = buildChapters(reportCustomer(), report)
+    const cs = ch[1]
+    const pano = cs.customBlocks.find(b => b.t === 'panorama')
     expect(pano).toBeDefined()
-    expect(pano.heads[0]).toBe('成员')
-    expect(pano.cats).toEqual(['重疾险', '医疗险', '意外险', '寿险'])
-    expect(pano.rows.length).toBe(3) // 3 成员
+    expect(pano.heads).toEqual(['成员', '重疾险', '医疗险', '意外险', '寿险', '合计'])
+    expect(pano.rows.length).toBe(4) // 3 成员 + 合计行
+    expect(pano.rows[3].name).toBe('合计')
     const ly = pano.rows.find(r => r.name === '李阳勇')
-    const life = ly.cells.find(c => c.v === '100万') // 寿险已有保额 100万，缺口态 partial
-    expect(life).toBeDefined()
-    expect(life.s).toBe('partial')
+    const life = ly.cells.find(c => c.s === 'ok')
+    expect(life.v).toBe('100')
+    expect(ly.cells[0].s).toBe('missing') // 重疾险缺失浅红格
+    expect(cs.pre).toContain('李阳勇缺少')
   })
 
-  test('规划章渲染 AI 规划文本', () => {
-    const ch = buildChapters(baseCustomer(), report)
-    const plan = ch.find(x => x.key === 'plan')
-    expect(plan).toBeDefined()
-    expect(plan.content).toContain('保障规划建议文本')
+  test('缴费月历章：12 格 + 峰值月高亮', () => {
+    const ch = buildChapters(reportCustomer(), report)
+    const cal = ch[2].customBlocks.find(b => b.t === 'calendar')
+    expect(cal).toBeDefined()
+    expect(cal.items.length).toBe(12)
+    expect(cal.items[0].h).toBe(2) // 1月生效 → 峰值高亮
+    expect(ch[2].content).toContain('缴费压力最大')
   })
 
-  test('建议章渲染 AI 建议文本（占位符已替换）', () => {
-    const ch = buildChapters(baseCustomer(), report)
-    const s = ch.find(x => x.key === 'suggestions')
-    expect(s).toBeDefined()
-    expect(s.content).toContain('行动建议文本')
+  test('缴费年历章：时间轴含缴费事件（日期/保费）', () => {
+    const ch = buildChapters(reportCustomer(), report)
+    const tl = ch[3].customBlocks.find(b => b.t === 'timeline')
+    expect(tl).toBeDefined()
+    const pay = tl.items.find(e => e.type === 'payment')
+    expect(pay).toBeDefined()
+    expect(pay.date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(pay.premium).toBe(8000)
   })
 
-  test('附录含保单列表与术语（独立章节卡片）', () => {
-    const ch = buildChapters(baseCustomer(), report)
-    const policies = ch.find(x => x.key === 'appendix_policies')
-    const terms = ch.find(x => x.key === 'appendix_terms')
-    expect(policies).toBeDefined()
-    expect(policies.content).toContain('| 产品 | 险种 |')
-    expect(terms).toBeDefined()
-    expect(terms.content).toContain('等待期')
+  test('风险提示章：免责声明透传', () => {
+    const ch = buildChapters(reportCustomer(), report)
+    const ra = ch[4].customBlocks.find(b => b.t === 'risk_alerts')
+    expect(ra).toBeDefined()
+    expect(ra.disclaimer).toBe('免责')
   })
 
-  test('缺 AI 字段则对应章不渲染', () => {
-    const ch = buildChapters(baseCustomer(), {})
-    const keys = ch.map(x => x.key)
-    expect(keys).not.toContain('plan')
-    expect(keys).not.toContain('suggestions')
-    expect(keys).not.toContain('analysis')
-    expect(keys).toContain('appendix_policies') // 附录独立章节始终渲染
-    expect(keys).toContain('appendix_terms')
+  test('附录保单明细：按成员分组卡片（含展示字段）', () => {
+    const ch = buildChapters(reportCustomer(), report)
+    const pc = ch[5].customBlocks.find(b => b.t === 'policy_cards')
+    expect(pc).toBeDefined()
+    expect(pc.groups.length).toBe(1)
+    expect(pc.groups[0].name).toBe('李阳勇')
+    const p = pc.groups[0].policies[0]
+    expect(p.sum_display).toBe('100万')
+    expect(p.premium_display).toBe('8000元')
+    expect(ch[5].note).toContain('1 份')
+  })
+
+  test('置信度告警：低置信度/待确认保单进风险提示', () => {
+    const c = reportCustomer()
+    c.policies.push({ insured_name: '谢敏', insurance_category: '医疗险', sum_assured: 2000000, annual_premium: 800, effective_date: '2022-03-01', status: 'active', need_review: true })
+    const ch = buildChapters(c, report)
+    const ra = ch[4].customBlocks.find(b => b.t === 'risk_alerts')
+    expect(ra.items.length).toBe(1)
+    expect(ra.items[0].issue).toContain('人工确认')
+  })
+
+  test('无保单时：矩阵全缺失格、时间轴为空、附录无分组', () => {
+    const c = baseCustomer()
+    c.policies = []
+    const ch = buildChapters(c, {})
+    const pano = ch[1].customBlocks.find(b => b.t === 'panorama')
+    expect(pano.rows[0].cells[0].s).toBe('missing')
+    const tl = ch[3].customBlocks.find(b => b.t === 'timeline')
+    expect(tl.items.length).toBe(0)
+    const pc = ch[5].customBlocks.find(b => b.t === 'policy_cards')
+    expect(pc.groups.length).toBe(0)
   })
 })

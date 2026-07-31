@@ -4,9 +4,64 @@
 const cb = require('../miniprogram/utils/custom-blocks')
 const flow = require('../miniprogram/utils/ocr-flow')
 
+describe('classifyBatchResults — 识别结果分流分组（收编 _procRefresh）', function () {
+  test('高置信保单进 success、低置信进 review（assessPolicy 判定）', function () {
+    const cls = flow.classifyBatchResults(
+      [
+        { product_name: '康宁', insurance_category: '重疾', auto_confirmed: true },
+        { product_name: 'e生保', insurance_category: '医疗', auto_confirmed: false }
+      ], [], [], {})
+    expect(cls.success.length).toBe(1)
+    expect(cls.success[0].product_name).toBe('康宁')
+    expect(cls.success[0].low).toBe(false)
+    expect(cls.review.length).toBe(1)
+    expect(cls.review[0].product_name).toBe('e生保')
+    expect(cls.review[0].low).toBe(true)
+  })
+
+  test('现价表恒进 success', function () {
+    const cls = flow.classifyBatchResults([], [{ product_name: '康宁现价表' }], [], {})
+    expect(cls.success.length).toBe(1)
+    expect(cls.success[0].kind).toBe('cash')
+    expect(cls.success[0].insurance_category).toBe('现金价值表')
+  })
+
+  test('错误项 → error 卡片（错误码文案 + 缩略图回退）', function () {
+    const cls = flow.classifyBatchResults([], [], [{ fileId: 'f1', error_code: 'ocr_empty' }], { f1: 'thumb.jpg' })
+    expect(cls.error.length).toBe(1)
+    expect(cls.error[0].fileId).toBe('f1')
+    expect(cls.error[0].thumb).toBe('thumb.jpg')
+    expect(cls.error[0].retrying).toBe(false)
+    expect(typeof cls.error[0].error).toBe('string')
+  })
+
+  test('空输入 → 空三组', function () {
+    const cls = flow.classifyBatchResults([], [], [], {})
+    expect(cls.success).toEqual([])
+    expect(cls.review).toEqual([])
+    expect(cls.error).toEqual([])
+  })
+})
+
 describe('custom-blocks 注册表', function () {
-  test('SUPPORTED_TYPES 声明 6 种类型', function () {
-    expect(cb.SUPPORTED_TYPES.sort()).toEqual(['calendar', 'insight_cards', 'overview', 'panorama', 'timeline', 'urgent_list'])
+  test('SUPPORTED_TYPES 声明 10 种类型', function () {
+    expect(cb.SUPPORTED_TYPES.sort()).toEqual(['calendar', 'dashboard', 'family_tree', 'insight_cards', 'overview', 'panorama', 'policy_cards', 'risk_alerts', 'timeline', 'urgent_list'])
+  })
+
+  test('family_tree 默认 finance 补齐', function () {
+    const b = cb.create('family_tree', { nodes: [{ name: '张三' }] })
+    expect(b.t).toBe('family_tree')
+    expect(b.finance).toEqual({ income: 0, debt: 0, expense: 0 })
+  })
+
+  test('risk_alerts 默认 disclaimer 空串', function () {
+    const b = cb.create('risk_alerts', { items: [{ name: 'x', issue: 'y' }] })
+    expect(b.disclaimer).toBe('')
+  })
+
+  test('policy_cards 默认 groups 空数组', function () {
+    const b = cb.create('policy_cards', {})
+    expect(b.groups).toEqual([])
   })
 
   test('create 补齐默认字段并保留 t', function () {
@@ -65,12 +120,6 @@ describe('ocr-flow 状态机', function () {
     expect(p['ocrMask.phase']).toBe('upload')
     expect(p['ocrMask.total']).toBe(5)
     expect(p['ocrMask.uploaded']).toBe(0)
-  })
-
-  test('setRecognize 进入 recognize 阶段', function () {
-    const p = flow.setRecognize()
-    expect(p['ocrMask.phase']).toBe('recognize')
-    expect(p['ocrMask.processed']).toBe(0)
   })
 
   test('setDone 携带 policies/cashValues + 可选 extra', function () {

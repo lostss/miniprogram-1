@@ -5,7 +5,10 @@
       <text class="fold-arrow">{{item.collapsed ? '展开 ▾' : '收起 ▴'}}</text>
     </view>
     <block wx:if="{{!item.collapsed}}">
-    <view class="h1n" wx:if="{{!item.collapsible}}"><text class="h1n-digit">{{item.num}}</text><text class="h1n-title">{{item.title}}</text></view>
+    <view class="h1n" wx:if="{{!item.collapsible}}">
+      <text class="h1n-digit">{{item.num}}</text><text class="h1n-title">{{item.title}}</text>
+      <text class="h1n-edit pressable" wx:if="{{item.edit}}" catchtap="onChapterEdit" data-mode="{{item.edit}}">[编辑]</text>
+    </view>
       <view wx:if="{{item.customBlocks}}" wx:for="{{item.customBlocks}}" wx:for-index="bi" wx:for-item="block" wx:key="bi">
         <view wx:if="{{block.section}}" class="h2">{{block.section}}</view>
         <view wx:if="{{block.t==='overview'}}" class="overview-wrap">
@@ -42,9 +45,9 @@
           </view>
         </view>
         <view wx:if="{{block.t==='panorama'}}" class="pano-wrap">
-          <view class="pano-hd"><text class="pano-hd-cell pano-hd-first">{{block.heads[0]}}</text><text class="pano-hd-cell" wx:for="{{block.cats}}" wx:for-item="h" wx:key="index">{{h}}</text></view>
+          <view class="pano-hd"><text class="pano-hd-cell pano-hd-first">{{block.heads[0]}}</text><text class="pano-hd-cell" wx:for="{{block.cats}}" wx:for-item="h" wx:key="index">{{h}}</text><text class="pano-hd-cell pano-hd-total" wx:if="{{block.heads.length > 5}}">合计</text></view>
           <view class="pano-row" wx:for="{{block.rows}}" wx:for-item="row" wx:for-index="ri" wx:key="name">
-            <text class="pano-cell pano-name">{{row.name}}</text>
+            <text class="pano-cell pano-name {{row.name === '合计' ? 'pano-name-total' : ''}}">{{row.name}}</text>
             <view class="pano-cell pano-status ps-{{c.s}}" wx:for="{{row.cells}}" wx:for-item="c" wx:for-index="ci" wx:key="ci"><text class="pano-val">{{c.v}}</text></view>
           </view>
         </view>
@@ -52,15 +55,18 @@
           <view class="tl-item {{e.soon ? 'tl-soon' : ''}}" wx:for="{{block.items}}" wx:for-item="e" wx:key="label">
             <view class="tl-dot {{e.type === 'expiry' ? 'tl-red' : e.type === 'paydone' ? 'tl-green' : 'tl-yellow'}}"></view>
             <view class="tl-content">
-              <text class="tl-year">{{e.y}}{{e.type === 'payment' ? '缴费' : '年'}}</text>
-              <text class="tl-label">{{e.label}}</text>
+              <text class="tl-year">{{e.date || (e.y + (e.type === 'payment' ? '缴费' : '年'))}}</text>
+              <text class="tl-label">{{e.name || e.label}}</text>
+              <text class="tl-note" wx:if="{{e.premium}}">保费 {{e.premium}}元</text>
+              <text class="tl-note tl-note-{{e.type}}" wx:if="{{e.note && !e.premium}}">{{e.note}}</text>
+              <text class="tl-note tl-note-{{e.type}}" wx:if="{{e.premium && e.note}}">· {{e.note}}</text>
             </view>
           </view>
         </view>
         <view wx:if="{{block.t==='calendar'}}" class="cal-grid">
-          <view class="cal-cell" wx:for="{{block.items}}" wx:key="m">
+          <view class="cal-cell {{item.h === 2 ? 'cal-peak' : ''}}" wx:for="{{block.items}}" wx:key="m">
             <text class="cal-m">{{item.m}}月</text>
-            <text class="cal-v {{item.h?'':'cal-none'}}">{{item.v}}</text>
+            <text class="cal-v {{item.h ? '' : 'cal-none'}}">{{item.v}}</text>
           </view>
         </view>
         <view wx:if="{{block.t==='urgent_list'}}" class="urgent-wrap">
@@ -75,8 +81,63 @@
             <view class="insight-text">{{ins}}</view>
           </view>
         </view>
+        <view wx:if="{{block.t==='dashboard'}}" class="dash-wrap">
+          <view class="pano-wrap">
+            <view class="pano-hd"><text class="pano-hd-cell pano-hd-first">{{block.matrix.heads[0]}}</text><text class="pano-hd-cell" wx:for="{{block.matrix.heads}}" wx:for-item="h" wx:for-index="hi" wx:if="{{hi > 0}}" wx:key="hi">{{h}}</text></view>
+            <view class="pano-row" wx:for="{{block.matrix.rows}}" wx:for-item="row" wx:key="name">
+              <text class="pano-cell pano-name">{{row.name}}</text>
+              <view class="pano-cell pano-status ps-{{c.s}}" wx:for="{{row.cells}}" wx:for-item="c" wx:key="*this"><text class="pano-val">{{c.v}}</text></view>
+            </view>
+          </view>
+        </view>
+        <!-- 家庭结构：成员节点 + 家庭财务 -->
+        <view wx:if="{{block.t==='family_tree'}}" class="ft-wrap">
+          <view class="ft-nodes">
+            <view class="ft-node {{node.role}} pressable" wx:for="{{block.nodes}}" wx:for-item="node" wx:key="name" data-mode="member" data-mid="{{node.member_id}}" catchtap="onChapterEdit">
+              <view class="ft-avatar">👤</view>
+              <view class="ft-info">
+                <text class="ft-name">{{node.name}}</text>
+                <text class="ft-role">{{node.display}}</text>
+              </view>
+              <text class="ft-edit">编辑</text>
+            </view>
+          </view>
+          <view class="ft-finance">
+            <view class="ft-fin-item"><text class="ft-fin-lbl">年收入</text><text class="ft-fin-val">{{block.finance.income}}万</text></view>
+            <view class="ft-fin-item"><text class="ft-fin-lbl">年负债</text><text class="ft-fin-val">{{block.finance.debt}}万</text></view>
+            <view class="ft-fin-item"><text class="ft-fin-lbl">年支出</text><text class="ft-fin-val">{{block.finance.expense}}万</text></view>
+            <view class="ft-fin-edit pressable" data-mode="financials" catchtap="onChapterEdit">[编辑]</view>
+          </view>
+        </view>
+        <!-- 风险提示：置信度告警 + 免责声明 -->
+        <view wx:if="{{block.t==='risk_alerts'}}" class="risk-wrap">
+          <view class="risk-alerts" wx:if="{{block.items.length}}">
+            <view class="risk-title">⚠️ 置信度告警</view>
+            <view class="risk-item" wx:for="{{block.items}}" wx:for-item="a" wx:key="name">
+              <text class="risk-name">· {{a.name}}：</text>
+              <text class="risk-issue">{{a.issue}}</text>
+            </view>
+          </view>
+          <view class="risk-divider"></view>
+          <view class="risk-disclaimer">
+            <view class="risk-d-title">免责声明</view>
+            <text class="risk-d-text">{{block.disclaimer}}</text>
+          </view>
+        </view>
+        <!-- 附录保单卡片（按成员分组，点击弹明细） -->
+        <view wx:if="{{block.t==='policy_cards'}}" class="pc-wrap">
+          <view class="pc-group" wx:for="{{block.groups}}" wx:for-item="g" wx:key="name">
+            <view class="pc-group-name">{{g.name}}</view>
+            <view class="pc-card pressable" wx:for="{{g.policies}}" wx:for-item="p" wx:key="policy_id" data-id="{{p.policy_id}}" catchtap="onPolicyTap">
+              <view class="pc-card-top"><text class="pc-name">{{p.product_name}}</text><text class="pc-cat">{{p.category}}</text></view>
+              <view class="pc-card-meta">保额{{p.sum_display}} · 年缴{{p.premium_display}}</view>
+              <view class="pc-card-date">{{p.effective_date}}起</view>
+            </view>
+          </view>
+        </view>
       </view>
       <view wx:if="{{item.pre}}" class="md-pre"><text>{{item.pre}}</text></view>
+      <view wx:if="{{item.note}}" class="md-note"><text>{{item.note}}</text></view>
       <markdown-render wx:if="{{item.content}}" content="{{item.content}}" />
     </block>
     <view wx:if="{{item.collapsed}}" class="fold-hint">点击展开查看：保单明细 · 缴费月历 · 术语解释</view>

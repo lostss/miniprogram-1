@@ -1,0 +1,181 @@
+<!-- OCR 处理弹窗 -->
+<view class="ocr-mask" wx:if="{{ocrMask.visible}}">
+  <view class="ocr-card">
+    <!-- 处理中 -->
+    <block wx:if="{{ocrMask.phase === 'upload' || ocrMask.phase === 'recognize' || ocrMask.phase === 'recognize-stream'}}">
+      <view class="proc-head">
+        <view class="ocr-done-title done-gold">正在处理 {{ocrMask.total}} 份保单</view>
+        <view class="proc-phase">{{ocrMask.phaseText || '正在上传…'}}{{ocrMask.phase === 'recognize' || ocrMask.phase === 'recognize-stream' ? ' · 已进行 ' + ocrMask.elapsed + 's' : ''}}</view>
+      </view>
+      <view class="proc-progress-bar"><view class="proc-progress-fill" style="width: {{ocrMask.phase === 'recognize-stream' ? '100%' : ((ocrMask.uploaded / ocrMask.total) * 100) + '%'}}"></view></view>
+      <view class="proc-pending-cards">
+        <view class="proc-pending-card" wx:for="{{ocrMask.streamSlots}}" wx:key="index">
+          <image class="proc-thumb" wx:if="{{item.thumb}}" src="{{item.thumb}}" mode="aspectFill" />
+          <view class="stream-pulse-bar {{item.kind === 'pending' ? '' : (item.kind === 'error' ? 'is-error' : 'is-ok')}}"></view>
+          <text class="proc-pending-state" wx:if="{{item.kind !== 'pending'}}">{{item.kind === 'error' ? '失败' : '已识别'}}</text>
+        </view>
+      </view>
+    </block>
+    <!-- 三组结果 -->
+    <block wx:elif="{{ocrMask.phase === 'done'}}">
+      <view class="proc-head">
+        <view class="ocr-done-title done-gold">识别完成</view>
+        <view class="ocr-done-sub">识别到 {{ocrMask._policies.length}} 份保单{{ocrMask._cashValues.length > 0 ? ' + ' + ocrMask._cashValues.length + ' 份现价表' : ''}}</view>
+      </view>
+      <scroll-view class="proc-list" scroll-y>
+        <block wx:if="{{ocrMask.procSuccess.length > 0}}">
+          <view class="proc-group-head"><text>识别成功 · {{ocrMask.procSuccess.length}}份</text></view>
+          <view class="proc-card" wx:for="{{ocrMask.procSuccess}}" wx:key="index" data-policyindex="{{item.policyIndex}}" bindtap="onEditCard">
+            <image class="proc-thumb" wx:if="{{item.thumb}}" src="{{item.thumb}}" mode="aspectFill" />
+            <view class="proc-info">
+              <text class="proc-name">{{item.product_name}}<text class="proc-cat" wx:if="{{item.insurance_category}}"> · {{item.insurance_category}}</text></text>
+              <text class="proc-date" wx:if="{{item.effective_date}}">{{item.effective_date}}</text>
+            </view>
+            <view class="proc-side">
+              <text class="ocr-badge badge-ok" wx:if="{{item.kind === 'policy'}}">已确认</text>
+              <text class="ocr-badge badge-cash" wx:if="{{item.kind === 'cash'}}">现价表</text>
+            </view>
+          </view>
+        </block>
+        <block wx:if="{{ocrMask.procReview.length > 0}}">
+          <view class="proc-group-head"><text>待核对 · {{ocrMask.procReview.length}}份</text></view>
+          <view class="proc-card proc-card--review" wx:for="{{ocrMask.procReview}}" wx:key="index" data-policyindex="{{item.policyIndex}}" bindtap="onEditCard">
+            <image class="proc-thumb" wx:if="{{item.thumb}}" src="{{item.thumb}}" mode="aspectFill" />
+            <view class="proc-info">
+              <text class="proc-name">{{item.product_name}}<text class="proc-cat" wx:if="{{item.insurance_category}}"> · {{item.insurance_category}}</text></text>
+              <text class="proc-date" wx:if="{{item.effective_date}}">{{item.effective_date}}</text>
+            </view>
+            <view class="proc-side">
+              <text class="ocr-badge badge-warn">需核对</text>
+            </view>
+          </view>
+        </block>
+        <block wx:if="{{ocrMask.procError.length > 0}}">
+          <view class="proc-group-head proc-group-head--err">
+            <text>识别异常 · {{ocrMask.procError.length}}份</text>
+            <text class="proc-retry-all pressable" bindtap="onProcRetryAll">{{ocrMask.procBusy ? '重试中...' : '全部重试'}}</text>
+          </view>
+          <view class="proc-card proc-card--err" wx:for="{{ocrMask.procError}}" wx:key="fileId" data-fileid="{{item.fileId}}" bindtap="onProcManualAdd">
+            <image class="proc-thumb" wx:if="{{item.thumb}}" src="{{item.thumb}}" mode="aspectFill" data-src="{{item.thumb}}" catchtap="onProcPreview" />
+            <view class="proc-info">
+              <text class="proc-err">{{item.error}}</text>
+            </view>
+            <view class="proc-side">
+              <text class="proc-retry-btn pressable {{item.retrying ? 'is-busy' : ''}}" data-fileid="{{item.fileId}}" catchtap="onProcRetryOne">{{item.retrying ? '重试中' : '重试'}}</text>
+            </view>
+          </view>
+        </block>
+      </scroll-view>
+      <view class="ocr-actions-row">
+        <button class="ocr-modify-btn pressable" catchtap="onProcDiscardAll" aria-label="丢弃全部结果">全部放弃</button>
+        <button class="ocr-confirm-btn pressable {{ocrMask.confirming ? 'is-loading' : ''}}" bindtap="onProcConfirm" disabled="{{ocrMask.confirming || ocrMask.procBusy}}" aria-label="确认全部保单">{{ocrMask.confirming ? '保存中...' : '全部确认'}}</button>
+      </view>
+    </block>
+    <!-- 写入中 -->
+    <block wx:elif="{{ocrMask.phase === 'saving'}}">
+      <view class="proc-head">
+        <view class="ocr-done-title done-gold">正在保存保单信息</view>
+        <view class="proc-phase">请勿离开当前页面</view>
+      </view>
+      <view class="proc-save-bar"><view class="proc-progress-fill proc-progress-fill--indef"></view></view>
+    </block>
+    <!-- 写入失败 -->
+    <block wx:elif="{{ocrMask.phase === 'failed'}}">
+      <view class="proc-head">
+        <view class="ocr-done-title done-red">保存失败</view>
+        <view class="proc-phase">{{ocrMask.saveError || '请检查网络后重试'}}</view>
+      </view>
+      <view class="ocr-actions-row">
+        <button class="ocr-modify-btn pressable" bindtap="onFailedBack" aria-label="放弃本次">放弃本次</button>
+        <button class="ocr-confirm-btn pressable" bindtap="onFailedRetry" aria-label="重新保存">重试</button>
+      </view>
+    </block>
+    <!-- 保存成功 -->
+    <block wx:elif="{{ocrMask.phase === 'saved'}}">
+      <view class="ocr-saved-head">
+        <view class="ocr-done-title done-green">✓ 保存成功</view>
+        <view class="ocr-sheet-close pressable" catchtap="onSavedEnter" aria-label="{{skipMatch ? '查看报告' : '立即进入保障报告'}}">✕</view>
+      </view>
+      <view class="ocr-done-sub">已保存 {{ocrMask.savedPolicies}} 份保单{{ocrMask.savedCash > 0 ? ' + ' + ocrMask.savedCash + ' 份现价表' : ''}}</view>
+      <view class="ocr-phase-sub">{{skipMatch ? '报告即将刷新' : '2s 后进入保障报告'}}</view>
+      <view class="ocr-saved-progress"></view>
+      <view class="ocr-actions-row">
+        <button wx:if="{{!skipMatch}}" class="ocr-modify-btn pressable" bindtap="onSavedHome" aria-label="返回首页">返回首页</button>
+        <button class="ocr-confirm-btn pressable" bindtap="onSavedEnter" aria-label="完成查看">{{skipMatch ? '查看报告' : '立即进入'}}</button>
+      </view>
+    </block>
+    <!-- 匹配弹窗 -->
+    <block wx:elif="{{ocrMask.phase === 'match'}}">
+      <view class="proc-head">
+        <view class="ocr-done-title">选择归属家庭</view>
+        <view class="proc-phase">确定这批保单归入哪个家庭</view>
+      </view>
+      <scroll-view class="proc-list" scroll-y>
+        <view class="match-card {{ocrMask.matchPick === item._id ? 'match-card--on' : ''}}" wx:for="{{ocrMask.matchCandidates}}" wx:key="_id" data-pick="{{item._id}}" bindtap="onMatchPick">
+          <view class="match-radio"></view>
+          <view class="match-body">
+            <text class="match-name">{{item.name}}</text>
+            <text class="match-members" wx:if="{{item.membersText}}">成员：{{item.membersText}}</text>
+          </view>
+        </view>
+        <view class="match-card {{ocrMask.matchPick === 'new' ? 'match-card--on' : ''}}" data-pick="new" bindtap="onMatchPick">
+          <view class="match-radio"></view>
+          <view class="match-body">
+            <text class="match-name">新建家庭</text>
+            <text class="match-members">创建新家庭并确认角色</text>
+          </view>
+        </view>
+      </scroll-view>
+      <view class="ocr-actions-row">
+        <button class="ocr-modify-btn pressable" bindtap="onMatchPrev" aria-label="返回处理">上一步</button>
+        <button class="ocr-confirm-btn pressable" bindtap="onMatchNext" aria-label="进入角色选择">下一步</button>
+      </view>
+    </block>
+    <!-- 角色选择卡 -->
+    <block wx:elif="{{ocrMask.phase === 'roles'}}">
+      <view class="proc-head">
+        <view class="ocr-done-title">确认家庭成员角色</view>
+        <view class="proc-phase">归属：{{ocrMask.roleFamilyName}}</view>
+      </view>
+      <scroll-view class="proc-list" scroll-y>
+        <view class="role-row" wx:for="{{ocrMask.roleList}}" wx:key="memberId">
+          <text class="role-name">{{item.name}}</text>
+          <view class="role-opts">
+            <text class="role-opt {{item.role === '本人' ? 'role-opt--on' : ''}} {{item.conflict['本人'] ? 'role-opt--off' : ''}}" data-idx="{{index}}" data-role="本人" bindtap="onRolePick">本人<text class="role-opt-holder" wx:if="{{item.conflict['本人']}}">({{item.conflict['本人']}})</text></text>
+            <text class="role-opt {{item.role === '配偶' ? 'role-opt--on' : ''}} {{item.conflict['配偶'] ? 'role-opt--off' : ''}}" data-idx="{{index}}" data-role="配偶" bindtap="onRolePick">配偶<text class="role-opt-holder" wx:if="{{item.conflict['配偶']}}">({{item.conflict['配偶']}})</text></text>
+            <text class="role-opt {{item.role === '子女' ? 'role-opt--on' : ''}}" data-idx="{{index}}" data-role="子女" bindtap="onRolePick">子女</text>
+            <text class="role-opt {{item.role === '父母' ? 'role-opt--on' : ''}}" data-idx="{{index}}" data-role="父母" bindtap="onRolePick">父母</text>
+            <text class="role-opt {{item.role === '其他' ? 'role-opt--on' : ''}}" data-idx="{{index}}" data-role="其他" bindtap="onRolePick">其他</text>
+          </view>
+        </view>
+      </scroll-view>
+      <view class="ocr-done-sub role-tip">系统已根据年龄自动推测，可直接确认或手动调整</view>
+      <view class="ocr-actions-row">
+        <button class="ocr-modify-btn pressable" bindtap="onRolePrev" aria-label="返回匹配">上一步</button>
+        <button class="ocr-confirm-btn pressable" bindtap="onRoleConfirm" aria-label="确认角色">确认</button>
+      </view>
+    </block>
+  </view>
+</view>
+
+<!-- 编辑 sheet -->
+<view class="ocr-sheet-mask" wx:if="{{ocrSheet.visible}}" bindtap="onSheetClose"></view>
+<view class="ocr-sheet {{ocrSheet.visible ? 'ocr-sheet--show' : ''}}">
+  <view class="ocr-sheet-head">
+    <text class="ocr-sheet-title">{{ocrSheet.title || '编辑保单信息'}}</text>
+    <text class="ocr-sheet-close pressable" bindtap="onSheetClose">✕</text>
+  </view>
+  <scroll-view class="ocr-sheet-body" scroll-y>
+    <block wx:for="{{ocrSheet.fields}}" wx:key="key">
+      <view class="ocr-sheet-group-title" wx:if="{{item.isGroup}}">{{item.label}}</view>
+      <view class="ocr-sheet-field" wx:else>
+<view class="ocr-sheet-label-row"><text class="ocr-sheet-label">{{item.label}}</text><text class="ocr-sheet-warn" wx:if="{{item.tone === 'low' || item.tone === 'mid'}}">⚠️</text></view>
+            <input class="ocr-sheet-input bg-{{item.tone}}" value="{{item.value}}" data-key="{{item.key}}" data-fi="{{index}}" bindinput="onSheetInput" placeholder="请输入{{item.label}}" />
+      </view>
+    </block>
+  </scroll-view>
+  <view class="ocr-sheet-actions">
+    <button class="ocr-sheet-cancel pressable" bindtap="onSheetClose">取消</button>
+    <button class="ocr-sheet-save pressable" bindtap="onSheetConfirm">保存</button>
+  </view>
+</view>

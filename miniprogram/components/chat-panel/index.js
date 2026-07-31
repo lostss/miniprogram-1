@@ -33,7 +33,7 @@ Component({
       this._lastReportRefresh = 0
       this._postProcessing = false
     },
-    detached() { this._timers.forEach(t => clearTimeout(t)); this._timers = [] }
+    detached() { this._disposed = true; this._streamSession = null; this._timers.forEach(t => clearTimeout(t)); this._timers = [] }
   },
   observers: {
     'familyId'(id) {
@@ -57,19 +57,21 @@ Component({
     onNoop() {},
     // 滚动到底部：scroll-into-view 锚点，配合 IntersectionObserver 兜底解决 markdown 异步高度
     scrollToBottom() {
+      if (this._disposed) return
       this.setData({ scrollIntoView: '' })
-      this._timers.push(setTimeout(() => { this.setData({ scrollIntoView: 'msg-bottom-anchor' }) }, 20))
+      this._timers.push(setTimeout(() => { if (this._disposed) return; this.setData({ scrollIntoView: 'msg-bottom-anchor' }) }, 20))
     },
     _scrollAfterRender() {
+      if (this._disposed) return
       this.scrollToBottom()
       // markdown 异步渲染后延时重试
-      this._timers.push(setTimeout(() => this.scrollToBottom(), 300))
-      this._timers.push(setTimeout(() => this.scrollToBottom(), 800))
+      this._timers.push(setTimeout(() => { if (!this._disposed) this.scrollToBottom() }, 300))
+      this._timers.push(setTimeout(() => { if (!this._disposed) this.scrollToBottom() }, 800))
     },
 
     async _loadHistory(mode) {
       const r = await this._historyStore.load(this.data.familyId, mode)
-      if (!r) return 0
+      if (this._disposed || !r) return 0
       if (r.replace) {
         this.setData({ messages: r.replace })
         this._scrollAfterRender()
@@ -124,8 +126,10 @@ Component({
       try {
         const sp = await this._promptCache.get(this.data.familyId)
         // streamText 用含当前用户消息的 hist；generateText 用不含的，由 text 单独传
+        // S2-7 修复：slice(0, -1) 只去掉当前用户消息；原 slice(0, -2) 多去掉了上一轮 AI 回复，
+        // 导致 429/超时降级到 generateText 时 AI 看不到自己上一轮回复，多轮对话上下文断裂
         const streamHist = ms.slice(-15).map(m => ({ role: m.role, content: (m.content || '').substring(0, 1500) }))
-        const genHist = ms.slice(0, -2).map(m => ({ role: m.role, content: (m.content || '').substring(0, 1500) }))
+        const genHist = ms.slice(0, -1).map(m => ({ role: m.role, content: (m.content || '').substring(0, 1500) }))
         const ms2 = [...ms, { role: 'assistant', content: '', time: nowStr }]
         this.setData({ messages: ms2 })
         this.scrollToBottom()
@@ -135,6 +139,7 @@ Component({
         const fullText = await this._chatSource.send({
           sp, streamHist, genHist, userText: text, ms2, lastIdx
         })
+        if (this._disposed) return
         // 流式完成：立即渲染最终文本 + 收起 thinking，sug 异步追加
         this.setData({
           ['messages[' + lastIdx + '].content']: _fullWidthPunct(fullText),
@@ -144,6 +149,7 @@ Component({
         this._postProcess(text, fullText, ms2, lastIdx)
       } catch (e) {
         console.error('[chat-panel] onSend 错误:', e)
+        if (this._disposed) return
         const info = errorHandler.getErrorInfo(e)
         const ms3 = [...this.data.messages, { role: 'assistant', content: info.tip + '（可点击重试）', isError: true, retryText: text, errorCode: info.code }]
         this.setData({ messages: ms3, thinking: false })
@@ -176,8 +182,9 @@ Component({
             text: aiText,
             sessionId: this._sessionId
           })
-        if (r.result && r.result.code === 200 && r.result.data) {
-          const d = r.result.data
+        if (this._disposed) return
+        if (r.ok && r.data) {
+          const d = r.data
           // 用后端权威文本替换显示（清理了标记）
           if (d.cleanText && d.cleanText !== aiText) {
             this.setData({ ['messages[' + lastIdx + '].content']: _fullWidthPunct(d.cleanText) })
@@ -241,12 +248,5 @@ Component({
       api('writeMessage', { familyId: this.data.familyId, role, content: content.substring(0, 4000) }).catch(() => {})
     },
 
-    onUploadTap() {
-      wx.chooseMedia({
-        sourceType: ['album', 'camera'], count: 9, mediaType: ['image'],
-        success: r => { this.triggerEvent('upload', { paths: r.tempFiles.map(f => f.tempFilePath) }) },
-        fail: function(e) { console.error('[chat-panel] chooseMedia失败:', e) }
-      })
-    }
   }
 })

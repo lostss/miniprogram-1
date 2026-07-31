@@ -28,35 +28,44 @@
       <view class="report-seal">保小秘</view>
     </view>
     <view class="report-divider" wx:if="{{reportMeta.no}}"></view>
-    <!-- 🟡 Hero 抬头：最致命结论 + 摘要 -->
-    <view class="hero anim-fade-up" wx:if="{{hero.conclusion || hero.summary}}">
-      <view class="hero-conclusion" wx:if="{{hero.conclusion}}">{{hero.conclusion}}</view>
-      <view class="hero-summary" wx:if="{{hero.summary}}">{{hero.summary}}</view>
+    <!-- 🟡 Hero 结论先行：保障覆盖检查 + 摘要数字卡 -->
+    <view class="hero anim-fade-up" wx:if="{{hero.alerts.length}}">
+      <view class="hero-title">保障覆盖检查</view>
+      <view class="hero-alert {{item.ok ? 'is-ok' : 'is-warn'}}" wx:for="{{hero.alerts}}" wx:key="name">
+        <text class="hero-alert-icon">{{item.ok ? '✅' : '⚠️'}}</text>
+        <text class="hero-alert-text">{{item.name}} {{item.display}}</text>
+      </view>
+      <view class="hero-summary-line">{{hero.summary}}</view>
+      <view class="hero-advice" wx:if="{{hero.topAdvice}}">💡 {{hero.topAdvice}}</view>
+    </view>
+    <view class="summary-cards anim-fade-up">
+      <view class="sc-card">
+        <text class="sc-val">{{summaryCards.premium}}</text>
+        <text class="sc-unit">万</text>
+        <text class="sc-lbl">总保费</text>
+      </view>
+      <view class="sc-card">
+        <text class="sc-val">{{summaryCards.coverage}}</text>
+        <text class="sc-unit">万</text>
+        <text class="sc-lbl">总保额</text>
+      </view>
+      <view class="sc-card">
+        <text class="sc-val">{{summaryCards.count}}</text>
+        <text class="sc-unit">份</text>
+        <text class="sc-lbl">保单数</text>
+      </view>
     </view>
     <view class="hints" wx:if="{{hints.length}}">
       <view class="hint-chip pressable" wx:for="{{hints}}" wx:key="index" catchtap="onHintTap" data-q="{{item.q}}">{{item.text}}</view>
     </view>
-    <!-- Tab 栏 -->
-    <view class="report-tabs">
-      <view class="report-tab {{activeTab === 'report' ? 'is-active' : ''}}" bindtap="switchTab" data-tab="report">
-        <text class="report-tab-text">检视报告</text>
-      </view>
-      <view class="report-tab {{activeTab === 'appendix' ? 'is-active' : ''}}" bindtap="switchTab" data-tab="appendix">
-        <text class="report-tab-text">附录</text>
-      </view>
-    </view>
-    <report-markdown chapters="{{activeTab === 'report' ? mainChapters : appendixChapters}}" />
+    <report-markdown chapters="{{chapters}}" bind:policytap="onPolicyTap" />
     <view class="report-footer">
       <button class="footer-share pressable" open-type="share" aria-label="转发客户">转发报告给客户</button>
-      <view class="footer-tab-switch">
-        <text wx:if="{{activeTab === 'report'}}" class="footer-tab-link pressable" bindtap="switchTab" data-tab="appendix">查看附录</text>
-        <text wx:if="{{activeTab === 'appendix'}}" class="footer-tab-link pressable" bindtap="switchTab" data-tab="report">← 返回检视报告</text>
-      </view>
     </view>
     <view class="content-pad"></view>
   </scroll-view>
 
-  <chat-panel id="chatpanel" wx:if="{{!loading}}" familyId="{{familyId}}" bindupload="onChatUpload" bindreportRefresh="onChatReportRefresh" />
+  <chat-panel id="chatpanel" wx:if="{{!loading}}" familyId="{{familyId}}" bindreportRefresh="onChatReportRefresh" />
   <!-- FAB 栏提到页面层，确保 position:fixed 相对视口生效 -->
   <view class="fab-wrap" wx:if="{{!loading}}">
     <view class="fab-bar">
@@ -73,18 +82,40 @@
 
 
 
-  <view class="ocr-mask" wx:if="{{mode==='full' && ocrMask.visible}}">
-    <view class="ocr-card">
-      <view class="ocr-bar-wrap" wx:if="{{ocrMask.phase === 'upload' || ocrMask.phase === 'recognize' || ocrMask.phase === 'recognize-stream'}}">
-        <view class="ocr-bar"><view class="ocr-bar-fill" style="width:{{ocrMask.phase === 'upload' ? ocrMask.uploaded * 100 / ocrMask.total : ocrMask.processed * 100 / ocrMask.total}}%"></view></view>
+  <!-- 成员管理 Sheet（家庭结构标题 [编辑] 进入） -->
+  <view class="member-manage-overlay" wx:if="{{showMemberManage}}" catchtap="closeMemberManage">
+    <view class="member-manage" catchtap="onSheetNoop">
+      <view class="mm-grabber"></view>
+      <view class="mm-title">家庭成员</view>
+      <view class="mm-list">
+        <view class="mm-item pressable" wx:for="{{memberManageList}}" wx:key="member_id" data-mid="{{item.member_id}}" catchtap="onMemberManageEdit">
+          <text class="mm-name">{{item.name}}</text>
+          <text class="mm-role">{{item.display}}</text>
+          <text class="mm-edit">编辑</text>
+        </view>
       </view>
-      <block wx:if="{{ocrMask.phase==='upload'}}"><view class="ocr-phase-num">{{ocrMask.uploaded}}<text class="ocr-phase-of"> / {{ocrMask.total}}</text></view><view class="ocr-phase-title">正在上传保单图片</view><view class="ocr-phase-sub">请稍候，小秘在接收...</view></block>
-      <block wx:if="{{ocrMask.phase==='recognize'}}"><view class="ocr-phase-num">{{ocrMask.processed}}<text class="ocr-phase-of"> / {{ocrMask.total}}</text></view><view class="ocr-phase-title">小秘正在认真看...</view><view class="ocr-phase-sub">AI 正在提取保单信息</view><view class="ocr-dot ocr-dot--gold"></view></block>
-      <block wx:if="{{ocrMask.phase==='recognize-stream'}}"><view class="ocr-phase-num">{{ocrMask.streamFilled}}<text class="ocr-phase-of"> / {{ocrMask.total}}</text></view><view class="ocr-phase-title">小秘正在逐张识别...</view><view class="ocr-phase-sub">已识别 {{ocrMask.streamFilled}} 张，共 {{ocrMask.total}} 张</view><scroll-view class="ocr-stream-list" scroll-y><view class="ocr-stream-item {{item.kind === 'error' ? 'is-error' : ''}}" wx:for="{{ocrMask.streamSlots}}" wx:key="index"><block wx:if="{{item}}"><text class="stream-name {{item.low ? 'low-conf' : ''}}">{{item.product_name || '未知'}}</text><text class="stream-cat {{item.low ? 'low-conf' : ''}}">{{item.kind === 'cash' ? '现价表' : (item.insurance_category || (item.kind === 'error' ? '识别失败' : '未知'))}}</text></block><block wx:else><view class="skeleton-line"></view><view class="skeleton-line short"></view></block></view></scroll-view><view class="ocr-dot ocr-dot--gold"></view></block>
-      <block wx:if="{{ocrMask.phase==='saving'}}"><view class="ocr-phase-title">正在保存...</view><view class="ocr-phase-sub">小秘正在整理数据</view><view class="ocr-dot ocr-dot--green"></view></block>
-      <block wx:if="{{ocrMask.phase==='done'}}"><view class="ocr-done-title">识别完成</view><view class="ocr-done-sub">识别到{{ocrMask.totalPolicies}}份保单{{ocrMask.cashCount > 0 ? ' + ' + ocrMask.cashCount + '份现价表' : ''}}</view><scroll-view class="ocr-summary-list" scroll-y><view class="ocr-summary-item" wx:for="{{ocrMask.preview}}" wx:key="index"><text class="summary-name">{{item.product_name||'未知'}}</text><text class="summary-cat">{{item.insurance_category||'未知'}}</text></view></scroll-view><view class="ocr-actions"><button class="ocr-confirm-btn pressable {{ocrMask.confirming ? 'is-loading' : ''}}" bindtap="onOcrConfirm" disabled="{{ocrMask.confirming}}" aria-label="确认保单信息">{{ocrMask.confirming ? '保存中...' : '确认'}}</button></view></block>
+      <view class="mm-divider"></view>
+      <button class="mm-add pressable" bindtap="onMemberManageAdd" aria-label="添加成员">+ 添加成员</button>
+    </view>
+  </view>
+
+  <!-- 保单明细只读 Sheet（点击附录卡片弹出，底部编辑入口） -->
+  <view class="policy-sheet-overlay" wx:if="{{showPolicySheet}}" catchtap="onPolicySheetClose">
+    <view class="policy-sheet" catchtap="onSheetNoop">
+      <view class="ps-grabber"></view>
+      <view class="ps-title">{{currentPolicy.product_name}} · {{policyCat}}</view>
+      <view class="ps-body">
+        <view class="ps-row" wx:for="{{policyRows}}" wx:key="label">
+          <text class="ps-row-lbl">{{item.label}}</text>
+          <text class="ps-row-val">{{item.value}}</text>
+        </view>
+      </view>
+      <view class="ps-divider"></view>
+      <button class="ps-edit-btn pressable" bindtap="onPolicySheetEdit" aria-label="编辑保单">编辑</button>
     </view>
   </view>
 
   <edit-sheet visible="{{showEdit}}" title="{{editTitle}}" fields="{{editFields}}" saving="{{editSaving}}" bindclose="onCloseEdit" bindsave="onSaveEdit" />
 </view>
+  <!-- OCR 全流程组件（跳过家庭匹配，默认当前家庭） -->
+  <ocr-flow id="ocrFlow" skipMatch familyId="{{familyId}}" bind:saved="onOcrFlowSaved" />

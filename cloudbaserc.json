@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "envId": "{{env.ENV_ID}}",
+  "envId": "cloud1-3gan2ae3d3b400f1",
   "functions": [
     {
       "name": "conversationAI",
@@ -20,14 +20,14 @@
     },
     {
       "name": "ocrService",
-      "timeout": 60,
-      "envVariables": {
-        "TENCENT_SECRET_ID": "",
-        "TENCENT_SECRET_KEY": ""
-      }
+      "timeout": 100
     },
     {
       "name": "reportAI",
+      "timeout": 60
+    },
+    {
+      "name": "cleanup",
       "timeout": 60
     }
   ],

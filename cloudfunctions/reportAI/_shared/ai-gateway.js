@@ -54,7 +54,7 @@ function _secureOutput(text, auditResult) {
 
 /** 统一写日志（委托 logSeam.logAI），返回 logId 供业务层追加字段 */
 async function _writeLog(ctx, logData) {
-  if (!ctx || !ctx.db) return null
+  if (!ctx || !ctx.db || ctx.skipLog) return null
   // logData 中可能含 status / tokens / cost / error 等字段
   return logAI(ctx.db, {
     openid: ctx.openid,
@@ -76,7 +76,7 @@ async function _pipelineGuard(messages, ctx, skipInjection) {
       return { blocked: true, code: 'INJECTION', reason: injection.reason }
     }
   }
-  if (ctx.db && ctx.openid) {
+  if (ctx.db && ctx.openid && !ctx.skipRateLimit) {
     const rate = await checkRateLimit(ctx.db, ctx.openid)
     if (!rate.allowed) {
       await _writeLog(ctx, { status: 'blocked', error: { code: 'RATE_LIMIT', message: rate.reason, step: 'rate_limit' } })
@@ -155,4 +155,4 @@ async function safeCallChatWithTools(messages, tools, rawCallChatWithTools, ctx 
   return _runSecuredPipeline(messages, ctx, (secured) => rawCallChatWithTools(secured, tools, mergedOpts))
 }
 
-module.exports = { safeCallChat, safeCallChatWithTools, desensitize }
+module.exports = { safeCallChat, safeCallChatWithTools }

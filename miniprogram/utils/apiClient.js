@@ -16,6 +16,7 @@ const DIRECT_FN = {
   writePoliciesBatch:     ['dataWrite', { action: 'writePoliciesBatch' }],
   writeCashValue:         ['dataWrite', { action: 'writeCashValue' }],
   updateFamily:           ['dataWrite', { action: 'updateFamily' }],
+  updatePolicy:           ['dataWrite', { action: 'updatePolicy' }],
   updateMember:           ['dataWrite', { action: 'updateMember' }],
   createFamily:           ['dataWrite', { action: 'createFamily' }],
   deleteFamily:           ['dataWrite', { action: 'deleteFamily' }],
@@ -26,26 +27,31 @@ const DIRECT_FN = {
   generateReport:         ['reportAI', null],
 
   // ocrService
-  ocrSingle:              ['ocrService', { action: 'ocrSingle' }],
   ocrOnly:                ['ocrService', { action: 'ocrOnly' }],
-  aiExtract:              ['ocrService', { action: 'aiExtract' }],
   aiExtractBatch:         ['ocrService', { action: 'aiExtractBatch' }],
   aiExtractParallel:      ['ocrService', { action: 'aiExtractParallel' }],
-  ocrExtractParallel:     ['ocrService', { action: 'ocrExtractParallel' }],
 
   // conversationAI
   conversationAI:         ['conversationAI', null],
 }
 
-async function apiCall(action, params = {}) {
+// 归一化返回契约：{ ok, code, msg, data }，消除调用方重复解包 res.result
+async function apiCall(action, params = {}, opts = {}) {
   const df = DIRECT_FN[action]
-  if (df) {
-    const [name, base] = df
-    const data = base ? { ...base, ...params } : params
-    return callCloud(name, data)
+  if (!df) {
+    console.warn('[apiClient] 未知 action:', action)
+    throw new Error('未知 API: ' + action)
   }
-  console.warn('[apiClient] 未知 action:', action)
-  throw new Error('未知 API: ' + action)
+  const [name, base] = df
+  const data = base ? { ...base, ...params } : params
+  const raw = await callCloud(name, data, opts)
+  const r = raw && raw.result
+  return {
+    ok: !!(r && r.code === 200),
+    code: (r && r.code) || 500,
+    msg: (r && r.msg) || '请求失败',
+    data: (r && r.data) || null
+  }
 }
 
 module.exports = apiCall

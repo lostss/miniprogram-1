@@ -9,10 +9,6 @@
  *     - 统一日志：console.error(`[${label}] 失败:`, message)
  *     - 防御 err 为 null/undefined/无 message
  *
- *   safeHandler(label, fn) → async function(...args)
- *     - 包装异步函数，catch 后返回 wrapError(label, err)
- *     - 用于内部函数（非入口 handler）的统一错误兜底
- *
  * 与 createHandler 的关系：createHandler 是入口路由的错误兜底（格式为 e.message 优先），
  * errorHandler 是内部函数的错误格式化（格式为 label+失败+message）。两者职责不重叠。
  */
@@ -22,14 +18,4 @@ function wrapError(label, err) {
   return { code: 500, msg: label + '失败：' + message }
 }
 
-function safeHandler(label, fn) {
-  return async function (...args) {
-    try {
-      return await fn(...args)
-    } catch (e) {
-      return wrapError(label, e)
-    }
-  }
-}
-
-module.exports = { wrapError, safeHandler }
+module.exports = { wrapError }

@@ -92,8 +92,10 @@ async function orchestrate({
           let args = {}
           try { args = JSON.parse(tc.function.arguments || '{}') } catch (_) {}
           dispatchPromises.push(
-            dispatch(toolName, { familyId, ...args }, openid)
-              .then(r => ({ toolName, toolCallId: tc.id || tc.function.name, success: !(r && r.success === false), result: r, args }))
+            // S3-8 修复：familyId 放在 ...args 之后，防止 AI 被提示注入在工具参数塞 familyId 覆盖显式值
+            // 原实现 { familyId, ...args } 中 args 的 familyId 会覆盖前面显式的 familyId，可误写同 openid 下其他家庭
+            dispatch(toolName, { ...args, familyId }, openid)
+              .then(r => ({ toolName, toolCallId: tc.id || tc.function.name, success: !(r && (r.success === false || (r.code && r.code !== 200))), result: r, args }))
               .catch(e => ({ toolName, toolCallId: tc.id || tc.function.name, success: false, error: e.message, args }))
           )
         }

@@ -33,7 +33,7 @@ function fmtOr(v, fallback = '-') { return v == null || v === '' ? fallback : v 
 function buildPolicyTable(policies, opts = {}) {
   const { title = '## 保单清单', columns, skipStatuses = DEFAULT_SKIP, ctx = {} } = opts
   if (!policies || policies.length === 0) return ''
-  const cols = columns || DEFAULT_COLUMNS
+  const cols = columns || AI_LOCATOR_COLUMNS
   const visible = policies.filter(p => !skipStatuses.includes(p.status))
   if (visible.length === 0) return ''
   const lines = [

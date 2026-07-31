@@ -186,4 +186,56 @@ function buildGapMatrix(gaps, members) {
   return { heads: ['成员'].concat(cats), cats: cats, rows: rows }
 }
 
-module.exports = { buildGaps, buildGapMatrix }
+/**
+ * 构建保障覆盖矩阵（设计稿第 2 章）：成员×险种 已有保额（万元），缺失格标红
+ * 含每行合计列与底部合计行。纯展示层，不参与缺口判断。
+ */
+function buildCoverageMatrix(members, policies) {
+  var active = (policies || []).filter(function(p) { return p.status === 'active' })
+  var memberIdToName = {}
+  for (var i = 0; i < members.length; i++) {
+    var m = members[i]
+    if (m.member_id) memberIdToName[m.member_id] = m.name
+  }
+  var cats = ['重疾险', '医疗险', '意外险', '寿险']
+  var rows = members.map(function(m) {
+    var cells = {}
+    for (var ci = 0; ci < cats.length; ci++) cells[cats[ci]] = 0
+    for (var k = 0; k < active.length; k++) {
+      var p = active[k]
+      var n = (p.member_id && memberIdToName[p.member_id]) || p.insured_name
+      if (n === m.name) {
+        var c = _canonCat(p.insurance_category || '其他')
+        if (cells[c] !== undefined) cells[c] += (p.sum_assured || 0) / 10000
+      }
+    }
+    return { name: m.name, cells: cells }
+  })
+  var total = {}
+  for (var ci2 = 0; ci2 < cats.length; ci2++) total[cats[ci2]] = 0
+  for (var r = 0; r < rows.length; r++) {
+    for (var c2 = 0; c2 < cats.length; c2++) total[cats[c2]] += rows[r].cells[cats[c2]]
+  }
+  function fmt(v) { var x = Math.round(v * 100) / 100; return x === Math.floor(x) ? String(x) : String(x) }
+  var out = rows.map(function(row) {
+    var rowTotal = 0
+    var cells = cats.map(function(c) {
+      var v = row.cells[c]
+      rowTotal += v
+      return v > 0 ? { v: fmt(v), s: 'ok' } : { v: '—', s: 'missing' }
+    })
+    cells.push({ v: fmt(rowTotal), s: 'total' })
+    return { name: row.name, cells: cells }
+  })
+  var grandCells = cats.map(function(c) {
+    var v = total[c]
+    return v > 0 ? { v: fmt(v), s: 'ok' } : { v: '—', s: 'missing' }
+  })
+  var grandTotal = 0
+  for (var gt = 0; gt < cats.length; gt++) grandTotal += total[cats[gt]]
+  grandCells.push({ v: fmt(grandTotal), s: 'grand' })
+  out.push({ name: '合计', cells: grandCells })
+  return { heads: ['成员'].concat(cats, ['合计']), cats: cats, rows: out }
+}
+
+module.exports = { buildGaps, buildGapMatrix, buildCoverageMatrix }

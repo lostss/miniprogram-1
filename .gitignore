@@ -9,7 +9,9 @@ project.private.config.json
 .headroom-cache/
 
 # 本地密钥/配置（避免误提交）
-.env.local
+.env
+.env.*
+!.env.example
 .mcp.json
 
 # 工具缓存
@@ -21,3 +23,5 @@ codebuddy-plugin/
 test-output.txt
 jest.log
 sync.log
+coverage/
+scripts/dbg*.txt

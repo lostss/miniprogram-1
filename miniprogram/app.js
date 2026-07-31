@@ -2,18 +2,24 @@
 const CLOUD_ENV = 'cloud1-3gan2ae3d3b400f1'
 const errorHandler = require('./utils/errorHandler.js')
 const api = require('./utils/apiClient.js')
+const { desensitize } = require('./utils/pii-rules')
 
 // 前端错误上报（fire-and-forget，走统一 callCloud 入口，便于后续归一化/超时控制）
 function _uploadError(type, info) {
   try {
-    const openid = wx.getStorageSync('openid') || ''
+    // S1 修复：openid 由 _silentLogin 写入 globalData（内存），此处应读 globalData 而非 Storage
+    // （原读 wx.getStorageSync('openid') 永远为空，导致错误上报缺主体）
+    const app = getApp()
+    const openid = (app && app.globalData && app.globalData.openid) || ''
+    const summary = desensitize('[' + type + '] ' + (info.message || '').substring(0, 200))
+    const error = desensitize((info.stack || info.message || '').substring(0, 500))
     api('writeOpLog', {
       openid,
       logAction: 'frontend_error',
       result: {
         status: 'error',
-        summary: '[' + type + '] ' + (info.message || '').substring(0, 200),
-        error: (info.stack || info.message || '').substring(0, 500)
+        summary,
+        error
       }
     }).catch(e => console.error('[app] 错误上报失败:', (e && e.message) || e))
   } catch (e) { console.error('[app] _uploadError 异常:', (e && e.message) || e) }
@@ -60,9 +66,8 @@ App({
     try {
       var devMode = typeof __wxConfig !== 'undefined' && __wxConfig.envVersion === 'develop'
       api('login', { devMode: devMode }).then(res => {
-        if (res.result && res.result.code === 200 && res.result.data && res.result.data.openid) {
-          this.globalData.openid = res.result.data.openid
-          wx.setStorageSync('openid', res.result.data.openid)
+        if (res.ok && res.data && res.data.openid) {
+          this.globalData.openid = res.data.openid
         }
       }).catch(e => console.error('[app] 静默登录失败:', (e && e.message) || e))
     } catch (e) { /* 初始化阶段失败不阻塞 */ }

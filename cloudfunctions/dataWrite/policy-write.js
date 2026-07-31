@@ -11,7 +11,7 @@
  */
 const _ = require('wx-server-sdk').database().command
 const { detectInjection } = require('./_shared/guard')
-const { desensitize } = require('./_shared/ai-gateway')
+const { desensitize } = require('./_shared/pii-rules')
 const { writeSeam } = require('./_shared/writeSeam')
 const { logOperation } = require('./_shared/logSeam')
 const { loadActivePolicies } = require('./_shared/policy-read')
@@ -57,19 +57,22 @@ async function writePolicy(db, openid, event) {
   const ws = writeSeam(db, openid, familyId)
   let policyDbId, isExisting = false
   if (doc.policy_number) {
-    // policy_number 主键去重（OCR 两次提取同保单，产品名可能略有偏差）
-    const exist = await db.collection('policies').where({ policy_number: doc.policy_number, family_id: familyId, _openid: openid }).limit(1).get()
+    // policy_number 主键去重（OCR 两次提取同保单，产品名可能略有偏差；过滤软删除避免已删保单阻断重新录入）
+    const exist = await db.collection('policies').where({ policy_number: doc.policy_number, family_id: familyId, _openid: openid, status: _.neq('deleted') }).limit(1).get()
     if (exist.data && exist.data.length > 0) { policyDbId = exist.data[0]._id; isExisting = true }
   } else if (doc.product_name && doc.insured_name) {
-    // 无保单号时二级去重：产品名+被保人+投保人
+    // 无保单号时二级去重：产品名+被保人+投保人（同样过滤软删除）
     const exist = await db.collection('policies').where({
       product_name: doc.product_name, insured_name: doc.insured_name,
-      policyholder_name: doc.policyholder_name, family_id: familyId, _openid: openid
+      policyholder_name: doc.policyholder_name, family_id: familyId, _openid: openid,
+      status: _.neq('deleted')
     }).limit(1).get()
     if (exist.data && exist.data.length > 0) { policyDbId = exist.data[0]._id; isExisting = true }
   }
   if (!policyDbId) { const addRes = await ws.silentAdd('policies', doc); policyDbId = addRes._id }
-  if (isExisting) return { code: 200, data: { written: false, skipped: true, policyId: doc.id } }
+  // S2-1 修复：命中重复时返回库中已有保单的真实 id（doc.id 是新生成的，不存在于库中）
+  // 否则下游 writePoliciesBatch 用这个 id 写入 p.id，再传给 matchOrphanCashValues，会指向不存在的保单
+  if (isExisting) return { code: 200, data: { written: false, skipped: true, policyId: exist.data[0].id || doc.id } }
   // Phase 1：保单入库同步拆解为结构化三元组写入 facts（replace 旧单条 '购买了' 兜底；开放谓词 + policy 节点）
   if (resolvedMemberId && product_name) {
     const factEvents = policyToFacts(doc, {
@@ -90,14 +93,18 @@ async function writePoliciesBatch(db, openid, event) {
   if (!policies || !Array.isArray(policies) || policies.length === 0) return { code: 400, msg: '缺少参数 policies' }
   if (policies.length > 50) return { code: 400, msg: '单次最多写入 50 条保单' }
 
-  // 批次内去重：同 policy_number + product_name 只保留首条（修复 Bug-1 并发竞态根因）
+  // 批次内去重：P1-4 修复空保单号场景
+  //   - 有 policy_number：按 policy_number 去重（OCR 两次提取同保单）
+  //   - 无 policy_number：按 product_name + insured_name + policyholder_name 去重，避免重复查 DB
   const seen = new Set()
   const dedupedPolicies = []
   let dedupSkipped = 0
   for (const p of policies) {
-    const key = (p.policy_number || '') + '|' + (p.product_name || '')
-    if (p.policy_number && seen.has(key)) { dedupSkipped++; continue }
-    if (p.policy_number) seen.add(key)
+    const key = p.policy_number
+      ? ('pn:' + p.policy_number)
+      : ('nm:' + (p.product_name || '') + '|' + (p.insured_name || '') + '|' + (p.policyholder_name || ''))
+    if (seen.has(key)) { dedupSkipped++; continue }
+    seen.add(key)
     dedupedPolicies.push(p)
   }
 
@@ -160,20 +167,26 @@ async function writePoliciesBatch(db, openid, event) {
     }).catch(function () {})
   }
 
-  // 现价表入库（串行，在 orphan 匹配之后）
+  // P1-1 修复：现价表入库改并发（限流 3），避免串行叠加逼近云函数 20s 超时
   const cashValues = event.cash_values
   if (cashValues && cashValues.length > 0) {
-    for (const cv of cashValues) {
-      try {
-        await writeCashValue(db, openid, { familyId, cash_value: cv })
-      } catch (e) {
-        logOperation(db, {
-          openid, familyId, action: 'write_cash_value',
-          result: { status: 'fail', summary: '现价表批量写入异常', errorCode: 'cash_value_write_error' },
-          meta: { product_name: cv.product_name, error: e.message }
-        }).catch(function () {})
+    const CV_CONCURRENCY = 3
+    let cvCursor = 0
+    async function cvWorker() {
+      while (cvCursor < cashValues.length) {
+        const cv = cashValues[cvCursor++]
+        try {
+          await writeCashValue(db, openid, { familyId, cash_value: cv })
+        } catch (e) {
+          logOperation(db, {
+            openid, familyId, action: 'write_cash_value',
+            result: { status: 'fail', summary: '现价表批量写入异常', errorCode: 'cash_value_write_error' },
+            meta: { product_name: cv.product_name, error: e.message }
+          }).catch(function () {})
+        }
       }
     }
+    await Promise.all(Array.from({ length: Math.min(CV_CONCURRENCY, cashValues.length) }, () => cvWorker()))
   }
 
   // writePolicy / writeCashValue 内部已通过 writeSeam 触发 markMutated + advanceStage，此处无需重复
@@ -235,6 +248,7 @@ async function deletePolicy(db, openid, event) {
   }).catch(e => { console.error('[dataWrite] deletePolicy 软删失败:', e.message); throw new Error('保单删除失败：' + e.message) })
 
   // 步骤 3：facts 层留决策备注（source=user_form 视为客户确认，报告据 facts 优先判定为已删除）
+  // S2-5 修复：.then 内 silentUpdateDoc 必须 return 才能 await；否则云函数返回后上下文冻结，category 更新可能不执行
   await addFact(db, openid, {
     familyId, subjectId: '', subjectType: 'family', subjectName: '',
     predicate: '备注',
@@ -242,11 +256,13 @@ async function deletePolicy(db, openid, event) {
     source: 'user_form', confidence: 1
   }).then(r => {
     if (r.code === 200 && r.data && r.data.factId) {
-      ws.silentUpdateDoc('facts', r.data.factId, { category: 'policy_decision' }).catch(e => console.error('[dataWrite] deletePolicy 备注 category 更新失败:', e.message))
+      return ws.silentUpdateDoc('facts', r.data.factId, { category: 'policy_decision' }).catch(e => console.error('[dataWrite] deletePolicy 备注 category 更新失败:', e.message))
     }
+    return null
   })
   // 步骤 4：清理关联现价表（解除 policy_id 指向已删除保单）
-  ws.silentUpdateWhere('policy_cash_values', { policy_id: pid }, { policy_id: '', matched: false, matched_by: null, matched_at: null }).catch(e => console.error('[dataWrite] deletePolicy 现价表清理失败:', e.message))
+  // S2-5 修复：加 await，防止云函数返回后上下文冻结导致现价表清理丢失
+  await ws.silentUpdateWhere('policy_cash_values', { policy_id: pid }, { policy_id: '', matched: false, matched_by: null, matched_at: null }).catch(e => console.error('[dataWrite] deletePolicy 现价表清理失败:', e.message))
 
   // addFact 已触发钩子，此处无需重复 triggerHooks
   return { code: 200, data: { deleted: true, policyId: pid, product_name: target.product_name } }

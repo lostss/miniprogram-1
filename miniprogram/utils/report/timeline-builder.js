@@ -43,6 +43,8 @@ function buildTimeline(policies, members) {
     if (isNaN(startY)) continue
 
     var name = p.insured_name || '--'
+    var startD = new Date(eff)
+    var dayOfMonth = isNaN(startD.getDate()) ? 1 : startD.getDate()
 
     // 保障到期
     var endY = parseExpiryYear(p.insurance_period, startY)
@@ -68,7 +70,9 @@ function buildTimeline(policies, members) {
           y: yr,
           label: p.product_name + '（' + name + '）缴费 · ' + (p.annual_premium || 0) + '元',
           type: 'payment',
-          m: mo
+          m: mo,
+          day: dayOfMonth,
+          premium: p.annual_premium || 0
         })
       }
     }
@@ -95,7 +99,10 @@ function buildTimeline(policies, members) {
       var pd = new Date(thisYear, e.m, 1)
       return pd >= monthStart && pd <= soonCut
     })()
-    return { y: e.y, label: e.label, type: e.type, m: e.m, soon: soon }
+    var out = { y: e.y, label: e.label, type: e.type, m: e.m, soon: soon }
+    if (e.day !== undefined) out.day = e.day
+    if (e.premium !== undefined) out.premium = e.premium
+    return out
   })
 }
 

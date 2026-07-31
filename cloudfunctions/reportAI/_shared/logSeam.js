@@ -28,33 +28,33 @@
 async function logAI(db, entry) {
   if (!db || !entry || !entry.action) return null
   try {
-    const res = await db.collection('agent_logs').add({
-      data: {
-        openid: entry.openid || '',
-        family_id: entry.familyId || '',
-        sessionId: entry.sessionId || '',
-        action: entry.action,
-        model: entry.model || '',
-        timestamp: new Date(),
-        status: entry.status || 'success',
-        // AI 调用指标
-        tokens: entry.tokens || null,
-        cost: entry.cost != null ? entry.cost : null,
-        // 工具执行
-        tools: entry.tools || [],
-        metrics: entry.metrics || {},
-        // 内容（按场景填充）
-        userText: entry.userText || '',
-        replyText: entry.replyText || '',
-        outputCards: entry.outputCards || [],
-        rawText: entry.rawText || '',
-        // 报告特有
-        activated_dimensions: entry.activatedDimensions || [],
-        core_insights: entry.coreInsights || [],
-        // 元数据
-        promptVersion: entry.promptVersion || '',
-        error: entry.error || null
-      }
+    // S-4 修复：走 writeSeam.silentAdd 接缝，自动注入 _openid 不变量
+    const ws = require('./writeSeam').writeSeam(db, entry.openid || '')
+    const res = await ws.silentAdd('agent_logs', {
+      openid: entry.openid || '',
+      family_id: entry.familyId || '',
+      sessionId: entry.sessionId || '',
+      action: entry.action,
+      model: entry.model || '',
+      timestamp: new Date(),
+      status: entry.status || 'success',
+      // AI 调用指标
+      tokens: entry.tokens || null,
+      cost: entry.cost != null ? entry.cost : null,
+      // 工具执行
+      tools: entry.tools || [],
+      metrics: entry.metrics || {},
+      // 内容（按场景填充）
+      userText: entry.userText || '',
+      replyText: entry.replyText || '',
+      outputCards: entry.outputCards || [],
+      rawText: entry.rawText || '',
+      // 报告特有
+      activated_dimensions: entry.activatedDimensions || [],
+      core_insights: entry.coreInsights || [],
+      // 元数据
+      promptVersion: entry.promptVersion || '',
+      error: entry.error || null
     })
     return (res && res._id) ? res._id : null
   } catch (e) {
@@ -76,24 +76,24 @@ async function logAI(db, entry) {
 async function logOperation(db, entry) {
   if (!db || !entry || !entry.action || !entry.openid) return
   try {
-    await db.collection('operation_logs').add({
-      data: {
-        action: entry.action,
-        openid: entry.openid,
-        family_id: entry.familyId || '',
-        target: {
-          collection: (entry.target && entry.target.collection) || '',
-          doc_id: (entry.target && (entry.target.docId || entry.target.doc_id)) || ''
-        },
-        result: {
-          status: (entry.result && entry.result.status) || 'ok',
-          summary: (entry.result && entry.result.summary) || '',
-          error: (entry.result && entry.result.error) || '',
-          error_code: (entry.result && (entry.result.errorCode || entry.result.error_code)) || ''
-        },
-        meta: entry.meta || {},
-        created_at: new Date()
-      }
+    // S-4 修复：走 writeSeam.silentAdd 接缝，自动注入 _openid 不变量
+    const ws = require('./writeSeam').writeSeam(db, entry.openid || '')
+    await ws.silentAdd('operation_logs', {
+      action: entry.action,
+      openid: entry.openid,
+      family_id: entry.familyId || '',
+      target: {
+        collection: (entry.target && entry.target.collection) || '',
+        doc_id: (entry.target && (entry.target.docId || entry.target.doc_id)) || ''
+      },
+      result: {
+        status: (entry.result && entry.result.status) || 'ok',
+        summary: (entry.result && entry.result.summary) || '',
+        error: (entry.result && entry.result.error) || '',
+        error_code: (entry.result && (entry.result.errorCode || entry.result.error_code)) || ''
+      },
+      meta: entry.meta || {},
+      created_at: new Date()
     })
   } catch (e) {
     console.error('[logSeam] logOperation 写入失败:', entry.action, e.message)

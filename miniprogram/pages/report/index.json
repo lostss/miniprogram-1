@@ -4,6 +4,7 @@
   "usingComponents": {
     "report-markdown": "/components/report-markdown/index",
     "chat-panel": "/components/chat-panel/index",
-    "edit-sheet": "/components/edit-sheet/index"
+    "edit-sheet": "/components/edit-sheet/index",
+    "ocr-flow": "/components/ocr-flow/index"
   }
 }

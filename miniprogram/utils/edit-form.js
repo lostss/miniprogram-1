@@ -11,6 +11,7 @@
  *  - buildUpdateData：按模式构建 updateFamily 的 updateData（不含 familyId）
  */
 const ROLE_OPTIONS = ['本人', '配偶', '子女', '父母', '其他']
+const CATEGORY_OPTIONS = ['重疾险', '医疗险', '意外险', '寿险', '年金', '其他']
 
 // 成员字段（编辑/新增共用，差异仅在 value 初值）
 function _memberFields(member) {
@@ -22,17 +23,35 @@ function _memberFields(member) {
   ]
 }
 
-// 财务字段（家庭级聚合：收入=成员求和，负债=debt.amount）
+// 财务字段（家庭级聚合：收入=成员求和，负债=debt.amount，支出=financial_snapshot.fixed_expense）
 function _financialFields(family) {
   const cu = family || {}
   const da = (cu.debt && cu.debt.amount) || 0
   const dt = (cu.debt && cu.debt.type) || ''
   const ms = cu.members || []
   const ic = ms.reduce((s, m) => s + (m.income || 0), 0)
+  const fs = cu.financial_snapshot || {}
+  const ex = fs.fixed_expense || 0
   return [
     { key: 'income', label: '家庭年收入(万)', value: String(ic), placeholder: '如80', type: 'number' },
     { key: 'debt', label: '负债(万)', value: String(da), placeholder: '如200', type: 'number' },
-    { key: 'debtType', label: '负债类型', value: dt, placeholder: '如房贷/车贷' }
+    { key: 'debtType', label: '负债类型', value: dt, placeholder: '如房贷/车贷' },
+    { key: 'expense', label: '年支出(万)', value: String(ex), placeholder: '如15', type: 'number' }
+  ]
+}
+
+// 保单字段（Sheet 编辑入口，走 updatePolicy）
+function _policyFields(p) {
+  p = p || {}
+  return [
+    { key: 'product_name', label: '产品名称', value: p.product_name || '', placeholder: '如平安e生保' },
+    { key: 'insurance_category', label: '险种', value: p.insurance_category || '', placeholder: '重疾险/医疗险/意外险/寿险' },
+    { key: 'insured_name', label: '被保险人', value: p.insured_name || '', placeholder: '姓名' },
+    { key: 'sum_assured', label: '保额(万)', value: p.sum_assured ? String(Math.round(p.sum_assured / 10000)) : '', placeholder: '如200', type: 'number' },
+    { key: 'annual_premium', label: '年缴保费(元)', value: p.annual_premium ? String(p.annual_premium) : '', placeholder: '如8000', type: 'number' },
+    { key: 'policy_number', label: '保单号', value: p.policy_number || '', placeholder: '保单号' },
+    { key: 'insurer', label: '保险公司', value: p.insurer || '', placeholder: '如平安健康保险' },
+    { key: 'effective_date', label: '生效日期', value: p.effective_date || p.contract_effective_date || '', placeholder: 'YYYY-MM-DD' }
   ]
 }
 
@@ -60,6 +79,14 @@ function buildEditConfig(opts) {
       editFields: _memberFields({})
     }
   }
+  if (mode === 'policy') {
+    return {
+      title: '编辑保单' + ((member && member.product_name) || ''),
+      _editMode: 'policy',
+      _editMemberIdx: (member && (member.policy_id || member._id)) || '',
+      editFields: _policyFields(member || {})
+    }
+  }
   // financials
   return {
     title: '编辑财务信息',
@@ -78,6 +105,26 @@ function validate(mode, vals) {
     if (isNaN(inc) || inc < 0) return { ok: false, msg: '年收入须为非负数' }
     if (isNaN(debt) || debt < 0) return { ok: false, msg: '负债须为非负数' }
     if (inc > 100000) return { ok: false, msg: '年收入单位为万元，请检查' }
+    if (vals.expense !== undefined && vals.expense !== '') {
+      const ex = Number(vals.expense)
+      if (isNaN(ex) || ex < 0) return { ok: false, msg: '年支出须为非负数' }
+    }
+    return { ok: true }
+  }
+  if (mode === 'policy') {
+    const name = (vals.product_name || '').trim()
+    if (!name) return { ok: false, msg: '请填写产品名称' }
+    const cat = (vals.insurance_category || '').trim()
+    if (cat && !CATEGORY_OPTIONS.includes(cat)) return { ok: false, msg: '险种需为：重疾险/医疗险/意外险/寿险/年金/其他' }
+    if (vals.sum_assured !== undefined && vals.sum_assured !== '') {
+      const s = Number(vals.sum_assured)
+      if (isNaN(s) || s < 0) return { ok: false, msg: '保额须为非负数' }
+    }
+    if (vals.annual_premium !== undefined && vals.annual_premium !== '') {
+      const a = Number(vals.annual_premium)
+      if (isNaN(a) || a < 0) return { ok: false, msg: '保费须为非负数' }
+    }
+    if (vals.effective_date && !/^\d{4}-\d{2}-\d{2}$/.test(vals.effective_date)) return { ok: false, msg: '生效日期格式 YYYY-MM-DD' }
     return { ok: true }
   }
   if (mode === 'member' || mode === 'addMember') {
@@ -109,12 +156,27 @@ function validate(mode, vals) {
  */
 function buildUpdateData(mode, vals, family, editMemberIdx) {
   if (mode === 'financials') {
-    return {
+    const d = {
       financial_snapshot: {
         income: Number(vals.income) || 0,
         debt: { amount: Number(vals.debt) || 0, type: vals.debtType || '房贷' }
       }
     }
+    if (vals.expense !== undefined && vals.expense !== '') d.financial_snapshot.fixed_expense = Number(vals.expense) || 0
+    return d
+  }
+  if (mode === 'policy') {
+    // updatePolicy 的 data 载荷（familyId/policyId 由调用方附加）
+    const data = {}
+    if (vals.product_name !== undefined && vals.product_name !== '') data.product_name = vals.product_name
+    if (vals.insurance_category !== undefined && vals.insurance_category !== '') data.insurance_category = vals.insurance_category
+    if (vals.insured_name !== undefined && vals.insured_name !== '') data.insured_name = vals.insured_name
+    if (vals.sum_assured !== undefined && vals.sum_assured !== '') data.sum_assured = Number(vals.sum_assured) * 10000
+    if (vals.annual_premium !== undefined && vals.annual_premium !== '') data.annual_premium = Number(vals.annual_premium)
+    if (vals.policy_number !== undefined && vals.policy_number !== '') data.policy_number = vals.policy_number
+    if (vals.insurer !== undefined && vals.insurer !== '') data.insurer = vals.insurer
+    if (vals.effective_date) data.effective_date = vals.effective_date
+    return { updatePolicy: { policyId: editMemberIdx || '', data: data } }
   }
   if (mode === 'member') {
     const ms = [...((family && family.members) || [])]
@@ -143,4 +205,4 @@ function buildUpdateData(mode, vals, family, editMemberIdx) {
   return {}
 }
 
-module.exports = { buildEditConfig, validate, buildUpdateData, ROLE_OPTIONS }
+module.exports = { buildEditConfig, validate, buildUpdateData, ROLE_OPTIONS, CATEGORY_OPTIONS }

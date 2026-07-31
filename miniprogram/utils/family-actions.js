@@ -17,32 +17,36 @@ function navigateToFamily(familyId) {
   wx.navigateTo({ url: '/pages/report/index?familyId=' + familyId })
 }
 
-// 确认删除家庭（弹 modal → loading → 调 deleteFamily → toast → onSuccess 回调）
+// 确认删除家庭（ActionSheet"删除" → Modal 二次确认 → deleteFamily → toast → onSuccess）
 function confirmDeleteFamily(opts) {
   const { familyId, name, onSuccess } = opts
   if (!familyId) return
   const displayName = name || '该家庭'
-  wx.showModal({
-    title: '删除家庭',
-    content: '确定删除「' + displayName + '」及其所有数据吗？此操作不可恢复。',
-    confirmText: '删除',
-    confirmColor: '#D35A5A',
-    success: async (res) => {
-      if (!res.confirm) return
-      wx.showLoading({ title: '删除中' })
-      try {
-        const r = await api('deleteFamily', { familyId })
-        if (r.result && r.result.code === 200) {
-          wx.showToast({ title: '已删除', icon: 'success' })
-          if (typeof onSuccess === 'function') onSuccess()
-        } else {
-          wx.showToast({ title: (r.result && r.result.msg) || '删除失败', icon: 'none' })
+  wx.showActionSheet({
+    itemList: ['删除'],
+    itemColor: '#B85450',
+    success: (r) => {
+      if (r.tapIndex !== 0) return
+      wx.showModal({
+        title: '删除家庭',
+        content: '确定删除「' + displayName + '」及其所有数据吗？此操作不可恢复。',
+        confirmText: '删除',
+        confirmColor: '#B85450',
+        success: async (res) => {
+          if (!res.confirm) return
+          try {
+            const r2 = await api('deleteFamily', { familyId })
+            if (r2.ok) {
+              wx.showToast({ title: '已删除', icon: 'success' })
+              if (typeof onSuccess === 'function') onSuccess()
+            } else {
+              wx.showToast({ title: r2.msg || '删除失败', icon: 'none' })
+            }
+          } catch (e) {
+            wx.showToast({ title: '删除失败', icon: 'none' })
+          }
         }
-      } catch (e) {
-        wx.showToast({ title: '删除失败', icon: 'none' })
-      } finally {
-        wx.hideLoading()
-      }
+      })
     }
   })
 }

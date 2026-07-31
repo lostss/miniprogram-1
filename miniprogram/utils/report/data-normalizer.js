@@ -19,6 +19,10 @@ function normalizeFamilyData(family) {
   const annualPremium = active.reduce(function(s, p) { return s + (p.annual_premium || 0) }, 0)
   const annualPremiumW = Math.round(annualPremium / 10000 * 100) / 100
   const premiumRatio = totalIncome > 0 ? Math.round(annualPremiumW / totalIncome * 1000) / 10 : 0
+  const totalCoverage = Math.round(active.reduce(function(s, p) { return s + (p.sum_assured || 0) }, 0) / 10000 * 100) / 100
+  const policyCount = active.length
+  const fs = (family && family.financial_snapshot) || {}
+  const expense = fs.fixed_expense || 0
 
   const memberIdToName = {}
   for (var i = 0; i < members.length; i++) {
@@ -40,7 +44,7 @@ function normalizeFamilyData(family) {
     })
   }
 
-  return { active, debt, totalIncome, annualPremium, annualPremiumW, premiumRatio, memberIdToName, memberMap, members, policies }
+  return { active, debt, totalIncome, annualPremium, annualPremiumW, premiumRatio, totalCoverage, policyCount, expense, memberIdToName, memberMap, members, policies }
 }
 
 /**

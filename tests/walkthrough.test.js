@@ -145,11 +145,11 @@ describe('D. conversationAI 提示词', function() {
 // F. ai-gateway 安全链（纯函数，无需 DB mock）
 // ============================================================
 describe('F. ai-gateway 安全网关', function() {
-  const gateway = require('../cloudfunctions/conversationAI/_shared/ai-gateway')
   const guard = require('../cloudfunctions/conversationAI/_shared/guard')
+  const piiRules = require('../cloudfunctions/conversationAI/_shared/pii-rules')
 
   test('PII 脱敏: 手机号', function() {
-    const r = gateway.desensitize('13812345678')
+    const r = piiRules.desensitize('13812345678')
     expect(r).toContain('138')
     expect(r).toContain('****')
     expect(r).toContain('5678')
@@ -157,7 +157,7 @@ describe('F. ai-gateway 安全网关', function() {
   })
 
   test('PII 脱敏: 银行卡', function() {
-    const r = gateway.desensitize('6222021234567890')
+    const r = piiRules.desensitize('6222021234567890')
     // pii-rules.desensitize 统一契约：银行卡仅保留后4位
     expect(r).toContain('****')
     expect(r).toContain('7890')
@@ -166,9 +166,9 @@ describe('F. ai-gateway 安全网关', function() {
 
   test('PII 脱敏: null/空串原样', function() {
     // pii-rules.desensitize 统一契约：非字符串输入返回 ''
-    expect(gateway.desensitize(null)).toBe('')
-    expect(gateway.desensitize('')).toBe('')
-    expect(gateway.desensitize('正常')).toBe('正常')
+    expect(piiRules.desensitize(null)).toBe('')
+    expect(piiRules.desensitize('')).toBe('')
+    expect(piiRules.desensitize('正常')).toBe('正常')
   })
 
   test('注入检测: 角色劫持拦截', function() {

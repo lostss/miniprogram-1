@@ -10,7 +10,7 @@
  * 本文件负责 re-export + 保留未迁移的小型导出函数。
  */
 
-var { buildChapters, buildGaps, buildGapMatrix, buildTimeline, parseMilestonesToTimeline } = require('./report/index')
+var { buildChapters, buildGaps, buildGapMatrix, buildCoverageMatrix, buildConfidenceAlerts, buildTimeline, parseMilestonesToTimeline } = require('./report/index')
 
 /**
  * 根据报告数据生成追问建议
@@ -52,6 +52,47 @@ function assessDataCompleteness(family) {
   return { complete: okCount === totalCount, items: items }
 }
 
+// 险种短名（与 chapter-builder 一致：寿险保留全称）
+function _shortCatName(cat) {
+  var s = String(cat || '')
+  if (s.length > 1 && s.charAt(s.length - 1) === '险') {
+    var t = s.slice(0, -1)
+    if (t.length >= 2) return t
+  }
+  return s
+}
+
+/**
+ * 构建 Hero 保障覆盖检查（设计稿：结论先行警示列表）
+ * @param {object} family
+ * @param {array} gaps — buildGaps 结果
+ * @returns {{ alerts: [{name, missing[], ok}], summary, topAdvice }}
+ */
+function buildHero(family, gaps) {
+  var members = (family && family.members) || []
+  gaps = gaps || []
+  var alerts = members.map(function(m) {
+    var missing = gaps.filter(function(g) { return g.member === m.name && g.gap > 0 }).map(function(g) { return _shortCatName(g.category) })
+    return {
+      name: m.name,
+      role: m.role || '',
+      missing: missing,
+      ok: missing.length === 0,
+      display: missing.length > 0 ? ('缺少' + missing.join('、') + '保障') : '保障覆盖完整'
+    }
+  })
+  var missingCount = alerts.filter(function(a) { return !a.ok }).length
+  var summary = members.length + '位成员中，' + missingCount + '位存在缺口'
+  var top = null
+  var order = { high: 0, medium: 1, low: 2 }
+  for (var i = 0; i < gaps.length; i++) {
+    var g = gaps[i]
+    if (g.gap > 0 && (!top || (order[g.priority] < order[top.priority]))) top = g
+  }
+  var topAdvice = top ? '建议优先为' + top.member + '补充' + top.category : ''
+  return { alerts: alerts, summary: summary, topAdvice: topAdvice }
+}
+
 /**
  * 计算报告元信息
  */
@@ -65,9 +106,12 @@ module.exports = {
   buildChapters: buildChapters,
   buildGaps: buildGaps,
   buildGapMatrix: buildGapMatrix,
+  buildCoverageMatrix: buildCoverageMatrix,
+  buildConfidenceAlerts: buildConfidenceAlerts,
   buildTimeline: buildTimeline,
   parseMilestonesToTimeline: parseMilestonesToTimeline,
   makeHints: makeHints,
   assessDataCompleteness: assessDataCompleteness,
-  computeReportMeta: computeReportMeta
+  computeReportMeta: computeReportMeta,
+  buildHero: buildHero
 }

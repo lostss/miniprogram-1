@@ -8,7 +8,9 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "sync:shared": "node scripts/sync-shared.js",
-    "check:shared": "node scripts/sync-shared.js --check"
+    "check:shared": "node scripts/sync-shared.js --check",
+    "lint": "eslint cloudfunctions miniprogram tests",
+    "format": "prettier --write ."
   },
   "devDependencies": {
     "eslint": "^8.57.0",

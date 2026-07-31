@@ -2,7 +2,6 @@
  * aiExtractBatchPhase 单元测试
  * mock safeCallChat + callChat，验证编排逻辑
  */
-jest.mock('wx-server-sdk', () => require('./__mocks__/cloudSDKMock'))
 
 const { aiExtractBatchPhase } = require('../cloudfunctions/_shared/ocr-core')
 
@@ -129,32 +128,38 @@ describe('aiExtractBatchPhase', () => {
     expect(res.results[1].errorCode).toBe('ai_batch_failed')
   })
 
-  test('超限拆分：总字符数超过 84000 触发对半拆分，aiCallCount=2', async () => {
-    // 构造 2 张图，每张 50000 字符（总 100000 > 84000）
-    var longText = 'A'.repeat(50000)
+  test('4张图全部拼接 1 次调用，splitUsed=false, aiCallCount=1', async () => {
     var ocrResults = [
-      { fileId: 'cloud://f1', ocrText: longText, ocrConfInfo: [] },
-      { fileId: 'cloud://f2', ocrText: longText, ocrConfInfo: [] }
+      { fileId: 'cloud://f1', ocrText: '保单A', ocrConfInfo: [] },
+      { fileId: 'cloud://f2', ocrText: '保单B', ocrConfInfo: [] },
+      { fileId: 'cloud://f3', ocrText: '保单C', ocrConfInfo: [] },
+      { fileId: 'cloud://f4', ocrText: '保单D', ocrConfInfo: [] }
     ]
-    // 每次 AI 调用返回单图成功
+    // 单次调用返回 4 张图的结果（idx 1-4）
     var callCount = 0
     var deps = Object.assign({}, mockDeps, {
       safeCallChat: async function() {
         callCount++
         return {
-          text: JSON.stringify([{ idx: 1, document_type: 'policy', result: 'success', data: { contract_basic: {}, products: [{ product_name: 'P' + callCount }], field_confidence: {}, overall_confidence: 0.8 } }]),
-          usage: { total_tokens: 300 }
+          text: JSON.stringify([
+            { idx: 1, document_type: 'policy', result: 'success', data: { contract_basic: {}, products: [{ product_name: 'A' }], field_confidence: {}, overall_confidence: 0.8 } },
+            { idx: 2, document_type: 'policy', result: 'success', data: { contract_basic: {}, products: [{ product_name: 'B' }], field_confidence: {}, overall_confidence: 0.8 } },
+            { idx: 3, document_type: 'policy', result: 'success', data: { contract_basic: {}, products: [{ product_name: 'C' }], field_confidence: {}, overall_confidence: 0.8 } },
+            { idx: 4, document_type: 'policy', result: 'success', data: { contract_basic: {}, products: [{ product_name: 'D' }], field_confidence: {}, overall_confidence: 0.8 } }
+          ]),
+          usage: { total_tokens: 400 }
         }
       }
     })
 
     var res = await aiExtractBatchPhase(ocrResults, deps)
-    expect(res.splitUsed).toBe(true)
-    expect(res.aiCallCount).toBe(2)
-    expect(res.results.length).toBe(2)
-    expect(res.results[0].success).toBe(true)
-    expect(res.results[1].success).toBe(true)
-    expect(callCount).toBe(2)
+    expect(res.splitUsed).toBe(false)
+    expect(res.aiCallCount).toBe(1)
+    expect(res.results.length).toBe(4)
+    expect(res.results[0].policies[0].product_name).toBe('A')
+    expect(res.results[2].policies[0].product_name).toBe('C')
+    expect(res.results[3].policies[0].product_name).toBe('D')
+    expect(callCount).toBe(1)
   })
 
   test('现价表提取：document_type=cash_value 时返回 cashValueData', async () => {

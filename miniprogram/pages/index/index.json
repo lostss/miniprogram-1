@@ -1,5 +1,7 @@
 {
+  "navigationBarTitleText": "保小秘",
   "usingComponents": {
-    "client-card": "/components/client-card/index"
+    "client-card": "/components/client-card/index",
+    "ocr-flow": "/components/ocr-flow/index"
   }
 }

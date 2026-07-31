@@ -46,14 +46,18 @@ async function callThink(messages, timeoutMs = AI.THINK_TIMEOUT) {
     usage: res.usage || {}
   }))
 
-  const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('THINK_TIMEOUT')), timeoutMs)
-  )
+  // S3-1 修复：保存 timerId，Promise.race 后清理，避免定时器残留导致 unhandled rejection
+  let timerId
+  const timeoutPromise = new Promise((_, reject) => {
+    timerId = setTimeout(() => reject(new Error('THINK_TIMEOUT')), timeoutMs)
+  })
 
   try {
     const { text, usage } = await Promise.race([thinkPromise, timeoutPromise])
+    clearTimeout(timerId)
     return { text, usage }
   } catch (e) {
+    clearTimeout(timerId)
     console.warn('[ai-client] callThink 失败(' + (e.message || e) + ')，交由 reasoningDispatcher 降级')
     throw e
   }
@@ -64,7 +68,7 @@ async function callThink(messages, timeoutMs = AI.THINK_TIMEOUT) {
  * opts.model / opts.temperature / opts.timeoutMs 覆盖默认值
  */
 async function callChat(messages, opts = {}) {
-  const { responseFormat, maxTokens, model: modelOverride, temperature, timeoutMs, cacheKey } = opts
+  const { responseFormat, maxTokens, model: modelOverride, temperature, timeoutMs } = opts
   const reqOpts = {
     model: modelOverride || CHAT_MODEL,
     messages
@@ -72,9 +76,6 @@ async function callChat(messages, opts = {}) {
   if (responseFormat) reqOpts.response_format = responseFormat
   if (maxTokens) reqOpts.max_tokens = maxTokens
   if (temperature != null) reqOpts.temperature = temperature
-  // Prompt Cache 透传：CloudBase AI SDK 会把未定义字段透传给 TokenHub
-  // OCR 场景 9 张图共享同一 system prompt → 后 8 张命中缓存，输入费用降 2/3、TPM 消耗降 2/3
-  if (cacheKey) reqOpts.prompt_cache_key = cacheKey
   const model = _createModel()
 
   // 超时保护：与 callThink 同样用 Promise.race，超时抛错交由上层处理
@@ -85,10 +86,12 @@ async function callChat(messages, opts = {}) {
 
   if (!timeoutMs) return callPromise
 
-  const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('CHAT_TIMEOUT')), timeoutMs)
-  )
-  return Promise.race([callPromise, timeoutPromise])
+  // S3-1 修复：保存 timerId，Promise.race 后清理，避免定时器残留导致 unhandled rejection
+  let timerId
+  const timeoutPromise = new Promise((_, reject) => {
+    timerId = setTimeout(() => reject(new Error('CHAT_TIMEOUT')), timeoutMs)
+  })
+  return Promise.race([callPromise, timeoutPromise]).finally(() => clearTimeout(timerId))
 }
 
 /** 带原生 function calling 的 AI 调用 — 返回 { text, toolCalls, usage }
@@ -147,7 +150,7 @@ function _extractToolCalls(messages, rawResponses) {
  * 文档: https://api-docs.deepseek.com/zh-cn/
  */
 async function callChatDirect(messages, opts = {}) {
-  const { responseFormat, maxTokens, temperature, timeoutMs, cacheKey } = opts
+  const { responseFormat, maxTokens, temperature, timeoutMs } = opts
   const axios = require('axios')
   const apiKey = process.env[AI.DIRECT_API_KEY_ENV]
   if (!apiKey) {
@@ -169,7 +172,6 @@ async function callChatDirect(messages, opts = {}) {
   if (responseFormat) reqOpts.response_format = responseFormat
   if (maxTokens) reqOpts.max_tokens = maxTokens
   if (temperature != null) reqOpts.temperature = temperature
-  if (cacheKey) reqOpts.prompt_cache_key = cacheKey
 
   const timeout = timeoutMs || 30000
   try {
@@ -198,6 +200,13 @@ async function callChatDirect(messages, opts = {}) {
       throw err
     }
 
+    // 结构守卫：DeepSeek 偶发返回空 choices 或异常 body，直接解构会 TypeError
+    if (!res.data || !Array.isArray(res.data.choices) || res.data.choices.length === 0 || !res.data.choices[0] || !res.data.choices[0].message) {
+      console.error('[ai-client callChatDirect] 异常响应结构: choices missing, status=' + res.status)
+      const err = new Error('ai_format')
+      err.code = 'ai_format'
+      throw err
+    }
     const content = (res.data.choices[0].message.content || '').trim()
     if (!content) {
       const err = new Error('ai_empty')

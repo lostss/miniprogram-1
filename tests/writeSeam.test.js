@@ -154,7 +154,8 @@ describe('writeSeam — 带钩子写入', () => {
 
   test('updateDoc 触发 advanceStage', async () => {
     const { db, calls } = makeMockDb({
-      families: [{ _id: 'fam1', _openid: 'op1', engagement_stage: 'stage_1' }]
+      families: [{ _id: 'fam1', _openid: 'op1', engagement_stage: 'stage_1' }],
+      policies: [{ _id: 'p1', _openid: 'op1' }]
     })
     evaluateStage.mockReturnValue('stage_2')
     const ws = writeSeam(db, 'op1', 'fam1')
@@ -166,7 +167,7 @@ describe('writeSeam — 带钩子写入', () => {
   })
 
   test('removeDoc 触发钩子 (markFamilyMutated)', async () => {
-    const { db, calls } = makeMockDb()
+    const { db, calls } = makeMockDb({ policies: [{ _id: 'p1', _openid: 'op1' }] })
     const ws = writeSeam(db, 'op1', 'fam1')
     await ws.removeDoc('policies', 'p1')
     const famUpdate = findUpdate(calls, 'families', d => d.insight_stale === true)

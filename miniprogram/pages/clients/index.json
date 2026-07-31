@@ -1,4 +1,5 @@
 {
+  "navigationBarTitleText": "客户列表",
   "usingComponents": {
     "client-card": "/components/client-card/index"
   }

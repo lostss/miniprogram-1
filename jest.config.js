@@ -1,4 +1,4 @@
-// jest.config.js
+﻿// jest.config.js
 // 微信小程序项目 Jest 配置
 
 module.exports = {
@@ -15,7 +15,7 @@ module.exports = {
   // 覆盖率配置
   collectCoverageFrom: [
     'cloudfunctions/**/*.js',
-    'miniprogram/services/**/*.js',
+    'miniprogram/utils/**/*.js',
     '!**/node_modules/**'
   ],
   coverageDirectory: 'coverage',

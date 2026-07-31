@@ -21,7 +21,7 @@ function _toNum(v) {
 }
 
 /**
- * 构建保单对象（架构审计 I：从 processOneImage 内联外移）
+ * 构建保单对象
  * 单一职责：AI 提取结果 → 保单记录数组，含 ID 生成/字段映射/置信度附注
  *
  * @param {array} products - AI 提取的产品数组
@@ -29,8 +29,18 @@ function _toNum(v) {
  * @param {object} conf - { overallConf, fieldConf, ocrReliable, autoConfirmed }
  * @returns {array} 保单对象数组
  */
+// 日期字段格式校验：防 AI 输出完整身份证号等非日期文本被误存为生日（审计 #2）
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+function _cleanDate(v) {
+  const s = String(v || '').trim()
+  return DATE_RE.test(s) ? s : ''
+}
+
 function buildPolicyFromExtract(products, contractBasic, conf) {
   const { overallConf, fieldConf, ocrReliable, autoConfirmed } = conf
+  // 审计 #1：autoConfirmed 需 置信度达标 && 核心字段值完整（≥4/5），防 AI 漏提取 → 空值自动入库
+  const { assessCoreCompleteness } = require('./ocr-confidence')
+  const finalAuto = autoConfirmed && assessCoreCompleteness(contractBasic, products)
   return (products || []).map(product => ({
     id: 'pol_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
     member_id: '',
@@ -52,10 +62,10 @@ function buildPolicyFromExtract(products, contractBasic, conf) {
     confidence: overallConf,
     field_confidence: fieldConf,
     confidence_source: ocrReliable ? 'ocr' : 'ai',
-    auto_confirmed: autoConfirmed,
-    insured_birth_date: contractBasic.insured_birth_date || '',
-    policyholder_birth_date: contractBasic.policyholder_birth_date || '',
-    beneficiary_birth_date: contractBasic.beneficiary_birth_date || ''
+    auto_confirmed: finalAuto,
+    insured_birth_date: _cleanDate(contractBasic.insured_birth_date),
+    policyholder_birth_date: _cleanDate(contractBasic.policyholder_birth_date),
+    beneficiary_birth_date: _cleanDate(contractBasic.beneficiary_birth_date)
   }))
 }
 
@@ -175,22 +185,16 @@ async function aiPhase({ ocrText, ocrConfInfo, fileId, t0, t1, t2, cloud, db, bu
   return { success: true, policiesCount: newPolicies.length, policies: newPolicies, document_type: docType, cashValueData, tokens: tokens || {} }
 }
 
-// 兼容旧调用：整体流程 = OCR 阶段 + AI 阶段
-async function processOneImage({ cloud, db, buildExtractionPrompt, fileId, familyId, openid, source }) {
-  const ocr = await ocrPhase({ cloud, fileId, openid, familyId })
-  if (!ocr.ocrText) return { success: false, policiesCount: 0, error: 'OCR识别结果为空', error_code: 'ocr_empty' }
-  return aiPhase({ ocrText: ocr.ocrText, ocrConfInfo: ocr.ocrConfInfo, fileId: ocr.fileId, t0: ocr.t0, t1: ocr.t1, t2: ocr.t2, cloud, db, buildExtractionPrompt, familyId, openid })
-}
-
 // ---- 批量 AI 提取（拼接 N 张图为 1 次调用，超限对半拆分） ----
 const { parseAIJSON: _parseBatchJSON } = require('./parse-ai-json')
+const { is429 } = require('./ai-error')
 
 /**
  * 单次批量 AI 调用（不拆分）
  * @returns {{ aiResponse, tokens, aiCallCount }}
  */
 async function _callBatchAI(ocrResults, deps) {
-  const { buildBatchExtractionPrompt, safeCallChat, callChat, cloud, db, openid, familyId, AI_TIMEOUT } = deps
+  const { buildBatchExtractionPrompt, safeCallChat, callChat, cloud, db, openid, familyId } = deps
   const { AI } = require('./config')
   const { systemPrompt, userPrompt } = buildBatchExtractionPrompt(ocrResults)
   const messages = [
@@ -201,7 +205,6 @@ async function _callBatchAI(ocrResults, deps) {
 
   // DeepSeek JSON 模式有概率返回空 content（官方已知问题），启用 1 次重试
   const maxAttempts = 2
-  let lastErr = null
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let res
     try {
@@ -210,15 +213,26 @@ async function _callBatchAI(ocrResults, deps) {
         { cloud, db, openid, familyId, sessionId, model: AI.OCR_MODEL, action: 'ocr_extract_batch', skipInjection: true, skipOutputAudit: true, skipContentSafety: true },
         // 不使用 response_format: json_object（DeepSeek JSON 模式有概率返回空 content）
         // 改用普通模式 + prompt 严格约束 JSON 输出
-        { maxTokens: AI.OCR_BATCH_MAX_TOKENS, temperature: AI.OCR_BATCH_TEMPERATURE, timeoutMs: AI.OCR_BATCH_TIMEOUT, cacheKey: 'ocr-batch-v1' }
+        // 不传 prompt_cache_key：CloudBase SDK 路径不支持客户端缓存控制，固定键+内容多变反而反复写缓存
+        { maxTokens: AI.OCR_BATCH_MAX_TOKENS, temperature: AI.OCR_BATCH_TEMPERATURE, timeoutMs: AI.OCR_BATCH_TIMEOUT }
       )
     } catch (e) {
-      const status = (e && e.response && (e.response.status || e.response.statusCode)) || null
+      // 429 定位：兼容 SDK 错误多种结构（e.response / e.statusCode / e.data / e.headers），
+      // 捕获 TokenHub 具体限流码（429001 并发 / 429002 RPM / 429003 TPM）与 Retry-After 头
+      const status = (e && ((e.response && (e.response.status || e.response.statusCode)) || e.statusCode || e.status)) || null
+      const body = (e && (e.data || (e.response && e.response.data))) || null
+      const headers = (e && (e.headers || (e.response && e.response.headers))) || null
       console.error('[ocr-core] _callBatchAI AI调用失败:', {
-        message: e && e.message, code: e && e.code, status: status,
-        responseData: e && e.response && e.response.data ? JSON.stringify(e.response.data).substring(0, 500) : null
+        message: e && e.message,
+        code: e && e.code,
+        status: status,
+        errorCode: (body && body.error && (body.error.code || body.error.upstream_code)) || null,
+        retryAfter: (headers && headers['retry-after']) || null,
+        responseData: body ? JSON.stringify(body).substring(0, 500) : null,
+        requestId: (e && e.requestId) || null,
+        reqChars: ocrResults.reduce((s, r) => s + (r.ocrText || '').length, 0)
       })
-      if (status === 429 || (e && e.code === '429') || /429/.test(e && e.message)) {
+      if (is429(e)) {
         const err = new Error('AI服务繁忙(429)')
         err.code = '429'
         throw err
@@ -226,7 +240,6 @@ async function _callBatchAI(ocrResults, deps) {
       // ai_empty 重试（DeepSeek JSON 模式已知问题）
       if (e && e.code === 'ai_empty' && attempt < maxAttempts) {
         console.warn('[ocr-core] _callBatchAI ai_empty, 重试 attempt ' + (attempt + 1))
-        lastErr = e
         await new Promise(r => setTimeout(r, 500))
         continue
       }
@@ -255,7 +268,8 @@ async function _callBatchAI(ocrResults, deps) {
     }
     return { aiResponse: arr, tokens: res.usage || {}, aiCallCount: attempt }
   }
-  throw lastErr || new Error('ai_batch_failed')
+  // 安全兜底（正常流程不可达：循环内要么 return 要么 throw）
+  throw new Error('ai_batch_failed')
 }
 
 /**
@@ -333,62 +347,36 @@ function _summarizeBatch(results, tokens, aiCallCount, totalDurationMs, splitUse
   return { results: results, totalDurationMs: totalDurationMs, splitUsed: splitUsed, aiCallCount: aiCallCount, tokens: tokens, successCount: successCount, failCount: failCount }
 }
 
-function _mergeTokens(t1, t2) {
-  if (!t1 && !t2) return {}
-  var a = t1 || {}, b = t2 || {}
-  return {
-    prompt_tokens: (a.prompt_tokens || 0) + (b.prompt_tokens || 0),
-    completion_tokens: (a.completion_tokens || 0) + (b.completion_tokens || 0),
-    total_tokens: (a.total_tokens || 0) + (b.total_tokens || 0)
-  }
-}
-
 /**
- * 批量 AI 提取编排（含对半拆分降级）
+ * 批量 AI 提取编排：全部 OCR 文本拼接为 1 次 AI 调用
+ * - hy3 并发限制=1，多组串行也会因前一组未返回导致后一组 429，故统一单次调用
+ * - 9 张图 OCR 文本总量约 5-9K 字符，远低于 OCR_BATCH_MAX_CHARS=84000，无需分组
  * @param {Array} ocrResults - [{ fileId, ocrText, ocrConfInfo, ... }]
  * @param {object} deps - { cloud, db, openid, familyId, buildBatchExtractionPrompt, safeCallChat, callChat, AI_TIMEOUT }
  * @returns {{ results, totalDurationMs, splitUsed, aiCallCount, tokens, successCount, failCount }}
  */
 async function aiExtractBatchPhase(ocrResults, deps) {
   const t0 = Date.now()
-  const { AI } = require('./config')
-  const totalChars = ocrResults.reduce((s, r) => s + (r.ocrText || '').length, 0)
 
   // 标记每项的 1-based idx（用于 _buildSingleResult 读取）
   ocrResults = ocrResults.map((r, i) => Object.assign({}, r, { _batchIdx: i + 1 }))
 
-  if (totalChars <= AI.OCR_BATCH_MAX_CHARS || ocrResults.length === 1) {
-    // 未超限：1 次调用
-    try {
-      const { aiResponse, tokens, aiCallCount } = await _callBatchAI(ocrResults, deps)
-      const results = _assembleResults(ocrResults, aiResponse)
-      const t1 = Date.now()
-      return _summarizeBatch(results, tokens, aiCallCount, t1 - t0, false)
-    } catch (e) {
-      const errorCode = e.code === 'ai_format' ? 'ai_format' : (e.code === '429' ? '429' : 'ai_batch_failed')
-      const results = ocrResults.map(r => ({ idx: r._batchIdx, fileId: r.fileId, success: false, error: (e && e.message) || 'AI异常', errorCode: errorCode }))
-      const t1 = Date.now()
-      return _summarizeBatch(results, {}, 1, t1 - t0, false)
-    }
+  // 单次调用
+  try {
+    const { aiResponse, tokens, aiCallCount } = await _callBatchAI(ocrResults, deps)
+    const results = _assembleResults(ocrResults, aiResponse)
+    const t1 = Date.now()
+    return _summarizeBatch(results, tokens, aiCallCount, t1 - t0, false)
+  } catch (e) {
+    const { classifyAIError } = require('./ai-error')
+    const cls = classifyAIError(e)
+    // S3-1 修复：保留 CHAT_TIMEOUT / ai_empty 区分，与 aiPhase 错误码映射对称
+    // 原实现把 CHAT_TIMEOUT 和 ai_empty 统统压成 ai_batch_failed，前端无法显示"AI服务超时"或"AI返回空"
+    const errorCode = ['ai_format', 'ai_empty', 'CHAT_TIMEOUT', '429'].includes(cls) ? cls : 'ai_batch_failed'
+    const results = ocrResults.map(r => ({ idx: r._batchIdx, fileId: r.fileId, success: false, error: (e && e.message) || 'AI异常', errorCode: errorCode }))
+    const t1 = Date.now()
+    return _summarizeBatch(results, {}, 1, t1 - t0, false)
   }
-
-  // 超限：对半拆分
-  const mid = Math.ceil(ocrResults.length / 2)
-  const left = ocrResults.slice(0, mid)
-  const right = ocrResults.slice(mid)
-
-  const [leftRes, rightRes] = await Promise.all([
-    aiExtractBatchPhase(left, deps),
-    aiExtractBatchPhase(right, deps)
-  ])
-
-  // 重新编号 right 部分 idx 并合并（right 的 idx 是 1..N-mid，需偏移到 mid+1..N）
-  const adjustedRight = rightRes.results.map(r => ({ ...r, idx: r.idx + mid }))
-  const mergedResults = leftRes.results.concat(adjustedRight)
-  const mergedTokens = _mergeTokens(leftRes.tokens, rightRes.tokens)
-  const mergedAiCallCount = leftRes.aiCallCount + rightRes.aiCallCount
-  const t1 = Date.now()
-  return _summarizeBatch(mergedResults, mergedTokens, mergedAiCallCount, t1 - t0, true)
 }
 
-module.exports = { processOneImage, ocrPhase, aiPhase, aiExtractBatchPhase, matchPoliciesToMembers, buildPolicyFromExtract, _toNum }
+module.exports = { ocrPhase, aiPhase, aiExtractBatchPhase, matchPoliciesToMembers, buildPolicyFromExtract, _toNum }

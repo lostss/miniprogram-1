@@ -163,7 +163,7 @@
   subject_id: 'mem_xxx',
   subject_name: '李阳勇',   // 冗余，便于展示
 
-  predicate: '个人年收入',  // 见谓词表（26 谓词全量）
+  predicate: '个人年收入',  // 见谓词表（30 谓词全量）
 
   object_type: 'member',    // member | policy | literal
   object_id: 'mem_yyy',     // literal 时为空
@@ -183,11 +183,11 @@
 }
 ```
 
-**写入策略**：`FACT_STRATEGIES` 26 谓词全覆盖（dedup 9 + versioned 17）。`versioned` 策略自动 supersede 旧事实 → 写入新事实。agent_confirmed 源受保护不被低置信源覆盖。
+**写入策略**：`FACT_STRATEGIES` 30 谓词全覆盖（dedup 8 + versioned 22）。`versioned` 策略自动 supersede 旧事实 → 写入新事实。agent_confirmed 源受保护不被低置信源覆盖。
 
 ---
 
-## 三、谓词表（26 谓词全量）
+## 三、谓词表（30 谓词全量）
 
 ### 关系类
 
@@ -233,16 +233,16 @@
 
 | Predicate | subject | object | 示例 | 策略 |
 |-----------|---------|--------|------|------|
-| `负债` | member/family | literal | (李阳勇, 负债, 房贷150万) | dedup |
+| `负债` | member/family | literal | (李阳勇, 负债, 房贷150万) | versioned |
 | `持有资产` | member/family | literal | (李阳勇, 持有资产, 房产300万) | dedup |
-| `未来计划` | member/family | literal | (李阳勇, 未来计划, 换房2026) | dedup |
-| `有偏好` | member | literal | (李阳勇, 有偏好, 分红型) | dedup |
+| `未来计划` | member/family | literal | (李阳勇, 未来计划, 换房2026) | versioned |
+| `有偏好` | member | literal | (李阳勇, 有偏好, 分红型) | versioned |
 | `有特征` | member | literal | (李阳勇, 有特征, 宠物两只) | dedup |
 | `备注` | member/family/policy | literal | 自由文本备注 | dedup |
 | `投保` | member | policy | (李阳勇, 投保, pol_001) | dedup |
 | `保单号` | policy | literal | (pol_001, 保单号, P2024001) | dedup |
-| `固定支出` | member/family | literal | 月/年度固定支出 | dedup |
-| `年保费预算` | family | literal | 家庭年保费预算 | dedup |
+| `固定支出` | member/family | literal | 月/年度固定支出 | versioned |
+| `年保费预算` | family | literal | 家庭年保费预算 | versioned |
 
 ---
 

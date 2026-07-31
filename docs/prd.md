@@ -258,9 +258,9 @@ reasoning, created_at
 | 函数 | handlers 数 | 用途 |
 |------|-----------|------|
 | dataQuery | 14 | queryFamily/queryMessages/queryHomeList/queryBrief/queryInsight/markRead/queryFacts/queryPolicies/queryMembers/queryFamiliesForMatch/readMemory/getCustomer/listCustomers/searchCustomers |
-| dataWrite | 18 | recordField/writeNote/updateMember/writePolicy/writePoliciesBatch/addFact/updateFactConfidence/deletePolicy/deleteMember/updatePolicy/deleteFact/createFamily/updateFamily/deleteFamily/writeMessage/writeOpLog/setStage/submitProfiling |
+| dataWrite | 21 | recordField/writeNote/updateMember/writePolicy/writePoliciesBatch/addFact/updateFactConfidence/deletePolicy/deleteMember/updatePolicy/deleteFact/createFamily/updateFamily/deleteFamily/writeMessage/writeOpLog/setStage/submitProfiling/migratePoliciesToFacts（保单事实迁移）/writeCashValue（现金价值写入）/matchCashValueManual（现金价值手工匹配） |
 | reportAI | 1 | 报告生成（portrait/review/plan/suggestions/milestones/disclaimer），由 conversationAI 的 triggerAnalysis 工具触发 |
-| ocrService | 2 | ocrSingle（单图同步）/ matchPolicies |
+| ocrService | 4 | ocrOnly / aiExtractBatch / aiExtractParallel / matchPolicies |
 | conversationAI | 3 mode + 13 工具路由 | getPrompt / generateText / postProcess；_dispatch 按工具定义数组路由 → 复用 dataWrite + dataQuery + reportAI；postProcess 内置 sug 确认拦截；addFact 工具谓词为自由字符串（非 enum 约束），后端 `FACT_STRATEGIES` 兜底未知谓词为 dedup |
 | login | 1 | 手机号登录；dev 登录仅限非 prod 环境 |
 

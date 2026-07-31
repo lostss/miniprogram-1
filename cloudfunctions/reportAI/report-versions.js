@@ -26,6 +26,9 @@ const { toReadReport } = require('./_shared/report-fields')
  * @param {Date} args.now - 当前时间戳
  */
 async function archivePrevious(db, { familyId, openid, prevFamily, keepVersions, now }) {
+  // S3-7 修复：prevFamily 可能为 null（family 被并发删除或 DB 异常时 loadFamilyView 返回 null）
+  // 原实现直接读 prevFamily.last_portrait 会抛 TypeError，被外层 catch 捕获后 AI 报告整体丢失
+  if (!prevFamily) return
   const hasPrev = prevFamily.last_portrait || prevFamily.last_review || prevFamily.last_plan
   if (!hasPrev) return
 

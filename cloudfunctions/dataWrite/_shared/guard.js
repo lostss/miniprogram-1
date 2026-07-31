@@ -53,7 +53,7 @@ async function checkRateLimit(db, openid) {
     const count = await db.collection('agent_logs').where({
       openid,
       timestamp: _.gte(windowStart),
-      action: _.neq('ocr_extract')
+      action: _.nin(['ocr_extract', 'ocr_extract_batch', 'ocr_recognize', 'ocr_only_batch', 'ai_extract_batch', 'ai_extract_parallel', 'ocr_ai_extract'])
     }).count()
     if (count.total > RATE_LIMIT_MAX) return { allowed: false, reason: '请求过于频繁，请稍后重试' }
   } catch (e) { console.error('[guard] checkRateLimit 查询失败:', e.message) }

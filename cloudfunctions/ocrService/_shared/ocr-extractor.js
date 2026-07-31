@@ -9,6 +9,9 @@ const { OCR, AI, AI_TIMEOUT } = require('./config')
 const { parseAIJSON: _parseAIJSON } = require('./parse-ai-json')
 const { withRetry } = require('./retry')
 const { logOperation } = require('./logSeam')
+// PII 脱敏：OCR 返回后、发送给 AI 前实施，身份证/手机号/银行卡明文不出云
+// 身份证脱敏保留出生日期（如 52212519811219435X → 5221251981-12-19-****），生日字段仍可提取
+const { desensitize } = require('./pii-rules')
 
 let _ocrClient = null
 function _getOcrClient() {
@@ -27,10 +30,18 @@ async function ocrRecognize(tempFileURL) {
     // 架构审计第 14 轮候选 #3：重试委托 withRetry（原内联 setTimeout 1000ms）
     return await withRetry(
       async () => {
-        const ocrRes = await client.GeneralFastOCR({ ImageUrl: tempFileURL })
+        // P1+P2: GeneralAccurateOCR（高精度版，99%准确率，与高速版同价 0.50元/次）
+        // 注意：LanguageType/WordsType 属 GeneralBasicOCR 参数，GeneralAccurateOCR 不支持（传了报
+        // "The parameter `LanguageType` is not recognized."）→ 不传
+        // EnableDetectSplit:true 整图大图中有小字表格时切图提升检测率（现价表等）
+        const ocrRes = await client.GeneralAccurateOCR({
+          ImageUrl: tempFileURL,
+          EnableDetectSplit: true
+        })
         if (ocrRes && ocrRes.TextDetections && ocrRes.TextDetections.length > 0) {
-          const text = ocrRes.TextDetections.map(td => td.DetectedText || '').join('\n').trim()
-          const confs = ocrRes.TextDetections.map(td => ({ text: (td.DetectedText || '').substring(0, 30), ocr_conf: td.Confidence || 0 }))
+          // PII 脱敏（OCR 返回后即实施）：身份证/手机号/银行卡明文不进入 AI 调用
+          const text = desensitize(ocrRes.TextDetections.map(td => td.DetectedText || '').join('\n').trim())
+          const confs = ocrRes.TextDetections.map(td => ({ text: desensitize((td.DetectedText || '').substring(0, 30)), ocr_conf: td.Confidence || 0 }))
           return { text, confs }
         }
         return { text: '', confs: [] }
@@ -71,7 +82,7 @@ async function aiExtract(ocrText, ocrConfInfo, deps) {
           messages,
           callChat,
           { cloud, db, openid, familyId, sessionId, model: AI.OCR_MODEL, action: 'ocr_extract', skipInjection: true, skipOutputAudit: true, skipContentSafety: true },
-          { maxTokens: AI.OCR_MAX_TOKENS, temperature: AI.OCR_TEMPERATURE, responseFormat: { type: 'json_object' }, timeoutMs: AI_TIMEOUT.OCR, cacheKey: 'ocr-extract-v1' }
+          { maxTokens: AI.OCR_MAX_TOKENS, temperature: AI.OCR_TEMPERATURE, responseFormat: { type: 'json_object' }, timeoutMs: AI_TIMEOUT.OCR }
         )
         const parsed = _parseAIJSON(res.text)
         if (!parsed) {
@@ -105,4 +116,4 @@ async function aiExtract(ocrText, ocrConfInfo, deps) {
   }
 }
 
-module.exports = { ocrRecognize, aiExtract, _parseAIJSON }
+module.exports = { ocrRecognize, aiExtract }

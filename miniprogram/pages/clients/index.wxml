@@ -1,24 +1,31 @@
-<!-- 客户列表页 -->
+<!-- 客户列表页 v2.0 -->
 <view class="page page-view">
   <!-- 搜索栏 -->
   <view class="search-bar">
-    <input class="search-input" value="{{keyword}}" placeholder="搜索客户姓名..." bindinput="onSearch" aria-label="搜索客户" />
+    <view class="search-wrap">
+      <input class="search-input" value="{{keyword}}" placeholder="搜索客户姓名" bindinput="onSearch" aria-label="搜索客户" />
+      <view class="search-clear pressable" wx:if="{{keyword}}" bindtap="onClearSearch">✕</view>
+    </view>
   </view>
 
   <!-- 加载中 -->
-  <view class="loading-hint" wx:if="{{loading}}"><view class="loading-pulse"></view>小秘正在查找...</view>
+  <view class="loading-hint" wx:if="{{loading}}"><view class="loading-pulse"></view></view>
 
   <!-- 列表 -->
-  <client-card wx:for="{{families}}" wx:key="_id" wx:for-index="idx" client="{{item}}" bindtap="onClientTap" bind:longpress="onClientLongPress" data-idx="{{idx}}" />
+  <view class="card-wrap {{removingId === item._id ? 'card-removing' : ''}}" wx:for="{{families}}" wx:key="_id" wx:for-index="idx">
+    <client-card client="{{item}}" bindtap="onClientTap" bind:longpress="onClientLongPress" data-idx="{{idx}}" />
+  </view>
 
-  <!-- 空态 -->
-  <view class="empty" wx:if="{{!loading && families.length === 0}}">
-    <view class="empty-illu">
-      <view class="empty-step"><image class="empty-step-icon" src="/images/upload.svg" mode="aspectFit" /></view>
-      <view class="empty-arrow">—</view>
-      <view class="empty-step"><image class="empty-step-icon" src="/images/policy.svg" mode="aspectFit" /></view>
-    </view>
+  <!-- 空态：搜索无结果 -->
+  <view class="empty" wx:if="{{!loading && families.length === 0 && keyword}}">
+    <text class="empty-text">未找到"{{keyword}}"</text>
+    <text class="empty-sub">换个关键词试试</text>
+  </view>
+
+  <!-- 空态：无任何客户 -->
+  <view class="empty" wx:elif="{{!loading && families.length === 0}}">
     <text class="empty-text">尚无客户档案</text>
-    <text class="empty-sub">上传保单自动创建</text>
+    <text class="empty-sub">拍照上传保单，自动创建客户</text>
+    <button class="empty-btn pressable" bindtap="onGoUpload">去首页上传</button>
   </view>
 </view>

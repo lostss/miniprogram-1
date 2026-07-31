@@ -29,6 +29,7 @@ page {
   /* 状态色（amber 偏黄拉开与金色强调的距离） */
   --green: #6B8E6B;
   --amber: #B8912E;
+  --amber-deep: #7C5E1C;
   --red: #B85450;
   --green-dim: #E8EDDF;
   --amber-dim: #F5ECCE;
@@ -36,7 +37,7 @@ page {
 
   /* 文字 */
   --text-primary: #1A1A2E;
-  --text-secondary: #7A6548;
+  --text-secondary: #6E5A3E;
   --text-tertiary: #6B5A3F;
   --text-disabled: #9A8B7C;
 
@@ -56,7 +57,6 @@ page {
   --fs-display: 40rpx;
   --fs-3xl: 48rpx;
   --fs-hero: 52rpx;
-  --fs-mega: 56rpx;
 
   --fw-normal: 400;
   --fw-medium: 500;
@@ -193,14 +193,14 @@ page ::selection { background: rgba(201,169,110,0.25); color: var(--text-primary
    OCR 进度蒙层（全局共享，避免 index / report 重复定义）
    ============================================================ */
 .ocr-mask { position:fixed; top:0; left:0; right:0; bottom:0; background:var(--overlay-strong); z-index:var(--z-modal); display:flex; align-items:center; justify-content:center; animation:fadeIn var(--dur-base) var(--ease-out) }
-.ocr-card { width:600rpx; max-height:80vh; padding:var(--sp-10) var(--sp-7); display:flex; flex-direction:column; align-items:center; background:var(--bg-surface); border-radius:var(--r-xl); animation:cardUp var(--dur-base) var(--ease-out) }
+.ocr-card { width:600rpx; max-height:80vh; padding:var(--sp-10) var(--sp-7); display:flex; flex-direction:column; align-items:center; background:var(--bg-surface); border-radius:var(--r-xl); box-shadow:var(--shadow-lg); animation:cardUp var(--dur-base) var(--ease-out) }
 
 /* 进度条 */
 .ocr-bar-wrap { width:100%; margin-bottom:var(--sp-6); }
 .ocr-bar { width:100%; height:6rpx; background:var(--bg-input); border-radius:3rpx; overflow:hidden; }
 .ocr-bar-fill { height:100%; background:var(--accent); border-radius:3rpx; transition:width 0.3s var(--ease-out); }
 
-/* 进度数字：大号衬线体 + 渐变 */
+/* 进度数字：大号衬线体 */
 .ocr-phase-num { font-size:var(--fs-3xl); font-weight:var(--fw-bold); color:var(--text-primary); font-family:var(--font-serif); line-height:var(--lh-none); margin-bottom:var(--sp-4); font-variant-numeric:tabular-nums; }
 .ocr-phase-of { font-size:var(--fs-2xl); font-weight:var(--fw-normal); color:var(--text-tertiary); }
 
@@ -208,20 +208,20 @@ page ::selection { background: rgba(201,169,110,0.25); color: var(--text-primary
 .ocr-phase-sub { font-size:var(--fs-caption); color:var(--text-tertiary); text-align:center }
 
 /* 动画点：金/绿双色区分阶段，呼吸感替代脉冲 */
-.ocr-dot { width:16rpx; height:16rpx; border-radius:50%; margin-top:var(--sp-6); animation:breathe 2s var(--ease-out-expo) infinite; }
-.ocr-dot--gold { background:var(--accent); }
-.ocr-dot--green { background:var(--green); }
+
 
 .ocr-done-title { font-size:var(--fs-2xl); font-weight:var(--fw-semi); color:var(--text-primary); margin-bottom:var(--sp-2); animation:popIn 0.4s var(--ease-spring) }
 .ocr-done-sub { font-size:var(--fs-caption); color:var(--text-tertiary); margin-bottom:var(--sp-5); text-align:center }
+.ocr-fail-tip { color:var(--amber); font-size:var(--fs-tiny); margin-top:var(--sp-1) }
 .ocr-summary-list { width:100%; max-height:300rpx; margin-bottom:var(--sp-6) }
-.ocr-actions { width:100% }
-.ocr-confirm-btn { width:100%; height:88rpx; background:var(--accent); color:var(--color-on-accent); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none }
+.ocr-actions-row { width:100%; display:flex; gap:var(--sp-3) }
+.ocr-confirm-btn { flex:1; height:88rpx; background:var(--accent); color:var(--color-on-accent); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none }
+.ocr-confirm-btn::after { border:none }
 .ocr-confirm-btn.is-loading { background:var(--accent-dim); }
 .ocr-confirm-btn[disabled] { opacity:0.7; }
 
-/* OCR 结果：低置信度保单标注 */
-.low-conf { background:var(--amber-dim); border-radius:var(--r-sm); padding:0 var(--sp-2); }
+/* OCR 结果：低置信度保单标注 — 统一为深琥珀文字（对比度≥4.5:1），背景由容器自持 */
+.low-conf { color: var(--amber-deep); }
 
 /* 尊重减少动效偏好 */
 @media (prefers-reduced-motion: reduce) {

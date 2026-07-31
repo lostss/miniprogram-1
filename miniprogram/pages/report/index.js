@@ -1,33 +1,87 @@
-const { buildChapters, buildGaps, computeReportMeta, makeHints } = require('../../utils/report-builder')
+const { buildChapters, buildGaps, makeHints, buildHero } = require('../../utils/report-builder')
+const { normalizeFamilyData } = require('../../utils/report/data-normalizer')
 const { buildEditConfig, validate: validateEdit, buildUpdateData } = require('../../utils/edit-form')
 const api = require('../../utils/apiClient')
 const session = require('../../utils/session-store')
-const flow = require('../../utils/ocr-flow')
 
-/** 报告页 v1.3 — 静默刷新 + FAB提示 */
+/** 报告页 v2.0 — 基础版报告（6 章单页长图 + 保单 Sheet） */
 Page({
   data: {
     familyId: '', family: null, chapters: [],
-    mainChapters: [], appendixChapters: [], activeTab: 'report',
     loading: true, loadingText: '小秘正在认真看保单...',
-    ocrMask: flow.defaultState(),
     showEdit: false, reportUpdated: false, refreshing: false, editSaving: false,
     editTitle: '编辑', editFields: [], _editMode: '',
-    summaryBasis: '', gaps: [], dataNotice: '', completeness: [], hints: [], focusAnchor: '',
+    gaps: [], hints: [], focusAnchor: '',
     reportMeta: { date: '', no: '' },
+    hero: { alerts: [], summary: '', topAdvice: '', conclusion: '' },
+    summaryCards: { premium: '', coverage: '', count: 0 },
+    showPolicySheet: false, currentPolicy: null, policyRows: [], policyCat: '',
+    showMemberManage: false, memberManageList: [],
     fabCollapsed: true, fabText: ''
   },
-  onLoad(o) { const cid = o.familyId || o.customerId || ''; this._focus = o.focus || ''; if (!cid) { this.setData({ loading: false }); wx.showModal({ title: '缺少客户信息', content: '请从首页选择客户打开报告', showCancel: false, confirmText: '返回首页', success: () => wx.navigateBack() }); return }; session.setActiveFamily(cid); this.setData({ familyId: cid }); this._loadReport(cid) },
-  onUnload() { this._disposed = true; clearInterval(this._loaderTimer); flow.forgetDedupCache() },
-  // 返回键拦截：若 edit-sheet 或 chat-panel 展开，先关闭它们而非退出页面
+  onLoad(o) { const cid = o.familyId || o.customerId || ''; if (!cid) { this.setData({ loading: false }); wx.showModal({ title: '缺少客户信息', content: '请从首页选择客户打开报告', showCancel: false, confirmText: '返回首页', success: () => wx.reLaunch({ url: '/pages/index/index' }) }); return }; session.setActiveFamily(cid); this.setData({ familyId: cid }); this._loadReport(cid) },
+  onUnload() { this._disposed = true; clearInterval(this._loaderTimer); clearInterval(this._ocrTick) },
+  // 返回键拦截：若 edit-sheet / 保单 Sheet / 成员管理 / chat-panel 展开，先关闭它们而非退出页面
   onBackPress() {
+    if (this.data.showMemberManage) { this.closeMemberManage(); return true }
+    if (this.data.showPolicySheet) { this.onPolicySheetClose(); return true }
     if (this.data.showEdit) { this.setData({ showEdit: false }); return true }
-    const panel = this.selectComponent('chat-panel')
+    const panel = this.selectComponent('#chatpanel')
     if (panel && panel.tryCollapse && panel.tryCollapse()) return true
     return false
   },
 
-  _loadingTexts: ['小秘正在认真看保单...', '小秘正在整理报告...', '小秘正在分析建议...'],
+  // ===== 章节内编辑入口（设计稿：家庭结构/财务 [编辑]） =====
+  onChapterEdit(e) {
+    const detail = e.detail || {}
+    const mode = detail.mode || ''
+    const memberId = detail.memberId || ''
+    if (mode === 'financials') {
+      const cfg = buildEditConfig({ mode: 'financials', family: this.data.family })
+      this.setData(Object.assign({ showEdit: true, editTitle: cfg.title }, cfg))
+      return
+    }
+    if (mode === 'family') {
+      const list = (this.data.family && this.data.family.members) || []
+      this.setData({
+        showMemberManage: true,
+        memberManageList: list.map(function(m) {
+          return {
+            name: m.name || '',
+            role: m.role || '',
+            member_id: m.member_id || '',
+            display: (m.role || '') + (m.age ? '(' + m.age + ')' : '')
+          }
+        })
+      })
+      return
+    }
+    if (mode === 'member' && memberId) {
+      this._openMemberEdit(memberId)
+    }
+  },
+  _openMemberEdit(memberId) {
+    const list = (this.data.family && this.data.family.members) || []
+    const m = list.find(x => x.member_id === memberId)
+    if (!m) return
+    const cfg = buildEditConfig({ mode: 'member', family: this.data.family, member: m })
+    this.setData(Object.assign({ showEdit: true, editTitle: cfg.title }, cfg))
+  },
+  closeMemberManage() {
+    if (this.data.editSaving) return
+    this.setData({ showMemberManage: false, memberManageList: [] })
+  },
+  onMemberManageEdit(e) {
+    const mid = (e.currentTarget.dataset && e.currentTarget.dataset.mid) || ''
+    if (!mid) return
+    this._openMemberEdit(mid)
+  },
+  onMemberManageAdd() {
+    const cfg = buildEditConfig({ mode: 'addMember', family: this.data.family })
+    this.setData(Object.assign({ showEdit: true, editTitle: cfg.title }, cfg))
+  },
+
+  _loadingTexts: ['小秘正在认真看保单...', '小秘正在整理报告...', '小秘正在加载报告...'],
 
   // 统一刷新聚合：chapters + meta + gaps 一次算好，所有刷新点共用
   // 消除 5 处重复四件套 + 漏字段；新增字段只改这一处
@@ -35,21 +89,23 @@ Page({
     const rp = reportOverride || (c.report || {})
     const gaps = buildGaps(c)
     const chapters = buildChapters(c, rp, gaps)
-    const appendixChapters = chapters.filter(function(ch) { return ch.key.indexOf('appendix') === 0 })
-    const mainChapters = chapters.filter(function(ch) { return ch.key.indexOf('appendix') !== 0 })
     const hints = makeHints(rp, c)
-    const meta = computeReportMeta(c)
-    // Hero 抬头：AI 结论（最致命一句）+ 摘要，首屏视觉锚点
-    const hero = { conclusion: String(rp.conclusion || ''), summary: String(rp.summary || '') }
+    // Hero 结论先行：规则版覆盖检查（警示列表 + 总结 + 优先建议）
+    const heroView = buildHero(c, gaps)
+    const hero = Object.assign(heroView, { conclusion: String(rp.conclusion || '') })
+    const norm = normalizeFamilyData(c)
+    const summaryCards = {
+      premium: String(norm.annualPremiumW),
+      coverage: String(norm.totalCoverage),
+      count: norm.policyCount
+    }
     const reportMeta = this._buildReportMeta()
     this.setData(Object.assign({
       family: c,
-      chapters, mainChapters, appendixChapters,
+      chapters,
       hero,
+      summaryCards,
       reportMeta,
-      summaryBasis: meta.basis,
-      dataNotice: meta.dataNotice,
-      completeness: meta.completeness,
       gaps,
       hints
     }, extra || {}))
@@ -60,69 +116,48 @@ Page({
     try {
       if (retry === 0) this._startLoading()
       const q = await api('getFamily', { familyId: cid })
-      const code = (q.result && q.result.code)
-      if (code !== 200) {
+      if (this._disposed) return
+      const code = q.code
+      if (!q.ok) {
         // 未登录 → 等初始化完成后重试；其他错误 → 短暂重试 2 次
-        if (code === 401 && retry < 3) { await new Promise(r => setTimeout(r, 1200)); return this._loadReport(cid, retry + 1) }
-        if (code !== 401 && retry < 2) { await new Promise(r => setTimeout(r, 800)); return this._loadReport(cid, retry + 1) }
+        if (code === 401 && retry < 3) { await new Promise(r => setTimeout(r, 1200)); if (this._disposed) return; return this._loadReport(cid, retry + 1) }
+        if (code !== 401 && retry < 2) { await new Promise(r => setTimeout(r, 800)); if (this._disposed) return; return this._loadReport(cid, retry + 1) }
         this._stopLoading(); this.setData({ loading: false })
         const msg404 = '该客户档案已被删除或不存在，可能从其他设备操作了删除'
         const msg401 = '登录状态异常，请退出小程序重新进入'
         const msg = code === 404 ? msg404 : (code === 401 ? msg401 : '加载失败（' + code + '），请下拉刷新重试')
-        wx.showModal({ title: '客户不存在', content: msg, showCancel: true, cancelText: '留在本页', confirmText: '返回首页', success: (r) => { if (r.confirm) wx.navigateBack() } })
+        wx.showModal({ title: '客户不存在', content: msg, showCancel: true, cancelText: '留在本页', confirmText: '返回首页', success: (r) => { if (r.confirm) wx.reLaunch({ url: '/pages/index/index' }) } })
         return
       }
-      const c = q.result.data
+      const c = q.data
       const rp = c.report || {}
       this._stopLoading()
       this._applyReportData(c, null, { loading: false })
-      if (this._focus === 'review') this.setData({ focusAnchor: 'ch-review' })
       // 数据有更新（OCR/对话写入）但 AI 内容未刷新 → 提示用户
+      // 基础版报告为纯数据驱动；AI 深度分析将改为手工触发（待设计），此处保留状态供未来使用
       if (c.insight_stale && rp.portrait) {
         this.setData({ reportUpdated: true })
       }
-      if (!rp.portrait && retry < 1) {
-        // 首次进入无分析：同步等待 reportAI 完成（其内部已 await AI 调用 + DB 写入），
-        // 完成后立即重载，不再依赖固定延迟轮询
-        this.setData({ loading: true, loadingText: '小秘正在生成报告...' })
-        this._startLoading()
-        // 内联 _triggerReport：try/catch 返回 null，便于降级重载判断
-        let r = null
-        try {
-          const ar = await api('generateReport', { familyId: cid })
-          r = (ar && ar.result) || null
-        } catch (e) { console.error(e) }
-        this._stopLoading()
-        if (!r || r.code !== 200) {
-          // reportAI 失败（冷启动超时/429限流等），降级重载
-          return this._loadReport(cid, retry + 1)
-        }
-        // generateReport 已完成 DB 写入，直接重读并渲染
-        const q = await api('getFamily', { familyId: cid })
-        if (q.result && q.result.code === 200) {
-          this._applyReportData(q.result.data, null, { loading: false })
-          return
-        }
-        return this._loadReport(cid, retry + 1)
-      }
-    } catch (e) { console.error(e); this._stopLoading(); this.setData({ loading: false }) }
+    } catch (e) { console.error(e); this._stopLoading(); if (!this._disposed) this.setData({ loading: false }) }
   },
 
 
   _startLoading() { clearInterval(this._loaderTimer); const texts = this._loadingTexts; if (!texts || !texts.length) { this.setData({ loadingText: '小秘正在加载...' }); return }; let i = 0; this._loaderTimer = setInterval(() => { if (this._disposed) { clearInterval(this._loaderTimer); return } i = (i + 1) % 3; this.setData({ loadingText: texts[i] || '小秘正在加载...' }) }, 2500) },
   _stopLoading() { clearInterval(this._loaderTimer); this._loaderTimer = null },
 
-  // 统一报告刷新序列：触发 → 缓冲（确保 DB 写入可见）→ 重读 → 应用
-  // waitMs 默认 500ms，调用方可传 0 跳过（仅 reportAI 同步返回完整数据时）
+  // 统一报告刷新序列：缓冲（确保 DB 写入可见）→ 重读 → 应用（纯数据，不触发 AI）
+  // 基础版报告为数据驱动；AI 深度分析待设计，后续在此处挂手工触发入口
+  // waitMs 默认 500ms，调用方可传 0 跳过（数据已就绪时）
   async _refreshReportSequence(cid, opts) {
     opts = opts || {}
     const waitMs = opts.waitMs === undefined ? 500 : opts.waitMs
-    // 内联 _triggerReport：此处忽略返回值，吞掉错误保持现有调用方契约
-    try { await api('generateReport', { familyId: cid }) } catch (e) { console.error(e) }
+    if (this._disposed) return false
     if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs))
+    if (this._disposed) return false
     const q = await api('getFamily', { familyId: cid })
-    if (q.result && q.result.code === 200) {
-      this._applyReportData(q.result.data, null, opts.applyOpts || {})
+    if (this._disposed) return false
+    if (q.ok) {
+      this._applyReportData(q.data, null, opts.applyOpts || {})
       return true
     }
     return false
@@ -176,18 +211,9 @@ Page({
       wx.stopPullDownRefresh()
       wx.showToast({ title: '更新失败，请重试', icon: 'none' })
     } finally {
-      this.setData({ refreshing: false })
+      if (!this._disposed) this.setData({ refreshing: false })
       this._refreshingReport = false
     }
-  },
-
-  onEditField(e) {
-    const { field, member } = e.detail || {}
-    // edit-form.buildEditConfig 统一三种模式（member/addMember/financials）的字段配置
-    const mode = (field === 'member' && member) ? 'member'
-      : (field === 'addMember' ? 'addMember' : 'financials')
-    const cfg = buildEditConfig({ mode, family: this.data.family, member: member || {} })
-    this.setData(Object.assign({ showEdit: true, editTitle: cfg.title }, cfg))
   },
 
   async onSaveEdit(e) {
@@ -200,13 +226,27 @@ Page({
 
     this.setData({ editSaving: true })
     try {
-      const updateData = buildUpdateData(mode, vals, this.data.family, this.data._editMemberIdx)
-      await api('updateFamily', { familyId: this.data.familyId, updateData })
-      wx.showToast({ title: '小秘记下了', icon: 'none' }); this.setData({ showEdit: false, editSaving: false })
-      // 统一刷新序列（修复原 0ms 缓冲可能读到陈旧数据的 bug）
-      this._refreshReportSequence(this.data.familyId, { applyOpts: {} }).then(() => {
+      if (mode === 'policy') {
+        // 保单编辑走 updatePolicy（白名单字段 + 事实同步）
+        const r = buildUpdateData('policy', vals, null, this.data._editMemberIdx)
+        await api('updatePolicy', { familyId: this.data.familyId, policyId: r.updatePolicy.policyId, data: r.updatePolicy.data })
+        this.setData({ showPolicySheet: false, currentPolicy: null })
+        // 本地增量更新：merge 到本地 policies → 立即重算 6 章
+        const localFamily = this._applyLocalUpdate(r)
+        if (localFamily) this._applyReportData(localFamily, null, {})
+      } else {
+        const updateData = buildUpdateData(mode, vals, this.data.family, this.data._editMemberIdx)
+        await api('updateFamily', { familyId: this.data.familyId, updateData })
+        // 本地增量更新：立即应用 + 重算渲染（消除 500ms 缓冲 + 网络往返的感知延迟）
+        const localFamily = this._applyLocalUpdate(updateData)
+        if (localFamily) this._applyReportData(localFamily, null, {})
+      }
+      wx.showToast({ title: '小秘记下了', icon: 'none' }); this.setData({ showEdit: false, editSaving: false, showMemberManage: false, memberManageList: [] })
+      // 后台静默校验：DB 已写入完成（无需缓冲），读回规范化数据（member_id/fact 同步等）
+      this._refreshReportSequence(this.data.familyId, { waitMs: 0, applyOpts: {} }).then(() => {
+        if (this._disposed) return
         this.setData({ reportUpdated: false })
-      })
+      }).catch(e => { console.error('[report] 刷新失败:', e.message) })
     } catch (e) {
       console.error(e)
       this.setData({ editSaving: false })
@@ -214,8 +254,48 @@ Page({
     }
   },
 
+  // 本地增量更新：把已确认写入的 updateData 应用到本地 family（纯前端重算 6 章，不查库）
+  // 仅处理编辑表单产生的变更；后台由 _refreshReportSequence 校验 DB 规范化数据
+  _applyLocalUpdate(updateData) {
+    if (!updateData) return null
+    const f = Object.assign({}, this.data.family || {})
+    let changed = false
+    if (Array.isArray(updateData.members)) {
+      f.members = updateData.members.slice()
+      changed = true
+    }
+    if (updateData.financial_snapshot) {
+      f.financial_snapshot = Object.assign({}, f.financial_snapshot || {}, updateData.financial_snapshot)
+      // 兼容旧内嵌字段（buildGaps 读取路径）
+      if (updateData.financial_snapshot.debt) f.debt = updateData.financial_snapshot.debt
+      if (updateData.financial_snapshot.income !== undefined) f.family_income = updateData.financial_snapshot.income
+      changed = true
+    }
+    if (updateData.updatePolicy) {
+      const up = updateData.updatePolicy
+      const pid = up.policyId
+      if (pid && Array.isArray(f.policies)) {
+        f.policies = f.policies.map(function(p) {
+          return (p.id === pid || p._id === pid) ? Object.assign({}, p, up.data) : p
+        })
+        changed = true
+      }
+    }
+    return changed ? f : null
+  },
+
   onCloseEdit() { this.setData({ showEdit: false }) },
-  onChatUpload(e) { this._uploadMore(e.detail.paths) },
+  // OCR 入口：FAB 保单按钮/首页共用 ocr-flow 组件
+  _startFlow(paths) {
+    const ocrFlow = this.selectComponent('#ocrFlow')
+    if (!ocrFlow) { wx.showToast({ title: 'OCR 模块加载中', icon: 'none' }); return }
+    if (paths && paths.length) ocrFlow.startWithPaths(paths)
+    else ocrFlow.chooseAndStart()
+  },
+  // ocr-flow 保存成功 → 刷新当前报告
+  onOcrFlowSaved() {
+    this.onRefreshReport()
+  },
   // 提示卡片点击 → 展开对话面板并预填问题
   onHintTap(e) {
     const q = e.currentTarget.dataset.q
@@ -228,76 +308,48 @@ Page({
     // chat-panel 已防抖并延迟 3s 触发，此处直接刷新，避免双重延时
     this.onRefreshReport()
   },
-  async _uploadMore(paths) {
-    var setData = this.setData.bind(this)
-    var familyId = this.data.familyId
-    if (!familyId) { wx.showToast({ title: '请先选择家庭', icon: 'none' }); return }
-    var allFileIds = []
-    flow.forgetDedupCache()
-    this.setData(flow.start(paths.length))
-    try {
-      // ① 一次性全部上传
-      var allUploadTasks = paths.map(function(path) {
-        return flow.compressAndUpload([path], setData).then(function(r) { return r.fileIds[0] }).catch(function() { return null })
-      })
-      var allUpResults = await Promise.allSettled(allUploadTasks)
-      for (var i = 0; i < allUpResults.length; i++) {
-        var fid = allUpResults[i].status === 'fulfilled' ? allUpResults[i].value : null
-        if (fid) allFileIds.push(fid)
-      }
-      setData({ 'ocrMask.uploaded': allFileIds.length })
-      // ② 全部传入 ocrSingle（云函数内错峰 AI，消除冷启动）
-      var allPolicies = [], cashValues = [], errors = []
-      var validIds = allFileIds.filter(function(id) { return !!id })
-      if (validIds.length > 0) {
-        try {
-          var ocrRes = await flow.batchOCR(validIds, setData, { familyId: familyId })
-          allPolicies = ocrRes.policies || []
-          cashValues = ocrRes.cashValues || []
-          errors = ocrRes.errors || []
-          setData({ 'ocrMask.processed': validIds.length })
-        } catch (e2) { errors.push({ error: (e2 && e2.message) || 'OCR异常', error_code: 'ocr_exception' }) }
-      }
-      flow.cleanupTempFiles(allFileIds)
-      if (!allPolicies.length && cashValues.length > 0) {
-        this.setData(Object.assign(flow.setSaving(cashValues), { 'ocrMask.cashCount': cashValues.length }))
-        var cr = await flow.saveCashValuesWithRetry(familyId, cashValues, setData)
-        if (cr.ok) wx.showToast({ title: cr.matched ? '现价表已关联保单' : '现价表已保存', icon: 'success' })
-        return
-      }
-      if (!allPolicies.length) { wx.showToast({ title: '未识别到保单', icon: 'none' }); this.setData(flow.hide()); return }
-      this.setData(flow.setDone(allPolicies, cashValues, {
-        'ocrMask.preview': allPolicies.slice(0, 10).map(function(p) { return { product_name: p.product_name || '未知', insurance_category: p.insurance_category || '未知' } })
-      }))
-    } catch (e) { this._ocrErrorUI(e, '识别失败'); this.setData(flow.hide()) }
-    finally { flow.cleanupTempFiles(allFileIds) }
-  },
-
-  _ocrErrorUI(e, prefix) {
-    const ui = flow.errorToUI(e)
-    wx.showToast({ title: (prefix || '识别失败') + '：' + ui.content, icon: 'none', duration: 2500 })
-  },
-
-  async onOcrConfirm() {
-    if (this.data.ocrMask.confirming) return
-    this.setData(flow.setConfirming(true))
-    const setData = this.setData.bind(this)
-    const familyId = this.data.familyId
-    const ok = await flow.confirmWritePolicies(familyId, this.data.ocrMask._policies, this.data.ocrMask._cashValues, setData)
-    if (!ok || !ok.ok) {
-      this.setData(flow.setConfirming(false))
-      wx.showToast({ title: (ok && ok.error) || '写入失败，请重试', icon: 'none' })
-      return
-    }
-    this.setData(Object.assign(flow.hide(), flow.setConfirming(false)))
-    await this._refreshReportSequence(familyId, { applyOpts: {} })
-  },
-
-  // FAB 代理（组件内 position:fixed 失效，提到页面层渲染）
   _cp() { return this.selectComponent('#chatpanel') },
-  switchTab(e) { const tab = e.currentTarget.dataset.tab; if (tab) this.setData({ activeTab: tab }) },
+
+  // ===== 保单明细 Sheet（附录卡片点击） =====
+  onPolicyTap(e) {
+    const id = (e.detail && e.detail.policyId) || ''
+    const list = (this.data.family && this.data.family.policies) || []
+    const p = list.find(x => (x.id === id) || (x._id === id))
+    if (!p) return
+    const rows = this._policyRows(p)
+    const catShort = String(p.insurance_category || '').replace(/险$/, '')
+    this.setData({ showPolicySheet: true, currentPolicy: p, policyRows: rows, policyCat: catShort })
+  },
+  onPolicySheetClose() {
+    if (this.data.editSaving) return
+    this.setData({ showPolicySheet: false, currentPolicy: null, policyRows: [], policyCat: '' })
+  },
+  onSheetNoop() {},
+  onPolicySheetEdit() {
+    const p = this.data.currentPolicy
+    if (!p) return
+    const cfg = buildEditConfig({ mode: 'policy', family: this.data.family, member: p })
+    this.setData(Object.assign({ showEdit: true, editTitle: cfg.title }, cfg))
+  },
+  // 只读明细行（WXML 无法拼接，预处理）
+  _policyRows(p) {
+    p = p || {}
+    const rows = []
+    rows.push({ label: '保单号', value: p.policy_number || '--' })
+    rows.push({ label: '保险公司', value: p.insurer || '--' })
+    rows.push({ label: '投保人', value: p.policyholder_name || '--' })
+    rows.push({ label: '被保险人', value: p.insured_name || '--' })
+    const sum = p.sum_assured || 0
+    rows.push({ label: '保额', value: sum >= 10000 ? (Math.round(sum / 10000 * 100) / 100) + '万' : sum + '元' })
+    const eff = (p.effective_date || p.contract_effective_date || '--').substring(0, 10)
+    const period = p.insurance_period || p.coverage_term || ''
+    rows.push({ label: '保障期限', value: eff + '起' + (period ? '（' + period + '）' : '') })
+    const premium = p.annual_premium || 0
+    rows.push({ label: '年缴保费', value: premium >= 10000 ? (Math.round(premium / 10000 * 100) / 100) + '万' : premium + '元' })
+    return rows
+  },
   onFabTap() { const cp = this._cp(); if (cp) cp.onFabTap() },
-  onUploadFab() { const cp = this._cp(); if (cp) { cp.onUploadTap() } else { wx.showToast({ title: '对话模块加载中', icon: 'none' }) } },
+  onUploadFab() { this._startFlow() },
   onFabInput(e) { this.setData({ fabText: e.detail.value }); const cp = this._cp(); if (cp) cp.onInput(e) },
   onFabFocus() { const cp = this._cp(); if (cp) cp.onFocus() },
   onFabSend() { const cp = this._cp(); if (cp) { cp.onSend(); this.setData({ fabText: '' }) } },

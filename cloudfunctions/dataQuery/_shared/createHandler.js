@@ -14,7 +14,8 @@ cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
 function createHandler(handlers, label) {
   return async function main(event, context) {
     const wxContext = cloud.getWXContext()
-    const openid = (event && event._authOpenid) || (wxContext && (wxContext.OPENID || wxContext.openId))
+    // S-1 修复：wxContext.OPENID 为平台可信源，优先于 event._authOpenid（客户端可控，仅作兜底）
+    const openid = (wxContext && (wxContext.OPENID || wxContext.openId)) || (event && event._authOpenid)
     const db = cloud.database()
     if (!openid) return { code: 401, msg: '未登录' }
     const action = event && event.action
@@ -26,7 +27,9 @@ function createHandler(handlers, label) {
       return await handler(db, openid, event)
     } catch (e) {
       console.error('[' + label + '] ' + action + ' 失败:', e && e.message, e && e.stack)
-      return { code: 500, msg: (e && e.message) || (label + '失败') }
+      // 统一错误格式（与 errorHandler.wrapError 口径一致，带 label）
+      const message = (e && e.message) ? e.message : String(e || '未知错误')
+      return { code: 500, msg: label + '失败：' + message }
     }
   }
 }
