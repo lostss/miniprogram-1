@@ -29,6 +29,7 @@ const DIRECT_FN = {
   ocrSingle:              ['ocrService', { action: 'ocrSingle' }],
   ocrOnly:                ['ocrService', { action: 'ocrOnly' }],
   aiExtract:              ['ocrService', { action: 'aiExtract' }],
+  aiExtractBatch:         ['ocrService', { action: 'aiExtractBatch' }],
 
   // conversationAI
   conversationAI:         ['conversationAI', null],
