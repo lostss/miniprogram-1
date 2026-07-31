@@ -57,6 +57,14 @@ describe('buildBatchExtractionPrompt', () => {
     expect(systemPrompt).toContain('单张图失败不影响其他图')
   })
 
+  test('systemPrompt 包含输入特征说明（OCR表格语义还原）', () => {
+    const { systemPrompt } = buildBatchExtractionPrompt([])
+    expect(systemPrompt).toContain('输入特征')
+    expect(systemPrompt).toContain('列标题与单元格内容分离')
+    expect(systemPrompt).toContain('提取重点')
+    expect(systemPrompt).toContain('保单号/保险合同号')
+  })
+
   test('OCR 文本超长截断：单张图 ocrText 截断到 4000 字符', () => {
     const longText = 'A'.repeat(5000)
     const ocrResults = [

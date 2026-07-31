@@ -202,6 +202,8 @@ describe('G. OCR 提取', function() {
     const { systemPrompt, userPrompt } = buildExtractionPrompt('OCR文本', [{ text: '保单:ABC', ocr_conf: 95 }])
     expect(systemPrompt).toContain('不可变更的核心约束')
     expect(systemPrompt).toContain('field_confidence')
+    expect(systemPrompt).toContain('输入特征')
+    expect(systemPrompt).toContain('提取重点')
     expect(userPrompt).toContain('OCR文本')
     expect(userPrompt).toContain('OCR字符级置信度参考')
     expect(userPrompt).toContain('95%')
