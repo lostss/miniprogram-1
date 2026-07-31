@@ -215,10 +215,17 @@ async function _callBatchAI(ocrResults, deps) {
     throw e
   }
   const parsed = _parseBatchJSON(res.text)
-  // 兼容 AI 返回 {"results": [...]} / {"data": [...]} / {"policies": [...]} 包裹格式
+  // 兼容 AI 返回的多种格式：
+  //   1. [{...}] — 标准数组
+  //   2. {"results":[...]} / {"data":[...]} / {"policies":[...]} — object 包裹数组
+  //   3. {"idx":1, "document_type":"policy", ...} — 单张图时 AI 直接返回单个对象
   let arr = parsed
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
     arr = parsed.results || parsed.data || parsed.policies || parsed.list || null
+    // 单对象格式：含 idx + (document_type 或 result) 字段时，包装为单元素数组
+    if (!arr && (parsed.idx != null) && (parsed.document_type || parsed.result)) {
+      arr = [parsed]
+    }
   }
   if (!Array.isArray(arr)) {
     console.error('[ocr-core] _callBatchAI ai_format: 原始返回前800字符=', (res.text || '').substring(0, 800))
