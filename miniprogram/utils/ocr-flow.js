@@ -5,6 +5,11 @@
  * 页面 onUnload 时调用 forgetDedupCache() 清空。
  */
 
+// ============================================================
+// 方案切换开关：'merged' = 批量拼接（1次AI） | 'split' = 原方案分批
+// ============================================================
+var OCR_BATCH_MODE = 'merged'
+
 var _dedupCache = new Map()
 var DEDUP_TTL_MS = 5 * 60 * 1000
 
@@ -189,7 +194,128 @@ function _aiExtractOne(ocr, idx, familyId) {
   })
 }
 
+// ============================================================
+// 方案 C：批量拼接提取 — 1 次 AI 调用完成全部提取
+//   阶段1：ocrOnly 并发 OCR（复用，不变）
+//   阶段2：1 次 aiExtractBatch + 一次性填充所有槽位
+// 对外契约：返回 { policies, cashValues, errors }
+// opts.onBatchComplete(filledCount, total) — 完成回调（可选）
+// ============================================================
+async function batchOCR_merged(fileIds, setData, opts) {
+  opts = opts || {}
+  var all = [], cashValues = [], errors = []
+  var batchIds = fileIds.filter(function(id) { return id !== null })
+  if (!batchIds.length) return { policies: [], cashValues: [], errors: [] }
+
+  // ===== 阶段 1：ocrOnly 并发 OCR（无 AI，无 429） =====
+  var ocrRes
+  try {
+    var ocrRaw = await api('ocrOnly', { fileIds: batchIds, familyId: opts.familyId || '' })
+    if (!ocrRaw.result || ocrRaw.result.code !== 200) {
+      return {
+        policies: [], cashValues: [],
+        errors: [{ error: (ocrRaw.result && ocrRaw.result.msg) || 'OCR阶段失败', error_code: 'ocr_api_error' }]
+      }
+    }
+    ocrRes = ocrRaw.result.data
+  } catch (e) {
+    return { policies: [], cashValues: [], errors: [{ error: (e && e.message) || 'OCR异常', error_code: 'ocr_exception' }] }
+  }
+
+  var ocrResults = ocrRes.ocr_results || []
+  if (ocrRes.failures) { for (var f = 0; f < ocrRes.failures.length; f++) { errors.push(ocrRes.failures[f]) } }
+  if (ocrResults.length === 0) return { policies: [], cashValues: [], errors: errors }
+
+  // ===== 初始化流式槽位（骨架屏，aiExtractBatch 期间显示） =====
+  var totalSlots = ocrResults.length
+  if (setData) setData(setStreamingSlots(totalSlots))
+
+  // ===== 阶段 2：1 次 aiExtractBatch =====
+  var aiRes
+  try {
+    aiRes = await api('aiExtractBatch', {
+      ocr_results: ocrResults,
+      familyId: opts.familyId || ''
+    })
+  } catch (e) {
+    return { policies: [], cashValues: [], errors: [{ error: (e && e.message) || 'aiExtractBatch异常', error_code: 'ocr_exception' }] }
+  }
+
+  var data = (aiRes.result && aiRes.result.code === 200) ? aiRes.result.data : null
+  if (!data) {
+    return {
+      policies: [], cashValues: [],
+      errors: [{ error: (aiRes.result && aiRes.result.msg) || 'aiExtractBatch失败', error_code: 'ocr_api_error' }]
+    }
+  }
+
+  // ===== 阶段 3：一次性填充所有槽位 =====
+  var results = data.results || []
+  var streamSlots = new Array(totalSlots).fill(null)
+  var filledCount = 0
+
+  for (var i = 0; i < results.length; i++) {
+    var r = results[i]
+    // idx 1-based，slotIdx 0-based；防御性容错：r.idx 越界时按 i 兜底
+    var slotIdx = (r.idx && r.idx >= 1 && r.idx <= totalSlots) ? (r.idx - 1) : i
+    if (r.success) {
+      if (r.policies && r.policies.length > 0) {
+        streamSlots[slotIdx] = {
+          kind: 'policy',
+          product_name: r.policies[0].product_name,
+          insurance_category: r.policies[0].insurance_category,
+          low: !((r.policies[0].auto_confirmed !== false) && r.policies[0].confidence >= 0.95)
+        }
+        for (var k = 0; k < r.policies.length; k++) all.push(r.policies[k])
+      }
+      if (r.cash_value_data) {
+        if (!streamSlots[slotIdx]) {
+          streamSlots[slotIdx] = { kind: 'cash', product_name: r.cash_value_data.product_name || '现价表', low: false }
+        }
+        cashValues.push(r.cash_value_data)
+      }
+      if (!streamSlots[slotIdx]) {
+        // success 但既无 policies 也无 cash_value_data：标记为空（防御性）
+        streamSlots[slotIdx] = { kind: 'error', product_name: '识别失败', error_code: 'ai_empty', low: false }
+      }
+    } else {
+      streamSlots[slotIdx] = { kind: 'error', product_name: '识别失败', error_code: r.error_code || r.errorCode, low: false }
+      errors.push({ fileId: r.fileId, error: r.error || 'AI提取失败', error_code: r.error_code || r.errorCode })
+    }
+    filledCount++
+  }
+
+  // 一次性 setData 所有槽位
+  if (setData) {
+    setData({
+      'ocrMask.streamSlots': streamSlots,
+      'ocrMask.streamFilled': filledCount,
+      'ocrMask.processed': filledCount
+    })
+  }
+  if (opts.onBatchComplete) {
+    try { opts.onBatchComplete(filledCount, totalSlots) } catch (e) {}
+  }
+
+  // ===== 客户端去重 =====
+  var deduped = []
+  for (var d = 0; d < all.length; d++) {
+    var policy = all[d]
+    if (policy.policy_number && isDedup(policy.policy_number)) {
+      errors.push({ fileId: '', error: 'skip_duplicate:' + policy.policy_number, error_code: 'dedup:skipped' })
+      continue
+    }
+    deduped.push(policy)
+  }
+  registerDedup(all)
+  return { policies: deduped, cashValues: cashValues, errors: errors }
+}
+
 async function batchOCR(fileIds, setData, opts) {
+  // 方案切换：'merged' = 批量拼接（1次AI） | 'split' = 原方案分批
+  if (OCR_BATCH_MODE === 'merged') {
+    return batchOCR_merged(fileIds, setData, opts)
+  }
   opts = opts || {}
   var all = []
   var cashValues = []
@@ -416,6 +542,8 @@ module.exports = {
   compress,
   compressAndUpload,
   batchOCR,
+  batchOCR_merged,
+  OCR_BATCH_MODE,
   saveCashValuesWithRetry,
   confirmWritePolicies,
   errorToUI,
