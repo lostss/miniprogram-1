@@ -53,6 +53,34 @@ jest.mock('wx-server-sdk', function() {
 })
 
 var dataWrite = require('../cloudfunctions/dataWrite/index')
+var pw = require('../cloudfunctions/dataWrite/policy-write')
+
+describe('ingestPolicies step — _dedupPolicies（候选 3 step 化）', function() {
+  test('有 policy_number：按号去重（同号不同产品名也算重复）', function() {
+    var r = pw._dedupPolicies([
+      { policy_number: 'P1', product_name: '康宁' },
+      { policy_number: 'P1', product_name: '康宁·升级版' }
+    ])
+    expect(r.dedupedPolicies.length).toBe(1)
+    expect(r.dedupSkipped).toBe(1)
+  })
+  test('无保单号：按 产品+被保人+投保人 去重', function() {
+    var r = pw._dedupPolicies([
+      { product_name: '康宁', insured_name: '张三', policyholder_name: '张三' },
+      { product_name: '康宁', insured_name: '张三', policyholder_name: '张三' }
+    ])
+    expect(r.dedupedPolicies.length).toBe(1)
+    expect(r.dedupSkipped).toBe(1)
+  })
+  test('不同保单不误去重', function() {
+    var r = pw._dedupPolicies([
+      { policy_number: 'P1' },
+      { policy_number: 'P2' }
+    ])
+    expect(r.dedupedPolicies.length).toBe(2)
+    expect(r.dedupSkipped).toBe(0)
+  })
+})
 
 describe('writePoliciesBatch (mock DB)', function() {
   beforeEach(function() {

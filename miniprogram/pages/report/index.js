@@ -1,5 +1,4 @@
-const { buildChapters, buildGaps, makeHints, buildHero } = require('../../utils/report-builder')
-const { normalizeFamilyData } = require('../../utils/report/data-normalizer')
+const { buildReportView } = require('../../utils/report-builder')
 const { buildEditConfig, validate: validateEdit, buildUpdateData } = require('../../utils/edit-form')
 const api = require('../../utils/apiClient')
 const session = require('../../utils/session-store')
@@ -83,31 +82,19 @@ Page({
 
   _loadingTexts: ['小秘正在认真看保单...', '小秘正在整理报告...', '小秘正在加载报告...'],
 
-  // 统一刷新聚合：chapters + meta + gaps 一次算好，所有刷新点共用
-  // 消除 5 处重复四件套 + 漏字段；新增字段只改这一处
+  // 统一刷新聚合：视图一次算好（buildReportView 深模块），所有刷新点共用
   _applyReportData(c, reportOverride, extra) {
     const rp = reportOverride || (c.report || {})
-    const gaps = buildGaps(c)
-    const chapters = buildChapters(c, rp, gaps)
-    const hints = makeHints(rp, c)
-    // Hero 结论先行：规则版覆盖检查（警示列表 + 总结 + 优先建议）
-    const heroView = buildHero(c, gaps)
-    const hero = Object.assign(heroView, { conclusion: String(rp.conclusion || '') })
-    const norm = normalizeFamilyData(c)
-    const summaryCards = {
-      premium: String(norm.annualPremiumW),
-      coverage: String(norm.totalCoverage),
-      count: norm.policyCount
-    }
+    const view = buildReportView(c, rp)
     const reportMeta = this._buildReportMeta()
     this.setData(Object.assign({
       family: c,
-      chapters,
-      hero,
-      summaryCards,
-      reportMeta,
-      gaps,
-      hints
+      reportMeta: reportMeta,
+      chapters: view.chapters,
+      hero: view.hero,
+      summaryCards: view.summaryCards,
+      gaps: view.gaps,
+      hints: view.hints
     }, extra || {}))
   },
 

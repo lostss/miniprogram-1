@@ -10,7 +10,31 @@
  * 本文件负责 re-export + 保留未迁移的小型导出函数。
  */
 
-var { buildChapters, buildGaps, buildGapMatrix, buildCoverageMatrix, buildConfidenceAlerts, buildTimeline, parseMilestonesToTimeline } = require('./report/index')
+var { buildChapters, buildGaps, buildGapMatrix, buildCoverageMatrix, buildConfidenceAlerts, buildTimeline, parseMilestonesToTimeline, normalizeFamilyData } = require('./report/index')
+
+/**
+ * buildReportView — 报告聚合入口深模块（候选 2）
+ * 页面只调一个接口拿全部视图数据，报告结构知识收拢此处（可单测）
+ * @param {object} family
+ * @param {object} report — AI 报告（可空；基础版仅用 conclusion/disclaimer/hints）
+ * @returns {{ chapters, hero, summaryCards, gaps, hints }}
+ */
+function buildReportView(family, report) {
+  report = report || {}
+  const gaps = buildGaps(family)
+  const chapters = buildChapters(family, report, gaps)
+  const hints = makeHints(report, family)
+  // Hero 结论先行：规则版覆盖检查（警示列表 + 总结 + 优先建议），AI conclusion 仅供分享标题
+  const heroView = buildHero(family, gaps)
+  const hero = Object.assign(heroView, { conclusion: String(report.conclusion || '') })
+  const norm = normalizeFamilyData(family)
+  const summaryCards = {
+    premium: String(norm.annualPremiumW),
+    coverage: String(norm.totalCoverage),
+    count: norm.policyCount
+  }
+  return { chapters: chapters, hero: hero, summaryCards: summaryCards, gaps: gaps, hints: hints }
+}
 
 /**
  * 根据报告数据生成追问建议
@@ -113,5 +137,6 @@ module.exports = {
   makeHints: makeHints,
   assessDataCompleteness: assessDataCompleteness,
   computeReportMeta: computeReportMeta,
-  buildHero: buildHero
+  buildHero: buildHero,
+  buildReportView: buildReportView
 }

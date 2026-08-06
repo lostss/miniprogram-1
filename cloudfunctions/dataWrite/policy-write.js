@@ -85,17 +85,14 @@ async function writePolicy(db, openid, event) {
   return { code: 200, data: { written: true, policyId: doc.id } }
 }
 
-// ---------- writePoliciesBatch ----------
+// ---------- writePoliciesBatch / ingestPolicies（候选 3：五步 step 化） ----------
 // Bug-1,2 修复：并发竞态 + DB 雪崩。方案：批次内去重 + 限流并发到 3
-async function writePoliciesBatch(db, openid, event) {
-  const { familyId, policies } = event
-  if (!familyId) return { code: 400, msg: '缺少参数 familyId' }
-  if (!policies || !Array.isArray(policies) || policies.length === 0) return { code: 400, msg: '缺少参数 policies' }
-  if (policies.length > 50) return { code: 400, msg: '单次最多写入 50 条保单' }
+// Step 契约：每步纯函数化，内部 try/catch 隔离，失败策略集中（跳过继续），行为等价原五步链
 
-  // 批次内去重：P1-4 修复空保单号场景
-  //   - 有 policy_number：按 policy_number 去重（OCR 两次提取同保单）
-  //   - 无 policy_number：按 product_name + insured_name + policyholder_name 去重，避免重复查 DB
+// Step 1：批次内去重（P1-4 空保单号场景）
+//   - 有 policy_number：按 policy_number 去重（OCR 两次提取同保单）
+//   - 无 policy_number：按 product_name + insured_name + policyholder_name 去重
+function _dedupPolicies(policies) {
   const seen = new Set()
   const dedupedPolicies = []
   let dedupSkipped = 0
@@ -107,45 +104,64 @@ async function writePoliciesBatch(db, openid, event) {
     seen.add(key)
     dedupedPolicies.push(p)
   }
+  return { dedupedPolicies, dedupSkipped }
+}
 
-  // 限流并发：最多 3 个 writePolicy 同时执行（修复 Bug-2 DB 雪崩）
-  const CONCURRENCY = 3
-  const results = new Array(dedupedPolicies.length)
+// 通用限流并发执行器（Bug-2 DB 雪崩防护）：items 按 CONCURRENCY 并发跑 fn
+// fn(item) 返回结果（含 ok 标志）；fn 抛错走 onError 并记为 { ok:false, error }
+async function _runConcurrent(items, CONCURRENCY, fn, onError) {
+  const results = new Array(items.length)
   let cursor = 0
   async function worker() {
-    while (cursor < dedupedPolicies.length) {
+    while (cursor < items.length) {
       const idx = cursor++
-      const p = dedupedPolicies[idx]
+      const item = items[idx]
       try {
-        const res = await writePolicy(db, openid, { familyId, data: p, memberId: p.member_id || p.memberId })
-        if (res.code === 200 && res.data && res.data.policyId) {
-          p.id = res.data.policyId
-        }
-        results[idx] = res.code === 200
-          ? { policyId: (res.data && res.data.policyId) || '', ok: true }
-          : (function () {
-              logOperation(db, {
-                openid, familyId, action: 'write_policy',
-                result: { status: 'fail', summary: 'writePolicy 返回非200', errorCode: res.code },
-                meta: { product_name: p.product_name, msg: res.msg }
-              }).catch(function () {})
-              return { ok: false, error: res.msg || '写入失败' }
-            })()
+        results[idx] = await fn(item, idx)
       } catch (e) {
-        logOperation(db, {
-          openid, familyId, action: 'write_policy',
-          result: { status: 'fail', summary: '单条保单写入异常', errorCode: 'write_exception' },
-          meta: { product_name: p.product_name, error: e.message }
-        }).catch(() => {})
+        if (onError) onError(e, item)
         results[idx] = { ok: false, error: e.message }
       }
     }
   }
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, dedupedPolicies.length) }, () => worker()))
+  if (items.length > 0) {
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, items.length) }, () => worker()))
+  }
+  return results
+}
 
-  // 入库后对未匹配 member_id 的保单做统一成员匹配，修复首页 OCR 路径无 familyId 导致的关联断裂（P1-5）
-  // 注意：已带 member_id 的保单（ocrSingle 已匹配）会被 matchPoliciesToMembers 尊重，不重复处理
-  // 使用 dedupedPolicies：重复项未设 id，不应参与匹配
+// Step 2：限流并发写保单（每单 writePolicy 自身 try/catch 非 200 分支）
+function _writePolicyStep(db, openid, familyId) {
+  return async function (p) {
+    const res = await writePolicy(db, openid, { familyId, data: p, memberId: p.member_id || p.memberId })
+    if (res.code === 200 && res.data && res.data.policyId) {
+      p.id = res.data.policyId
+    }
+    if (res.code === 200) {
+      return { policyId: (res.data && res.data.policyId) || '', ok: true }
+    }
+    // S2-2 修复：writePolicy 返回非 200（如重复命中）记为失败并留痕
+    logOperation(db, {
+      openid, familyId, action: 'write_policy',
+      result: { status: 'fail', summary: 'writePolicy 返回非200', errorCode: res.code },
+      meta: { product_name: p.product_name, msg: res.msg }
+    }).catch(function () {})
+    return { ok: false, error: res.msg || '写入失败' }
+  }
+}
+
+function _writePolicyErrorLog(db, openid, familyId) {
+  return function (e, p) {
+    logOperation(db, {
+      openid, familyId, action: 'write_policy',
+      result: { status: 'fail', summary: '单条保单写入异常', errorCode: 'write_exception' },
+      meta: { product_name: p.product_name, error: e.message }
+    }).catch(() => {})
+  }
+}
+
+// Step 3：入库后统一成员匹配（P1-5：首页 OCR 无 familyId 的关联断裂）
+async function _matchMembersStep(db, openid, familyId, dedupedPolicies) {
   try {
     await matchPoliciesToMembers({ db, familyId, openid, allPolicies: dedupedPolicies })
   } catch (e) {
@@ -155,8 +171,10 @@ async function writePoliciesBatch(db, openid, event) {
       meta: { error: e.message }
     }).catch(function () {})
   }
+}
 
-  // 反向匹配孤儿现价表
+// Step 4：反向匹配孤儿现价表
+async function _matchOrphanCashStep(db, openid, familyId, dedupedPolicies) {
   try {
     await matchOrphanCashValues(db, familyId, openid, dedupedPolicies)
   } catch (e) {
@@ -166,31 +184,53 @@ async function writePoliciesBatch(db, openid, event) {
       meta: { error: e.message }
     }).catch(function () {})
   }
+}
 
-  // P1-1 修复：现价表入库改并发（限流 3），避免串行叠加逼近云函数 20s 超时
-  const cashValues = event.cash_values
-  if (cashValues && cashValues.length > 0) {
-    const CV_CONCURRENCY = 3
-    let cvCursor = 0
-    async function cvWorker() {
-      while (cvCursor < cashValues.length) {
-        const cv = cashValues[cvCursor++]
-        try {
-          await writeCashValue(db, openid, { familyId, cash_value: cv })
-        } catch (e) {
-          logOperation(db, {
-            openid, familyId, action: 'write_cash_value',
-            result: { status: 'fail', summary: '现价表批量写入异常', errorCode: 'cash_value_write_error' },
-            meta: { product_name: cv.product_name, error: e.message }
-          }).catch(function () {})
-        }
-      }
-    }
-    await Promise.all(Array.from({ length: Math.min(CV_CONCURRENCY, cashValues.length) }, () => cvWorker()))
+// Step 5：现价表并发入库（P1-1：限流 3，避免串行逼近 20s 超时）
+function _cashValueStep(db, openid, familyId) {
+  return async function (cv) {
+    await writeCashValue(db, openid, { familyId, cash_value: cv })
+    return { ok: true }
+  }
+}
+function _cashValueErrorLog(db, openid, familyId) {
+  return function (e, cv) {
+    logOperation(db, {
+      openid, familyId, action: 'write_cash_value',
+      result: { status: 'fail', summary: '现价表批量写入异常', errorCode: 'cash_value_write_error' },
+      meta: { product_name: cv.product_name, error: e.message }
+    }).catch(function () {})
+  }
+}
+
+// 编排：五步顺序执行，部分失败跳过继续（失败策略集中于此）
+async function ingestPolicies(db, openid, event) {
+  const { familyId, policies, cash_values } = event
+  if (!familyId) return { code: 400, msg: '缺少参数 familyId' }
+  if (!policies || !Array.isArray(policies) || policies.length === 0) return { code: 400, msg: '缺少参数 policies' }
+  if (policies.length > 50) return { code: 400, msg: '单次最多写入 50 条保单' }
+
+  // Step 1：去重
+  const { dedupedPolicies, dedupSkipped } = _dedupPolicies(policies)
+  // Step 2：限流并发写保单（并发 3）
+  const results = await _runConcurrent(dedupedPolicies, 3, _writePolicyStep(db, openid, familyId), _writePolicyErrorLog(db, openid, familyId))
+  // Step 3：成员匹配（尊重已带 member_id 的保单，重复项未设 id 不参与）
+  await _matchMembersStep(db, openid, familyId, dedupedPolicies)
+  // Step 4：孤儿现价表反向匹配
+  await _matchOrphanCashStep(db, openid, familyId, dedupedPolicies)
+  // Step 5：现价表并发入库
+  const cv = cash_values || []
+  if (cv.length > 0) {
+    await _runConcurrent(cv, 3, _cashValueStep(db, openid, familyId), _cashValueErrorLog(db, openid, familyId))
   }
 
   // writePolicy / writeCashValue 内部已通过 writeSeam 触发 markMutated + advanceStage，此处无需重复
   return { code: 200, data: { written: results.filter(r => r.ok).length, total: policies.length, dedupSkipped, results } }
+}
+
+// 向后兼容入口：测试与外部调用仍用 writePoliciesBatch
+async function writePoliciesBatch(db, openid, event) {
+  return ingestPolicies(db, openid, event)
 }
 
 // ---------- migratePoliciesToFacts ----------
@@ -407,4 +447,4 @@ async function matchCashValueManual(db, openid, event) {
   return { code: 200, data: { matched: true, policyId } }
 }
 
-module.exports = { writePolicy, writePoliciesBatch, migratePoliciesToFacts, deletePolicy, updatePolicy, writeCashValue, matchCashValueManual, POLICY_EDITABLE }
+module.exports = { writePolicy, writePoliciesBatch, ingestPolicies, _dedupPolicies, _runConcurrent, migratePoliciesToFacts, deletePolicy, updatePolicy, writeCashValue, matchCashValueManual, POLICY_EDITABLE }

@@ -2,7 +2,29 @@
  * report-builder 单测 — 纯函数（buildGaps / assessDataCompleteness / buildChapters）
  * 不依赖 wx，可直接 node 运行
  */
-const { buildGaps, assessDataCompleteness, buildChapters, buildHero, buildCoverageMatrix } = require('../miniprogram/utils/report-builder')
+const { buildGaps, assessDataCompleteness, buildChapters, buildHero, buildCoverageMatrix, buildReportView } = require('../miniprogram/utils/report-builder')
+
+describe('buildReportView — 报告聚合入口（候选 2 深模块）', () => {
+  test('单接口返回全部视图数据（6 章 + Hero + 摘要卡 + gaps + hints）', () => {
+    const c = baseCustomer()
+    const view = buildReportView(c, { conclusion: 'AI 结论', disclaimer: '免责' })
+    expect(view.chapters.length).toBe(6)
+    expect(view.chapters[0].key).toBe('family_structure')
+    expect(view.hero.alerts.length).toBe(3)
+    expect(view.hero.conclusion).toBe('AI 结论')
+    expect(view.summaryCards.count).toBe(1) // 1 份 active 保单
+    expect(view.summaryCards.premium).toBe('0') // baseCustomer 保单无 annual_premium
+    expect(view.gaps.length).toBeGreaterThan(0)
+    expect(view.hints).toEqual([])
+  })
+
+  test('无报告对象 → 视图仍完整（conclusion 空）', () => {
+    const view = buildReportView(baseCustomer(), null)
+    expect(view.chapters.length).toBe(6)
+    expect(view.hero.conclusion).toBe('')
+    expect(view.hints).toEqual([])
+  })
+})
 
 // 基准家庭：李阳勇(本人,收入30) / 谢敏(配偶,收入15) / 李牧云(子女)
 // 负债150万，仅李阳勇有寿险100万
