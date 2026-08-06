@@ -116,4 +116,5 @@ async function aiExtract(ocrText, ocrConfInfo, deps) {
   }
 }
 
-module.exports = { ocrRecognize, aiExtract }
+// _parseAIJSON re-export：注释声明的向后兼容（重构抽离到 parse-ai-json.js 时漏加导出）
+module.exports = { ocrRecognize, aiExtract, _parseAIJSON }
