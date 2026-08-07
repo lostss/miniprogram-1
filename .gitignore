@@ -18,6 +18,8 @@ project.private.config.json
 .codegraph/
 .trae/.tmp/
 codebuddy-plugin/
+# R3v2 审计 #1：.codebuddy 工具数据目录含真实密钥（models.json），整体停止跟踪
+.codebuddy/
 
 # 测试输出
 test-output.txt
