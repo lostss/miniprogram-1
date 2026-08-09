@@ -19,6 +19,7 @@ const ERROR_MAP = {
   401: { label: '未授权', tip: '请重新登录', icon: 'warn' },
   403: { label: '无权限', tip: '没有操作权限', icon: 'warn' },
   404: { label: '未找到', tip: '数据不存在或已被删除', icon: 'warn' },
+  429: { label: '请求过多', tip: 'AI服务繁忙，请稍后重试', icon: 'warn' },
   500: { label: '服务异常', tip: '服务繁忙，请稍后重试', icon: 'error' },
   NETWORK: { label: '网络异常', tip: '网络连接失败，请检查网络', icon: 'error' },
   TIMEOUT: { label: '请求超时', tip: '操作超时，请重试', icon: 'error' },
@@ -39,6 +40,8 @@ function _classifyError(err) {
     if (err.code === 401) return 401
     if (err.code === 403) return 403
     if (err.code === 404) return 404
+    // UI 审计 R-M9：429 限流单独映射（原回退 UNKNOWN"操作失败，请重试"误导）
+    if (err.code === 429 || err.code === '429') return 429
     if (err.code >= 500) return 500
     return err.code
   }
@@ -97,13 +100,13 @@ function handle(err, options) {
     } catch (e) { console.error('[errorHandler] 云端上报失败:', (e && e.message) || e) }
   }
 
-  // 用户提示
+  // 用户提示（错误提示审计 #5：mask 遮罩防止错误期间误操作）
   if (!opts.silent) {
     wx.showToast({
       title: info.tip,
       icon: info.icon === 'error' ? 'error' : 'none',
       duration: 2500,
-      mask: false
+      mask: true
     })
   }
 

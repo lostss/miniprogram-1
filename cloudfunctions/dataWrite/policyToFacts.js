@@ -37,9 +37,11 @@ function policyToFacts(policy, opts = {}) {
   const facts = []
 
   // 被保人拥有这份保障（member → policy）
-  if (memberId && memberName) {
+  // K-S2 修复：member_id 为空时仍写边（subjectId 留空），由 addFact 按 subjectName 解析 member_id，
+  // 避免"无 member_id 保单在画像中隐形"；成员不存在时 addFact 返回 404，由调用方 catch 兜底
+  if (memberName) {
     facts.push({
-      subjectType: 'member', subjectId: memberId, subjectName: memberName,
+      subjectType: 'member', subjectId: memberId || '', subjectName: memberName,
       predicate: '拥有保障', objectType: 'policy', objectId: id, objectValue: productRef,
       source, confidence: conf
     })
@@ -77,4 +79,4 @@ function policyToFacts(policy, opts = {}) {
   return facts
 }
 
-module.exports = { policyToFacts, formatAmount }
+module.exports = { policyToFacts }

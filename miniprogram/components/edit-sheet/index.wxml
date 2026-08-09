@@ -1,20 +1,41 @@
 <!-- 底部编辑表单 -->
-<view class="overlay" wx:if="{{visible}}" catchtap="onClose" aria-label="关闭表单">
-  <view class="sheet">
+<!-- catchtouchmove：阻断拖动穿透到宿主页滚动/下拉（report 页 enablePullDownRefresh，无拦截时表单打开下拉会刷新报告） -->
+<view class="overlay" wx:if="{{visible}}" catchtap="onClose" catchtouchmove="onNoop" aria-label="关闭表单">
+  <!-- catchtap：阻止 sheet 内 tap 冒泡到 overlay onClose（原缺失导致点击表单字段/picker 栏即关闭——report 页其他 sheet 均有 onSheetNoop 守卫，此处遗漏） -->
+  <view class="sheet" catchtap="onNoop">
     <view class="sheet-header">
       <text class="sheet-title">{{title}}</text>
       <view class="sheet-close pressable" bindtap="onClose" aria-label="关闭"><image class="sheet-close-icon" src="/images/close.svg" mode="aspectFit" /></view>
     </view>
-    <view class="sheet-body">
+    <scroll-view class="sheet-body" scroll-y>
       <block wx:for="{{fields}}" wx:key="key">
-        <view class="form-row form-row-{{item.key}} {{item.error ? 'has-error' : ''}}">
-          <text class="form-label">{{item.label}}<text wx:if="{{item.required}}" class="req">*</text></text>
-          <input class="form-input" value="{{item.value}}" placeholder="{{item.placeholder}}" data-key="{{item.key}}" type="{{item.type || 'text'}}" bindinput="onFieldInput" bindblur="onFieldBlur" aria-label="{{item.label}}" />
+        <view class="form-row form-row-{{item.key}} {{item.error ? 'has-error' : ''}} {{item.tone ? 'tone-' + item.tone : ''}} {{item.modified ? 'tone-modified' : ''}}">
+          <text class="form-label">{{item.label}}<text wx:if="{{item.required}}" class="req">*</text><text wx:if="{{item.tone && !item.modified}}" class="tone-badge">⚠️</text></text>
+          <!-- 原生 picker 分支（原生组件审计）：selector=固定枚举（角色/险种/负债类型）、date=生效日期 -->
+          <picker wx:if="{{item.type === 'selector'}}" mode="selector" range="{{item.options}}" data-key="{{item.key}}" bindchange="onFieldPicker" aria-label="{{item.label}}">
+            <view class="form-input form-picker">
+              <text wx:if="{{item.value}}" class="form-picker-text">{{item.value}}</text>
+              <text wx:else class="form-picker-placeholder">{{item.placeholder}}</text>
+              <text class="form-picker-arrow">▾</text>
+            </view>
+          </picker>
+          <picker wx:elif="{{item.type === 'date'}}" mode="date" value="{{item.value}}" start="1900-01-01" end="2099-12-31" data-key="{{item.key}}" bindchange="onFieldPicker" aria-label="{{item.label}}">
+            <view class="form-input form-picker">
+              <text wx:if="{{item.value}}" class="form-picker-text">{{item.value}}</text>
+              <text wx:else class="form-picker-placeholder">{{item.placeholder}}</text>
+              <text class="form-picker-arrow">▾</text>
+            </view>
+          </picker>
+          <input wx:else class="form-input" value="{{item.value}}" placeholder="{{item.placeholder}}" data-key="{{item.key}}" type="{{item.type || 'text'}}" bindinput="onFieldInput" bindblur="onFieldBlur" aria-label="{{item.label}}" />
           <text wx:if="{{item.helper}}" class="form-helper">{{item.helper}}</text>
           <text wx:if="{{item.error}}" class="form-error" role="alert">{{item.error}}</text>
         </view>
       </block>
+    </scroll-view>
+    <view class="sheet-actions">
+      <!-- 编辑态显式取消按钮（原仅遮罩关闭，可发现性弱） -->
+      <button class="cancel-btn pressable" bindtap="onClose" disabled="{{saving}}" aria-label="取消">取消</button>
+      <button class="save-btn pressable {{saving ? 'is-loading' : ''}}" bindtap="onSave" disabled="{{saving}}" aria-label="保存">{{saving ? '保存中...' : '保存'}}</button>
     </view>
-    <button class="save-btn pressable {{saving ? 'is-loading' : ''}}" bindtap="onSave" disabled="{{saving}}" aria-label="保存">{{saving ? '保存中...' : '保存'}}</button>
   </view>
 </view>

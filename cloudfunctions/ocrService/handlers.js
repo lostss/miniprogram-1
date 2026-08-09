@@ -1,11 +1,10 @@
 /**
  * ocrService handlers — OCR 识别与提取
  *
- * Action 路由表（保留两套识别方案）：
- *   ocrOnly           - 阶段1：仅 OCR 并发，无 AI 调用（方案 C/D 共用）
- *   aiExtractBatch    - 方案 C：批量拼接 1 次 AI 调用（TokenHub hy3）
- *   aiExtractParallel - 方案 D：DeepSeek 并行 N 次 AI 调用（每张独立）
- *   matchPolicies     - 保单匹配成员（独立功能）
+ * Action 路由表（R2 后分流收敛）：
+ *   ocrOnly           - 阶段1：仅 OCR 并发，无 AI 调用
+ *   aiExtractBatch    - 单图提取（batch prompt 1 次 AI 调用，TokenHub hy3；前端分流：1 张）
+ *   aiExtractParallel - 每张独立 AI 调用（DeepSeek 直连并发；前端分流：≥2 张）
  *
  * 设计要点（ponytail）：
  *   - 错误码透传：ocr-core 返回的 error_code 直接透传给前端
@@ -17,7 +16,6 @@ const { ocrPhase, aiPhase, aiExtractBatchPhase } = require('./_shared/ocr-core')
 const { buildExtractionPrompt, buildBatchExtractionPrompt } = require('./prompts')
 const { logOperation } = require('./_shared/logSeam')
 const { wrapError } = require('./_shared/errorHandler')
-const { matchPoliciesToMembers } = require('./_shared/member-matcher')
 const _aiClient = require('./_shared/ai-client')
 const { AI } = require('./_shared/config')
 
@@ -35,17 +33,6 @@ async function _withConcurrency(tasks, n) {
   return results
 }
 
-// ======================== matchPolicies ========================
-async function matchPolicies(db, openid, event) {
-  const { familyId, policies } = event
-  if (!familyId) return { code: 400, msg: '缺少参数 familyId' }
-  if (!policies || !Array.isArray(policies)) return { code: 400, msg: '缺少参数 policies' }
-  try {
-    await matchPoliciesToMembers({ db, familyId, openid, allPolicies: policies })
-    return { code: 200, data: { matched: true } }
-  } catch (e) { return wrapError('成员匹配', e) }
-}
-
 // ======================== ocrOnly ========================
 /**
  * 方案 B 阶段 1：仅 OCR 并发，无 AI 调用（无 429 风险）
@@ -55,7 +42,7 @@ async function matchPolicies(db, openid, event) {
  * 设计要点：
  *   - OCR API 20 QPS，9 张全并发安全
  *   - 单次云函数耗时 ≈ 1.7s（远低于超时）
- *   - 返回 ocrText 让前端持有，再分批调 aiExtract
+ *   - 返回 ocrText 让前端持有，再走前端分流（1 张 aiExtractBatch | ≥2 张 aiExtractParallel）
  */
 async function ocrOnly(db, openid, event) {
   const { fileIds, familyId } = event
@@ -68,6 +55,12 @@ async function ocrOnly(db, openid, event) {
   for (const fid of fileIds) {
     if (typeof fid !== 'string' || !fid.startsWith('cloud://')) {
       return { code: 400, msg: 'fileId 格式非法，必须为 cloud:// 协议' }
+    }
+    // R3v2 审计 #4：IDOR 防护——fileId 必须位于本人上传目录 temp/<openid>/
+    // 前端上传路径 = temp/<openid>/<ts>_<rand>_<i>.jpg（ocr-flow.js compressAndUpload prefix），
+    // 拿到他人 fileId 也无法 OCR 他人保单图
+    if (fid.indexOf('/temp/' + openid + '/') === -1) {
+      return { code: 403, msg: '无权访问该文件' }
     }
   }
 
@@ -84,7 +77,7 @@ async function ocrOnly(db, openid, event) {
   for (var i = 0; i < results.length; i++) {
     var r = results[i]
     if (r.ok) {
-      // OCR 识别为空文本：直接标记失败，避免前端传空 ocrText 给 aiExtract 被拒
+      // OCR 识别为空文本：直接标记失败，避免前端传空 ocrText 给 AI 提取被拒
       if (!r.data.ocrText || typeof r.data.ocrText !== 'string' || r.data.ocrText.length === 0) {
         failures.push({ fileId: r.data.fileId, error: 'OCR识别结果为空', error_code: 'ocr_empty' })
       } else {
@@ -101,7 +94,7 @@ async function ocrOnly(db, openid, event) {
   }
 
   logOperation(db, {
-    openid, familyId: familyId || undefined, action: 'ocr_only_batch',
+    openid, familyId: familyId || undefined, traceId: event._reqId || '', action: 'ocr_only_batch',
     result: { status: failures.length > 0 ? 'partial' : 'ok', summary: 'OCR ' + fileIds.length + '张, 成功' + ocrResults.length + '/失败' + failures.length },
     meta: { fileCount: fileIds.length, okCount: ocrResults.length, failCount: failures.length }
   })
@@ -117,15 +110,14 @@ async function ocrOnly(db, openid, event) {
 
 // ======================== aiExtractBatch ========================
 /**
- * 方案 C：批量拼接提取（N 张图 OCR 文本拼接后 1 次 AI 调用）
- * 模型：TokenHub hy3（固定走 callChat；并行方案 D 才走 DeepSeek 直连）
+ * 单图提取（batch prompt 1 次 AI 调用；前端分流后仅服务 1 张图，≥2 张走 aiExtractParallel）
+ * 模型：TokenHub hy3（固定走 callChat；aiExtractParallel 才走 DeepSeek 直连）
  * 入参：{ ocr_results: [{fileId, ocrText, ocrConfInfo, t0, t1, t2}], familyId? }
  * 出参：{ code, data: { results: [...], total_duration_ms, split_used, ai_call_count, tokens?, success_count, fail_count } }
  *
  * 设计要点：
  *   - 空 ocrText 项在前端过滤标记 ocr_empty，不参与 AI 调用
  *   - AI 整体异常时所有有效项标记 ai_batch_failed，但仍然返回 200 + results
- *   - split_used=true 表示因超 OCR_BATCH_MAX_CHARS 触发对半拆分降级
  */
 
 // 公共前置：入参校验 + 空 ocrText 过滤 + 全空短路（aiExtractBatch/aiExtractParallel 共用）
@@ -171,6 +163,7 @@ async function aiExtractBatch(db, openid, event) {
   if (prep.error) return prep.error
   if (prep.allEmpty) return { code: 200, data: prep.allEmpty }
   const { ocr_results, familyId } = event
+  const traceId = event._reqId || ''
   var validResults = prep.validResults
   var emptyFileIds = prep.emptyFileIds
 
@@ -179,6 +172,7 @@ async function aiExtractBatch(db, openid, event) {
     db: db,
     openid: openid,
     familyId: familyId || null,
+    traceId: traceId,
     buildBatchExtractionPrompt: buildBatchExtractionPrompt,
     safeCallChat: require('./_shared/ai-gateway').safeCallChat,
     // 用户决策（2026-08）：单图走 TokenHub hy3，批量才走 DeepSeek 并发
@@ -191,60 +185,14 @@ async function aiExtractBatch(db, openid, event) {
   try {
     batchRes = await aiExtractBatchPhase(validResults, deps)
   } catch (e) {
-    // 整体异常：所有有效项标记 ai_batch_failed
-    logOperation(db, {
-      openid, familyId: familyId || undefined, action: 'ai_extract_batch',
-      result: { status: 'fail', summary: 'AI批量提取异常', errorCode: 'ai_batch_failed' },
-      meta: { validCount: validResults.length, error: (e && e.message) || '' }
-    })
+    // 整体异常：所有有效项标记 ai_batch_failed（_finalizeBatch 统一后处理）
     var failedResults = validResults.map(function(r, i) {
       return { idx: i + 1, fileId: r.fileId, success: false, error: (e && e.message) || 'AI批量提取异常', errorCode: 'ai_batch_failed' }
     })
-    return {
-      code: 200,
-      data: {
-        results: _mergeBatchResults(ocr_results, failedResults, emptyFileIds),
-        total_duration_ms: 0,
-        split_used: false,
-        ai_call_count: 0,
-        tokens: {},
-        success_count: 0,
-        fail_count: ocr_results.length
-      }
-    }
+    return _finalizeBatch({ db, openid, familyId, traceId, ocrResults: ocr_results, emptyFileIds, batchResults: failedResults, tokens: {}, totalDurationMs: 0, aiCallCount: 0, action: 'ai_extract_batch' })
   }
 
-  // 合并结果：保留原始位置顺序
-  var mergedResults = _mergeBatchResults(ocr_results, batchRes.results, emptyFileIds)
-  var successCount = 0, failCount = 0
-  for (var k = 0; k < mergedResults.length; k++) {
-    if (mergedResults[k].success) successCount++
-    else failCount++
-  }
-
-  logOperation(db, {
-    openid, familyId: familyId || undefined, action: 'ai_extract_batch',
-    result: { status: failCount > 0 ? 'partial' : 'ok', summary: '批量提取 ' + ocr_results.length + '张, 成功' + successCount + '/失败' + failCount },
-    meta: {
-      total: ocr_results.length, validCount: validResults.length, emptyCount: emptyFileIds.length,
-      successCount: successCount, failCount: failCount,
-      aiCallCount: batchRes.aiCallCount, splitUsed: batchRes.splitUsed, totalDurationMs: batchRes.totalDurationMs,
-      tokens: batchRes.tokens || {}
-    }
-  })
-
-  return {
-    code: 200,
-    data: {
-      results: mergedResults,
-      total_duration_ms: batchRes.totalDurationMs,
-      split_used: batchRes.splitUsed,
-      ai_call_count: batchRes.aiCallCount,
-      tokens: batchRes.tokens || {},
-      success_count: successCount,
-      fail_count: failCount
-    }
-  }
+  return _finalizeBatch({ db, openid, familyId, traceId, ocrResults: ocr_results, emptyFileIds, batchResults: batchRes.results, tokens: batchRes.tokens, totalDurationMs: batchRes.totalDurationMs, aiCallCount: batchRes.aiCallCount, action: 'ai_extract_batch' })
 }
 
 // ======================== aiExtractParallel ========================
@@ -263,6 +211,7 @@ async function aiExtractParallel(db, openid, event) {
   if (prep.error) return prep.error
   if (prep.allEmpty) return { code: 200, data: prep.allEmpty }
   const { ocr_results, familyId } = event
+  const traceId = event._reqId || ''
   var validResults = prep.validResults
   var emptyFileIds = prep.emptyFileIds
 
@@ -281,7 +230,8 @@ async function aiExtractParallel(db, openid, event) {
         db: db,
         buildExtractionPrompt: buildExtractionPrompt,
         familyId: familyId || null,
-        openid: openid
+        openid: openid,
+        traceId: traceId
       }).then(function(aiRes) {
         if (aiRes.success) {
           return {
@@ -307,16 +257,10 @@ async function aiExtractParallel(db, openid, event) {
   })
   var results = await _withConcurrency(tasks, validResults.length)
 
-  // 合并结果：保留原始位置顺序
-  var mergedResults = _mergeBatchResults(ocr_results, results, emptyFileIds)
-  var successCount = 0, failCount = 0
+  // 聚合 tokens（每张独立 AI 调用的 usage；ocr_empty 项无 tokens，仅统计有效项等价于遍历合并结果）
   var tokens = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
-  // S2-4 修复：遍历 mergedResults（含 ocr_empty 项）而非 results（仅有效项），
-  // 确保 ocr_empty 项计入 failCount，与 aiExtractBatch 统计口径一致
-  for (var k = 0; k < mergedResults.length; k++) {
-    if (mergedResults[k].success) successCount++
-    else failCount++
-    var t = mergedResults[k].tokens
+  for (var k = 0; k < results.length; k++) {
+    var t = results[k].tokens
     if (t) {
       tokens.prompt_tokens += t.prompt_tokens || 0
       tokens.completion_tokens += t.completion_tokens || 0
@@ -324,28 +268,7 @@ async function aiExtractParallel(db, openid, event) {
     }
   }
 
-  logOperation(db, {
-    openid, familyId: familyId || undefined, action: 'ai_extract_parallel',
-    result: { status: failCount > 0 ? 'partial' : 'ok', summary: '并行提取 ' + ocr_results.length + '张, 成功' + successCount + '/失败' + failCount },
-    meta: {
-      total: ocr_results.length, validCount: validResults.length, emptyCount: emptyFileIds.length,
-      successCount: successCount, failCount: failCount,
-      aiCallCount: validResults.length, totalDurationMs: Date.now() - t0, tokens: tokens
-    }
-  })
-
-  return {
-    code: 200,
-    data: {
-      results: mergedResults,
-      total_duration_ms: Date.now() - t0,
-      split_used: false,
-      ai_call_count: validResults.length,
-      tokens: tokens,
-      success_count: successCount,
-      fail_count: failCount
-    }
-  }
+  return _finalizeBatch({ db, openid, familyId, traceId, ocrResults: ocr_results, emptyFileIds, batchResults: results, tokens: tokens, totalDurationMs: Date.now() - t0, aiCallCount: validResults.length, action: 'ai_extract_parallel' })
 }
 
 /**
@@ -378,4 +301,39 @@ function _mergeBatchResults(originalOcrResults, batchResults, emptyFileIds) {
   return merged
 }
 
-module.exports = { ocrOnly, aiExtractBatch, aiExtractParallel, matchPolicies }
+/**
+ * 公共后处理（R2 候选 2）：合并 → 统计 → logOperation → 返回（aiExtractBatch / aiExtractParallel 共用）
+ * @param {object} p - { db, openid, familyId, ocrResults, emptyFileIds, batchResults, tokens, totalDurationMs, aiCallCount, action }
+ */
+function _finalizeBatch(p) {
+  var mergedResults = _mergeBatchResults(p.ocrResults, p.batchResults, p.emptyFileIds)
+  var successCount = 0, failCount = 0
+  for (var k = 0; k < mergedResults.length; k++) {
+    if (mergedResults[k].success) successCount++
+    else failCount++
+  }
+  logOperation(p.db, {
+    openid: p.openid, familyId: p.familyId || undefined, traceId: p.traceId || '', action: p.action,
+    result: { status: failCount > 0 ? 'partial' : 'ok', summary: '提取 ' + p.ocrResults.length + '张, 成功' + successCount + '/失败' + failCount },
+    meta: {
+      total: p.ocrResults.length, validCount: mergedResults.length - p.emptyFileIds.length, emptyCount: p.emptyFileIds.length,
+      successCount: successCount, failCount: failCount,
+      aiCallCount: p.aiCallCount, totalDurationMs: p.totalDurationMs,
+      tokens: p.tokens || {}
+    }
+  })
+  return {
+    code: 200,
+    data: {
+      results: mergedResults,
+      total_duration_ms: p.totalDurationMs,
+      split_used: false,
+      ai_call_count: p.aiCallCount,
+      tokens: p.tokens || {},
+      success_count: successCount,
+      fail_count: failCount
+    }
+  }
+}
+
+module.exports = { ocrOnly, aiExtractBatch, aiExtractParallel }

@@ -6,7 +6,8 @@
 .search-wrap { position:relative }
 .search-input { width:100%; height:72rpx; background:var(--bg-surface); border-radius:var(--r-xl); padding:0 64rpx 0 var(--sp-5); font-size:var(--fs-base); box-sizing:border-box; border:1rpx solid transparent; transition:border-color var(--dur-fast) var(--ease-out) }
 .search-input:focus { border-color:var(--accent) }
-.search-clear { position:absolute; right:var(--sp-3); top:50%; transform:translateY(-50%); width:48rpx; height:48rpx; display:flex; align-items:center; justify-content:center; font-size:24rpx; color:var(--text-tertiary); border-radius:50% }
+/* UI 审计 视觉 S2：清除按钮 padding 扩点击区（48+48=96rpx），负 margin 抵消视觉占位 */
+.search-clear { position:absolute; right:var(--sp-3); top:50%; transform:translateY(-50%); width:48rpx; height:48rpx; padding:24rpx; margin:-24rpx; display:flex; align-items:center; justify-content:center; font-size:24rpx; color:var(--text-tertiary); border-radius:50% }
 .search-clear:active { background:var(--bg-input) }
 
 /* ========== 卡片间距 ========== */
@@ -18,12 +19,20 @@
 }
 
 /* ========== 加载提示 ========== */
-.loading-hint { text-align:center; padding:var(--sp-6) 0 }
-.loading-pulse { display:inline-block; width:12rpx; height:12rpx; border-radius:50%; background:var(--accent); animation:pulse 1.2s var(--ease-out) infinite }
+/* UI 审计 状态 M5：骨架屏（与首页 sk-client-card 同构） */
+.sk-client-card { display:flex; align-items:center; padding:var(--sp-5) var(--sp-5) var(--sp-5) 0; margin-bottom:var(--sp-5); background:var(--bg-card); border-radius:var(--r-xl); border:1rpx solid var(--border) }
+.sk-body { flex:1; min-width:0; padding-left:var(--sp-5) }
+.sk-row { display:flex; align-items:baseline; line-height:var(--lh-snug); margin-bottom:var(--sp-3) }
+.sk-shimmer { background:var(--border) }
+.sk-name { display:inline-block; width:120rpx; height:28rpx; border-radius:6rpx }
+.sk-label { display:inline-block; width:60rpx; height:22rpx; border-radius:6rpx }
+.sk-time { display:block; width:160rpx; height:20rpx; border-radius:6rpx }
+.sk-ring { width:80rpx; height:80rpx; border-radius:50%; flex-shrink:0; margin-left:var(--sp-4-5); margin-right:var(--sp-5) }
 
 /* ========== 空状态 ========== */
 .empty { display:flex; flex-direction:column; align-items:center; padding-top:160rpx }
 .empty-text { font-size:var(--fs-lg); font-weight:var(--fw-semi); color:var(--text-primary) }
 .empty-sub { font-size:var(--fs-caption); color:var(--text-tertiary); margin-top:var(--sp-3); letter-spacing:var(--ls-wide) }
-.empty-btn { margin-top:var(--sp-8); height:80rpx; padding:0 var(--sp-8); background:var(--accent); color:var(--color-on-accent); font-size:var(--fs-base); font-weight:var(--fw-semi); border-radius:var(--r-full); display:flex; align-items:center; justify-content:center; border:none }
+/* UI 审计 #②：accent 白字不达标，改深色主文字色 */
+.empty-btn { margin-top:var(--sp-8); height:80rpx; padding:0 var(--sp-8); background:var(--accent); color:var(--text-primary); font-size:var(--fs-base); font-weight:var(--fw-semi); border-radius:var(--r-full); display:flex; align-items:center; justify-content:center; border:none }
 .empty-btn::after { border:none }

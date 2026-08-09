@@ -58,7 +58,7 @@ async function ocrRecognize(tempFileURL) {
  * @returns {{ success: boolean, extractRes?: object, tokens?: object, error_code?: string }}
  */
 async function aiExtract(ocrText, ocrConfInfo, deps) {
-  const { buildExtractionPrompt, safeCallChat, callChat, cloud, db, openid, familyId, AI_TIMEOUT } = deps
+  const { buildExtractionPrompt, safeCallChat, callChat, cloud, db, openid, familyId, AI_TIMEOUT, traceId } = deps
 
   const { systemPrompt, userPrompt } = buildExtractionPrompt(ocrText, ocrConfInfo)
 
@@ -81,7 +81,7 @@ async function aiExtract(ocrText, ocrConfInfo, deps) {
         const res = await safeCallChat(
           messages,
           callChat,
-          { cloud, db, openid, familyId, sessionId, model: AI.OCR_MODEL, action: 'ocr_extract', skipInjection: true, skipOutputAudit: true, skipContentSafety: true },
+          { cloud, db, openid, familyId, sessionId, traceId, model: AI.OCR_MODEL, action: 'ocr_extract', skipInjection: true, skipOutputAudit: true, skipContentSafety: true },
           { maxTokens: AI.OCR_MAX_TOKENS, temperature: AI.OCR_TEMPERATURE, responseFormat: { type: 'json_object' }, timeoutMs: AI_TIMEOUT.OCR }
         )
         const parsed = _parseAIJSON(res.text)

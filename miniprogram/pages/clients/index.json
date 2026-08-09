@@ -1,5 +1,6 @@
 {
   "navigationBarTitleText": "客户列表",
+  "enablePullDownRefresh": true,
   "usingComponents": {
     "client-card": "/components/client-card/index"
   }

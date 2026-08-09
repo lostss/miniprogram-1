@@ -49,9 +49,11 @@ function _financeTable(finances, snap) {
   let income = '-', debt = '-', expense = '-', debtType = '-'
   if (finances && finances.length > 0) {
     const f = finances[0]
-    income = f.annual_income || income
-    debt = f.total_debt || debt
-    expense = f.fixed_annual_expense || expense
+    // 数值审计 #2：finances 统一存元（annual_income/total_debt/fixed_annual_expense），此处 ÷10000 转万显示；
+    // 兼容旧数据（income/debt/fixed_expense 万键直读）
+    income = f.annual_income != null ? _wan(f.annual_income) : (f.income != null ? f.income : income)
+    debt = f.total_debt != null ? _wan(f.total_debt) : (f.debt != null ? f.debt : debt)
+    expense = f.fixed_annual_expense != null ? _wan(f.fixed_annual_expense) : (f.fixed_expense != null ? f.fixed_expense : expense)
     debtType = f.debt_type || debtType
   }
   // financial_snapshot 优先级更高（与前端 dataQuery/getFamily 口径一致）
@@ -64,9 +66,15 @@ function _financeTable(finances, snap) {
     }
   }
   if (income === '-' && debt === '-' && expense === '-' && debtType === '-') return ''
-  const rows = ['| 年收入 | 总负债 | 固定支出 | 负债类型 |', '|--------|--------|----------|----------|']
+  const rows = ['| 年收入(万) | 总负债(万) | 固定支出(万) | 负债类型 |', '|--------|--------|----------|----------|']
   rows.push('|' + [income, debt, expense, debtType].join('|') + '|')
   return rows.join('\n')
+}
+
+/** 元 → 万（数值审计 #1/#2 共用，round 到 2 位防浮点噪音） */
+function _wan(v) {
+  const n = Number(v)
+  return isNaN(n) ? '-' : Math.round(n / 100) / 100
 }
 
 /**
@@ -132,7 +140,8 @@ async function buildFamilyContext(db, familyId, openid, scene) {
 
   const parts = []
   parts.push('# 家庭保障档案')
-  if (family.last_conclusion) parts.push('> ' + family.last_conclusion + '\n')
+  // last_conclusion 注入：conversation/tool 场景用带标签结论块（AI 识别为可引用回答缺口问题），其余场景保留裸 quote
+  if (scene !== 'conversation' && scene !== 'tool' && family.last_conclusion) parts.push('> ' + family.last_conclusion + '\n')
 
   // 经济状况表始终注入（家庭级年收入/负债，画像不覆盖）
   const ft = _financeTable(finances, family.financial_snapshot)
@@ -146,6 +155,8 @@ async function buildFamilyContext(db, familyId, openid, scene) {
     const portrait = buildPortrait(members, facts)
     const pm = renderPortraitMarkdown(portrait, { compact: true })
     if (pm) parts.push(pm)
+    // 报告结论带标签注入（审计改法 3）：A 通道据此回答缺口类问题（"上次检视"标注防 stale 误导）
+    if (family.last_conclusion) parts.push('## 报告结论（上次检视，回答缺口类问题可引用）\n' + family.last_conclusion)
     return { markdown: parts.join('\n\n'), familyMeta, birthMap, datasets }
   }
 
@@ -159,6 +170,8 @@ async function buildFamilyContext(db, familyId, openid, scene) {
     // report 场景业务逻辑（_buildStructuredCoverage）需要 facts/cashValues 原始数据集
     datasets.facts = facts
     datasets.cashValues = cashValues
+    // prompt 工程审计：缺口矩阵需识别"无保单成员"，暴露 members
+    datasets.members = members
     const portrait = buildPortrait(members, facts)
     const pm = renderPortraitMarkdown(portrait, { compact: false })
     if (pm) parts.push(pm)

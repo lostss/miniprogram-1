@@ -1,29 +1,20 @@
-.md-root { padding:var(--sp-5) var(--sp-5) var(--sp-7); word-break:break-word; overflow-wrap:break-word; --green-report:#4A9C6D; --missing-bg:#FFF0F0; --covered-bg:#F0FFF0; }
+/* UI 审计 #③：--green-report 收敛为全局 --ok（app.wxss） */
+/* UI 审计 视觉 S5：局部 --missing-bg/--covered-bg 与全局 --red-dim/--ok-dim 语义重复，收敛为全局 token */
+.md-root { padding:var(--sp-5) var(--sp-5) var(--sp-7); word-break:break-word; overflow-wrap:break-word; --missing-bg:var(--red-dim); --covered-bg:var(--ok-dim); }
 
 /* 章节卡：细边框 + 宽松节奏 + 入场动画 */
 .md-card { background:var(--bg-card); border-radius:var(--r-lg); padding:var(--sp-6) var(--sp-5); margin-bottom:var(--sp-6); border:1rpx solid var(--border); }
 
 /* 标题：衬线体章节号 + 暖金分割线 */
+/* UI 打磨：章节号 44→32rpx + accent→accent-deep 降权降饱和，章节标题为视觉第一 */
 .h1n { display:flex; align-items:baseline; gap:var(--sp-4); margin:0 0 var(--sp-5); padding-bottom:var(--sp-4); border-bottom:1rpx solid var(--border-accent); }
-.h1n-digit { font-size:var(--fs-display); font-weight:var(--fw-bold); color:var(--accent); line-height:var(--lh-none); font-family:var(--font-serif); font-variant-numeric:tabular-nums; }
+.h1n-digit { font-size:var(--fs-lg); font-weight:var(--fw-bold); color:var(--accent-deep); line-height:var(--lh-none); font-family:var(--font-serif); font-variant-numeric:tabular-nums; }
 .h1n-title { font-size:var(--fs-xl); font-weight:var(--fw-bold); color:var(--text-primary); flex:1; font-family:var(--font-serif); letter-spacing:var(--ls-wide); }
+/* UI 审计 V-S1：--fw-regular 未定义（app.wxss 仅 normal/medium/semi/bold），改 --fw-normal */
+.h1n-unit { font-size:var(--fs-caption); color:var(--text-secondary); flex-shrink:0; margin-right:var(--sp-2); font-weight:var(--fw-normal); }
 .h1n-edit { font-size:var(--fs-caption); color:var(--accent-deep); background:var(--accent-dim); border-radius:var(--r-full); padding:var(--sp-2) var(--sp-4); flex-shrink:0; line-height:var(--lh-none); }
 
 .h2 { font-size:var(--fs-body); font-weight:var(--fw-bold); color:var(--text-primary); margin:var(--sp-5) 0 var(--sp-3); padding-left:var(--sp-4); border-left:4rpx solid var(--accent-muted); }
-
-/* 保障概览仪表盘 */
-.overview-wrap { display:flex; align-items:center; gap:var(--sp-5); padding:var(--sp-3) 0; }
-.overview-gauge { display:flex; flex-direction:column; align-items:center; gap:var(--sp-4); }
-.gauge-ring { width:180rpx; height:180rpx; border-radius:50%; padding:var(--sp-4-5); background:var(--bg-input); box-sizing:border-box; }
-.gauge-center { width:100%; height:100%; border-radius:50%; background:var(--bg-card); display:flex; align-items:center; justify-content:center; gap:var(--sp-1); box-shadow:var(--shadow-sm); }
-.gauge-val { font-size:var(--fs-display); font-weight:var(--fw-bold); color:var(--accent-deep); font-family:var(--font-serif); line-height:var(--lh-none); }
-.gauge-unit { font-size:var(--fs-caption); color:var(--text-secondary); margin-top:var(--sp-1); }
-.gauge-label { font-size:var(--fs-caption); color:var(--text-secondary); letter-spacing:var(--ls-wide); }
-.overview-stats { flex:1; display:grid; grid-template-columns:1fr 1fr; gap:var(--sp-5); }
-.overview-stat { background:var(--bg-input); border-radius:var(--r-md); padding:var(--sp-5) var(--sp-4); display:flex; flex-wrap:wrap; align-items:baseline; justify-content:center; gap:var(--sp-1); }
-.os-val { font-size:var(--fs-2xl); font-weight:var(--fw-bold); color:var(--text-primary); font-family:var(--font-serif); line-height:var(--lh-none); }
-.os-unit { font-size:var(--fs-tiny); color:var(--text-secondary); margin-right:var(--sp-1); }
-.os-lbl { width:100%; text-align:center; font-size:var(--fs-caption); color:var(--text-tertiary); margin-top:var(--sp-2); }
 
 .cal-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:var(--sp-3); margin:var(--sp-4) 0; }
 .cal-cell { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:var(--sp-4) var(--sp-2); min-height:96rpx; background:var(--bg-input); border-radius:var(--r-md); box-sizing:border-box; }
@@ -31,24 +22,52 @@
 .cal-v { font-size:var(--fs-caption); font-weight:var(--fw-bold); color:var(--text-primary); font-variant-numeric:tabular-nums; }
 .cal-none { color:var(--text-disabled); font-weight:var(--fw-normal); }
 
-/* 保障关键时点 时间轴 */
-.tl-wrap { position:relative; padding-left:var(--sp-7); margin:var(--sp-4) 0; }
-.tl-wrap::before { content:''; position:absolute; left:13rpx; top:var(--sp-3); bottom:var(--sp-3); width:2rpx; background:var(--border-accent); }
+/* 保障关键时点 时间轴
+   UI 打磨（对齐审计修复）：dot 绝对定位相对 item，left 减去 wrap padding（sp-7）使 dot 中心
+   精确落在 wrap 坐标 --tl-axis 处；轴线 top/bottom 按 dot 几何推导（首末 dot 中心），消除裸轴与魔法数对。
+   几何：item 左缘 = wrap padding-left(sp-7=40rpx)；dot 中心(相对 wrap) = 40 + left + 半宽。
+   要中心=13rpx → left = 13 - 40 = calc(var(--tl-axis) - var(--sp-7)) = -27rpx。 */
+.tl-wrap {
+  --tl-axis: 13rpx;                 /* 轴线 left（相对 wrap） */
+  --tl-dot-size: var(--sp-4);       /* dot 直径 16rpx（含 2rpx 边框，border-box；UI 打磨 24→16 克制化） */
+  --tl-dot-mt: 10rpx;               /* dot 垂直偏移（对齐 tl-year 首行文字基线：(36-16)/2=10rpx） */
+  position:relative; padding-left:var(--sp-7); margin:var(--sp-4) 0;
+}
+/* 轴线：left=--tl-axis，translateX(-1rpx) 使 2rpx 宽轴线中心=--tl-axis；top/bottom=首末 dot 中心 */
+.tl-wrap::before {
+  content:''; position:absolute; left:var(--tl-axis); width:2rpx; transform:translateX(-1rpx);
+  top:calc(var(--sp-3) + var(--tl-dot-mt) + var(--tl-dot-size) / 2);
+  bottom:calc(var(--sp-3) + var(--tl-dot-mt) + var(--tl-dot-size) / 2);
+  background:var(--border-accent);
+}
 .tl-item { display:flex; align-items:flex-start; gap:var(--sp-5); padding:var(--sp-3) 0; position:relative; }
-.tl-dot { width:var(--sp-5); height:var(--sp-5); border-radius:50%; flex-shrink:0; margin-left:-34rpx; margin-top:var(--sp-1); z-index:1; border:3rpx solid var(--bg-card); background:var(--accent-muted); }
+/* dot 中心精确对齐轴心：left 相对 item 减 wrap padding，translateX(-50%) 居中 */
+.tl-dot {
+  width:var(--tl-dot-size); height:var(--tl-dot-size); border-radius:50%; flex-shrink:0;
+  position:absolute; left:calc(var(--tl-axis) - var(--sp-7)); transform:translateX(-50%);
+  margin-top:var(--tl-dot-mt); z-index:1; border:2rpx solid var(--bg-card); background:var(--accent-muted);
+}
 .tl-red { background:var(--red); }
 .tl-green { background:var(--green); }
 .tl-yellow { background:var(--amber); }
 .tl-content { flex:1; min-width:0; display:flex; flex-direction:column; gap:var(--sp-1); }
 .tl-year { font-size:var(--fs-caption); font-weight:var(--fw-bold); color:var(--accent-deep); font-family:var(--font-serif); font-variant-numeric:tabular-nums; }
 .tl-label { font-size:var(--fs-caption); color:var(--text-primary); line-height:var(--lh-body); }
-.tl-soon { background:linear-gradient(90deg, var(--red-dim), transparent); border-radius:var(--r-sm); padding:var(--sp-3) var(--sp-4); margin-left:-16rpx; }
+/* soon 高亮：从 dot 中心左侧（覆盖整圆）延伸，item 自身不移位 → dot 恒居轴线 */
+.tl-soon { position:relative; padding:var(--sp-3) var(--sp-4); }
+.tl-soon::before {
+  content:''; position:absolute; top:0; bottom:0; z-index:0;
+  left:calc(-1 * var(--sp-7) + var(--tl-axis) - var(--tl-dot-size) / 2);
+  right:0; background:linear-gradient(90deg, var(--red-dim), transparent); border-radius:var(--r-sm);
+}
 .tl-soon .tl-year { color:var(--red); }
 
-/* 保障全景矩阵（金色表头 + 覆盖浅绿/缺失浅红） */
-.pano-wrap { margin:var(--sp-4) 0; border-radius:var(--r-md); overflow:hidden; border:1rpx solid var(--border); }
-.pano-hd { display:flex; background:var(--accent); }
-.pano-hd-cell { flex:1; padding:var(--sp-4) var(--sp-2); font-size:var(--fs-caption); color:var(--color-on-accent); font-weight:var(--fw-semi); text-align:center; letter-spacing:var(--ls-wide); }
+/* 保障全景矩阵（浅金表头 + 覆盖浅绿/缺失浅红） */
+/* UI 打磨：金色语义分流——数据表头/峰值不再用品牌实底 accent，改浅金底 accent-dim + 深金字 */
+/* UI 审计 V-S6：overflow:hidden 裁剪窄屏/多成员溢出内容，改 overflow-x:auto */
+.pano-wrap { margin:var(--sp-4) 0; border-radius:var(--r-md); overflow-x:auto; border:1rpx solid var(--border); }
+.pano-hd { display:flex; background:var(--accent-dim); }
+.pano-hd-cell { flex:1; padding:var(--sp-4) var(--sp-2); font-size:var(--fs-caption); color:var(--accent-deep); font-weight:var(--fw-semi); text-align:center; letter-spacing:var(--ls-wide); }
 .pano-hd-first { flex:0 0 84rpx; }
 .pano-hd-total { flex:0 0 96rpx; }
 .pano-row { display:flex; }
@@ -58,7 +77,7 @@
 .pano-name-total { color:var(--accent-deep); }
 .pano-status { min-height:56rpx; border-radius:var(--r-sm); margin:var(--sp-1); font-weight:var(--fw-semi); }
 .pano-val { font-size:var(--fs-caption); line-height:var(--lh-tight); font-variant-numeric:tabular-nums; }
-.ps-ok { background:var(--covered-bg); } .ps-ok .pano-val { color:var(--green-report); }
+.ps-ok { background:var(--covered-bg); } .ps-ok .pano-val { color:var(--ok); }
 .ps-partial { background:var(--amber-dim); } .ps-partial .pano-val { color:var(--amber); }
 .ps-missing { background:var(--missing-bg); } .ps-missing .pano-val { color:var(--red); }
 .ps-hold { background:var(--accent-dim); } .ps-hold .pano-val { color:var(--accent-deep); }
@@ -67,58 +86,36 @@
 .ps-total { background:var(--accent-dim); } .ps-total .pano-val { color:var(--accent-deep); font-weight:var(--fw-bold); }
 .ps-grand { background:var(--accent-dim); } .ps-grand .pano-val { color:var(--accent-deep); font-weight:var(--fw-bold); }
 
-/* 紧急行动快取 */
-.urgent-wrap { margin:var(--sp-4) 0; display:flex; flex-direction:column; gap:var(--sp-4); }
-.urgent-item { background:var(--bg-input); border-radius:var(--r-md); padding:var(--sp-5); border:1rpx solid var(--border); border-left:3rpx solid var(--red); }
-.urgent-action { display:flex; align-items:baseline; gap:var(--sp-3); margin-bottom:var(--sp-2); }
-.urgent-arrow { font-size:var(--fs-body); color:var(--red); font-weight:var(--fw-bold); flex-shrink:0; line-height:var(--lh-none); }
-.urgent-text { font-size:var(--fs-body); font-weight:var(--fw-bold); color:var(--text-primary); line-height:var(--lh-snug); }
-.urgent-reason { font-size:var(--fs-caption); color:var(--text-secondary); line-height:var(--lh-body); padding-left:var(--sp-6); }
-
-/* 核心洞察独立卡片 */
-.insight-wrap { margin:var(--sp-4) 0; display:flex; flex-direction:column; gap:var(--sp-5); }
-.insight-card { background:var(--bg-input); border-radius:var(--r-md); padding:var(--sp-6) var(--sp-5); display:flex; gap:var(--sp-4); align-items:flex-start; border:1rpx solid var(--border); }
-.insight-icon { font-size:var(--fs-xl); flex-shrink:0; line-height:var(--lh-none); margin-top:var(--sp-1); }
-.insight-text { font-size:var(--fs-body); color:var(--text-primary); line-height:var(--lh-body); flex:1; }
-
-/* 保障概览仪表盘 */
-.dash-wrap { margin:var(--sp-4) 0; display:flex; flex-direction:column; gap:var(--sp-5); }
-
-/* 缴费月历峰值高亮（金色） */
-.cal-peak { background:var(--accent); }
-.cal-peak .cal-m { color:var(--color-on-accent-soft); }
-.cal-peak .cal-v { color:var(--color-on-accent); }
+/* 缴费月历峰值高亮（浅金底 + 深金字，与表头语义分流） */
+.cal-peak { background:var(--accent-dim); }
+.cal-peak .cal-m { color:var(--accent-deep); }
+.cal-peak .cal-v { color:var(--accent-deep); }
 
 /* 时间轴增强：日期/保费/节点备注 */
 .tl-note { font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-body); }
 .tl-note-expiry { color:var(--red); }
 
-/* 家庭结构：成员节点 + 财务 */
-.ft-wrap { margin:var(--sp-4) 0; }
-.ft-nodes { display:flex; flex-direction:column; gap:var(--sp-3); margin-bottom:var(--sp-5); }
-.ft-node { display:flex; align-items:center; gap:var(--sp-4); padding:var(--sp-4) var(--sp-5); background:var(--bg-input); border-radius:var(--r-md); border:1rpx solid var(--border); }
-.ft-avatar { font-size:var(--fs-xl); flex-shrink:0; line-height:var(--lh-none); }
-.ft-info { display:flex; flex-direction:column; gap:var(--sp-1); min-width:0; }
+/* 家庭结构：层级列表（父母一层/子女一层）+ 财务 */
+.ft-wrap { margin:var(--sp-4) 0; padding:0 var(--sp-1); }
+.ft-nodes { display:flex; flex-wrap:wrap; gap:var(--sp-3); width:100%; box-sizing:border-box; }
+/* 家庭结构：方形圆角卡片，自适应内容宽度，平铺流动排列 */
+.ft-node { display:flex; align-items:center; justify-content:center; padding:var(--sp-4) var(--sp-6); background:var(--bg-input); border-radius:var(--r-lg); }
+.ft-info { display:flex; flex-direction:column; align-items:center; gap:0; min-width:0; }
 .ft-name { font-size:var(--fs-body); font-weight:var(--fw-semi); color:var(--text-primary); }
-.ft-role { font-size:var(--fs-tiny); color:var(--text-tertiary); }
-.ft-edit { font-size:var(--fs-caption); color:var(--accent-deep); margin-left:auto; flex-shrink:0; }
-.ft-finance { display:flex; flex-wrap:wrap; gap:var(--sp-3); align-items:flex-end; }
-.ft-fin-item { flex:1; min-width:180rpx; display:flex; flex-direction:column; align-items:center; gap:var(--sp-2); background:var(--bg-card); border:1rpx solid var(--border); border-radius:var(--r-md); padding:var(--sp-4) var(--sp-2); }
-.ft-fin-lbl { font-size:var(--fs-tiny); color:var(--text-tertiary); }
-.ft-fin-val { font-size:var(--fs-body); font-weight:var(--fw-bold); color:var(--text-primary); font-family:var(--font-serif); font-variant-numeric:tabular-nums; }
-.ft-fin-edit { width:100%; font-size:var(--fs-caption); color:var(--accent-deep); text-align:right; padding:var(--sp-1) var(--sp-2); margin-top:var(--sp-1); }
+.ft-role { font-size:var(--fs-tiny); color:var(--text-tertiary); margin-top:2rpx; }
+/* 家庭财务：block 容器无卡样式（章卡 md-card 即卡）；数字块复用全局 num-cell（审计 P3 与保障摘要 sc-cell 同构合并） */
+.fin-wrap { margin:var(--sp-4) 0 0; }
+.fin-grid { display:flex; gap:var(--sp-3); }
 
-/* 风险提示：置信度告警 + 免责声明 */
+/* 特别提醒：置信度告警 */
 .risk-wrap { margin:var(--sp-4) 0; }
-.risk-alerts { display:flex; flex-direction:column; gap:var(--sp-3); margin-bottom:var(--sp-5); }
+.risk-alerts { display:flex; flex-direction:column; gap:var(--sp-3); }
 .risk-title { font-size:var(--fs-caption); font-weight:var(--fw-bold); color:var(--red); margin-bottom:var(--sp-2); }
 .risk-item { font-size:var(--fs-caption); color:var(--text-primary); line-height:var(--lh-body); background:var(--missing-bg); border-radius:var(--r-sm); padding:var(--sp-3) var(--sp-4); }
 .risk-name { color:var(--text-primary); font-weight:var(--fw-medium); }
 .risk-issue { color:var(--red); }
-.risk-divider { height:1rpx; background:var(--border-accent); margin:var(--sp-5) 0; }
-.risk-disclaimer { display:flex; flex-direction:column; gap:var(--sp-3); }
-.risk-d-title { font-size:var(--fs-caption); font-weight:var(--fw-bold); color:var(--text-primary); }
-.risk-d-text { font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-loose); }
+/* UI 打磨：核对入口统一 pill（与章节卡 [编辑]/成员管理编辑同构），行内右对齐 */
+.risk-check { display:inline-block; font-size:var(--fs-caption); color:var(--accent-deep); background:var(--accent-dim); border-radius:var(--r-full); padding:var(--sp-1) var(--sp-4); margin-left:var(--sp-3); line-height:var(--lh-body); }
 
 /* 附录保单卡片（按成员分组） */
 .pc-wrap { margin:var(--sp-4) 0; }

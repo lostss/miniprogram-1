@@ -188,7 +188,8 @@ function buildGapMatrix(gaps, members) {
 
 /**
  * 构建保障覆盖矩阵（设计稿第 2 章）：成员×险种 已有保额（万元），缺失格标红
- * 含每行合计列与底部合计行。纯展示层，不参与缺口判断。
+ * 含底部险种合计行（各险种跨成员汇总）；右侧成员合计列已移除（单成员多险种相加无意义）。
+ * 纯展示层，不参与缺口判断。
  */
 function buildCoverageMatrix(members, policies) {
   var active = (policies || []).filter(function(p) { return p.status === 'active' })
@@ -218,24 +219,18 @@ function buildCoverageMatrix(members, policies) {
   }
   function fmt(v) { var x = Math.round(v * 100) / 100; return x === Math.floor(x) ? String(x) : String(x) }
   var out = rows.map(function(row) {
-    var rowTotal = 0
     var cells = cats.map(function(c) {
       var v = row.cells[c]
-      rowTotal += v
       return v > 0 ? { v: fmt(v), s: 'ok' } : { v: '—', s: 'missing' }
     })
-    cells.push({ v: fmt(rowTotal), s: 'total' })
     return { name: row.name, cells: cells }
   })
   var grandCells = cats.map(function(c) {
     var v = total[c]
     return v > 0 ? { v: fmt(v), s: 'ok' } : { v: '—', s: 'missing' }
   })
-  var grandTotal = 0
-  for (var gt = 0; gt < cats.length; gt++) grandTotal += total[cats[gt]]
-  grandCells.push({ v: fmt(grandTotal), s: 'grand' })
   out.push({ name: '合计', cells: grandCells })
-  return { heads: ['成员'].concat(cats, ['合计']), cats: cats, rows: out }
+  return { heads: ['成员'].concat(cats), cats: cats, rows: out }
 }
 
 module.exports = { buildGaps, buildGapMatrix, buildCoverageMatrix }

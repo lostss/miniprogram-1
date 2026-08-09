@@ -34,6 +34,7 @@ async function logAI(db, entry) {
       openid: entry.openid || '',
       family_id: entry.familyId || '',
       sessionId: entry.sessionId || '',
+      trace_id: entry.traceId || '',
       action: entry.action,
       model: entry.model || '',
       timestamp: new Date(),
@@ -82,6 +83,7 @@ async function logOperation(db, entry) {
       action: entry.action,
       openid: entry.openid,
       family_id: entry.familyId || '',
+      trace_id: entry.traceId || '',
       target: {
         collection: (entry.target && entry.target.collection) || '',
         doc_id: (entry.target && (entry.target.docId || entry.target.doc_id)) || ''

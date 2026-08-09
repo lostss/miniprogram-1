@@ -15,7 +15,7 @@ Component({
       const style = 'animation-delay:' + delay + 's'
       // customBlock 经注册表 normalize 补齐字段，防止 wxml 因 undefined 报错
       const customBlocks = c.customBlocks ? c.customBlocks.map(normalizeBlock) : null
-      return { key: c.key, num: c.num || '', title: c.title || '', edit: c.edit || '', customBlocks, content: c.content || '', pre: c.pre || '', note: c.note || '', collapsible, collapsed, style }
+      return { key: c.key, num: c.num || '', title: c.title || '', edit: c.edit || '', unit: c.unit || '', customBlocks, content: c.content || '', pre: c.pre || '', note: c.note || '', collapsible, collapsed, style }
     }) })
   }
   },
@@ -30,10 +30,21 @@ Component({
       if (!id) return
       this.triggerEvent('policytap', { policyId: id })
     },
+    onRiskCheck(e) {
+      const pid = e.currentTarget.dataset.pid || ''
+      const field = e.currentTarget.dataset.field || ''
+      if (!pid) return
+      this.triggerEvent('riskcheck', { policyId: pid, field: field })
+    },
     onChapterEdit(e) {
       const mode = e.currentTarget.dataset.mode
       const mid = e.currentTarget.dataset.mid || ''
       this.triggerEvent('chapteredit', { mode: mode || '', memberId: mid })
+    },
+    onLinkTap(e) {
+      const href = e.detail && e.detail.href
+      if (!href) return
+      wx.setClipboardData({ data: href, success: function() { wx.showToast({ title: '链接已复制', icon: 'none' }) } })
     }
   }
 })

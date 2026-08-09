@@ -154,7 +154,8 @@ function writeSeam(db, openid, familyId, opts = {}) {
     silentRemoveDoc: (collection, docId) => safeRemoveDoc(db, collection, docId, openid),
     // 批量操作（CloudBase 单次 remove/update 有上限，内部循环分批；不触发钩子）
     // 失败时返回 0（与原 .catch(() => 0) 语义一致），让 batchTx 正确区分"删 0 条"vs"步骤异常"
-    batchRemove: async (collection, where, batchSize = 100) => {
+    // strict=true（级联删除用）：单文档失败或全批失败抛错（而非静默返回 0），使 batchTx 可感知失败触发整体回退
+    batchRemove: async (collection, where, batchSize = 100, strict = false) => {
       try {
         let deleted = 0, hasMore = true
         while (hasMore) {
@@ -169,14 +170,20 @@ function writeSeam(db, openid, familyId, opts = {}) {
           deleted += actuallyDeleted
           // 全批失败：文档未减少，继续循环会查到同样的数据 → 死循环，终止
           if (actuallyDeleted === 0) {
+            if (strict) throw new Error('batchRemove 全批失败: ' + collection)
             console.error('[writeSeam] batchRemove 本批全部失败，终止避免死循环:', collection)
             hasMore = false; break
+          }
+          // strict：单文档失败即抛错（级联删除不允许部分删）
+          if (strict && actuallyDeleted < res.data.length) {
+            throw new Error('batchRemove 部分失败: ' + collection)
           }
           if (res.data.length < batchSize) hasMore = false
         }
         return deleted
       } catch (e) {
         console.error('[writeSeam] batchRemove 失败:', collection, e.message)
+        if (strict) throw e
         return 0
       }
     },

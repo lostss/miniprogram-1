@@ -61,12 +61,13 @@ describe('buildStructuredCoverage', () => {
     })
 
     test('cashValues.cash_values 中 v >= annual_premium * y 时回本列展示"第Y年"', () => {
-      // annual_premium=12000，第3年累计 36000，cash_values[3].v=40000 >= 36000 → 回本
+      // 数值审计 #5：回本按保额比例换算表值（sum_assured=50万 → scale=50）
+      // annual_premium=12000，表值×50 与 累计保费比较：y3 时 800*50=40000 >= 36000 → 第3年回本
       const cashValues = [{
         policy_id: 'pol_001',
         latest_value: 40000,
         cash_values: [
-          { y: 1, v: 5000 }, { y: 2, v: 15000 }, { y: 3, v: 40000 }
+          { y: 1, v: 100 }, { y: 2, v: 300 }, { y: 3, v: 800 }
         ]
       }]
       const r = buildStructuredCoverage([basePolicy], [], cashValues)
@@ -77,11 +78,12 @@ describe('buildStructuredCoverage', () => {
       const cashValues = [{
         policy_id: 'pol_001',
         latest_value: 5000,
-        cash_values: [{ y: 1, v: 5000 }, { y: 2, v: 10000 }]
+        cash_values: [{ y: 1, v: 100 }, { y: 2, v: 200 }]
       }]
       const r = buildStructuredCoverage([basePolicy], [], cashValues)
-      // 表中应有现价 5000，但回本应为 "-"
-      expect(r.structuredMd).toContain('5000')
+      // 现价列按已缴年数取行（effective_date 2024 起 paidYears=2 → y2=200），回本应为 "-"
+      expect(r.structuredMd).toContain('200')
+      expect(r.structuredMd).not.toContain('第1年')
     })
   })
 

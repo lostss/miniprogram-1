@@ -4,7 +4,7 @@
  * 由 index.js 通过 createHandler(handlers, '写入') 路由调用。
  * 实际处理函数按领域拆分到 5 个模块：
  *   - family-write.js   家庭 CRUD + 阶段设置
- *   - member-write.js   成员操作（recordField / writeNote / updateMember / deleteMember）
+ *   - member-write.js   成员操作（recordField / updateMember / deleteMember）
  *   - fact-write.js     事实写入（addFact / updateFactConfidence / deleteFact）
  *   - policy-write.js   保单操作 + 现价表
  *   - message-write.js  消息 / 日志 / 画像提交
@@ -19,6 +19,8 @@ const member = require('./member-write')
 const fact = require('./fact-write')
 const policy = require('./policy-write')
 const message = require('./message-write')
+// 对话 agentic 单通道：upsertMember/updateFinances 由前端 tools fn 路由到本网关（原 conversationAI 进程内执行，现统一走 dataWrite）
+const memberRepo = require('./_shared/memberRepo')
 
 module.exports = {
   // family-write
@@ -27,9 +29,12 @@ module.exports = {
   deleteFamily: family.deleteFamilyHandler,
   setStage: family.setStage,
 
+  // member-write（agentic 对话工具路由）
+  upsertMember: (db, openid, event) => memberRepo.upsertMember(db, event.familyId, openid, { ...event, confirmOnConflict: true }),
+  updateFinances: (db, openid, event) => memberRepo.upsertFinances(db, event.familyId, openid, event),
+
   // member-write
   recordField: member.recordField,
-  writeNote: member.writeNote,
   updateMember: member.updateMember,
   deleteMember: member.deleteMember,
 
@@ -41,11 +46,9 @@ module.exports = {
   // policy-write
   writePolicy: policy.writePolicy,
   writePoliciesBatch: policy.writePoliciesBatch,
-  migratePoliciesToFacts: policy.migratePoliciesToFacts,
   deletePolicy: policy.deletePolicy,
   updatePolicy: policy.updatePolicy,
   writeCashValue: policy.writeCashValue,
-  matchCashValueManual: policy.matchCashValueManual,
 
   // message-write
   writeMessage: message.writeMessage,

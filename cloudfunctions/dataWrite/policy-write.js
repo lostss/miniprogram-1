@@ -1,11 +1,11 @@
 /**
  * policy-write — 保单操作领域
  *
- * 导出：writePolicy / writePoliciesBatch / migratePoliciesToFacts / deletePolicy / updatePolicy / writeCashValue / matchCashValueManual
+ * 导出：writePolicy / writePoliciesBatch / deletePolicy / updatePolicy / writeCashValue
  * 常量：POLICY_EDITABLE
  *
  * 依赖关系：
- *   - writePolicy / migratePoliciesToFacts / deletePolicy / updatePolicy 调用 fact-write.addFact
+ *   - writePolicy / deletePolicy / updatePolicy 调用 fact-write.addFact
  *   - writePoliciesBatch 调用同模块 writePolicy / writeCashValue
  *   - fact-write 不反向依赖 policy-write，无循环依赖，可直接 destructure
  */
@@ -14,7 +14,6 @@ const { detectInjection } = require('./_shared/guard')
 const { desensitize } = require('./_shared/pii-rules')
 const { writeSeam } = require('./_shared/writeSeam')
 const { logOperation } = require('./_shared/logSeam')
-const { loadActivePolicies } = require('./_shared/policy-read')
 const { locatePolicy } = require('./policy-locate')
 const { policyToFacts } = require('./policyToFacts')
 const { matchPoliciesToMembers } = require('./_shared/member-matcher')
@@ -25,6 +24,9 @@ const { addFact } = require('./fact-write')
 async function writePolicy(db, openid, event) {
   const { familyId, memberId, data } = event
   if (!familyId) return { code: 400, msg: '缺少参数 familyId' }
+  // 级联删除审计 #2 竞态防护：家庭已删/删除中 → 拒绝写入，避免删除窗口内 OCR/对话写孤儿保单
+  const alive = await db.collection('families').where({ _id: familyId, _openid: openid }).count().catch(() => ({ total: 0 }))
+  if (!(alive.total > 0)) return { code: 404, msg: '家庭不存在，无法写入保单' }
   // A1 修复：insured_name 为空时回退用 policyholder_name（新华保险投保人=被保人场景）
   if (!data || !(data.insured_name || data.policyholder_name)) return { code: 400, msg: '缺少保单数据（insured_name/policyholder_name）' }
   // P1-3：special_agreement 是自由文本字段，需纳入注入检测（原仅校验 name/category）
@@ -51,7 +53,11 @@ async function writePolicy(db, openid, event) {
     id: id || 'pol_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
     family_id: familyId, member_id: resolvedMemberId,
     confidence: confidence || 0, field_confidence: field_confidence || {}, confidence_source: confidence_source || '',
-    auto_confirmed: !!auto_confirmed, created_at: now
+    auto_confirmed: !!auto_confirmed,
+    // 状态审计：OCR/对话录入=当前持有=默认有效（status 显式落库，避免读取层按 insurance_period
+    // 推算误判在缴续保产品为 expired）；失效由用户/updatePolicy 显式标注
+    status: 'active',
+    created_at: now
   }
   // writeSeam 接缝：silent 写入 + 末尾统一 triggerHooks（addFact 内部已自带钩子，此处 silent 避免 N 次重复 markFamilyMutated）
   const ws = writeSeam(db, openid, familyId)
@@ -74,7 +80,9 @@ async function writePolicy(db, openid, event) {
   // 否则下游 writePoliciesBatch 用这个 id 写入 p.id，再传给 matchOrphanCashValues，会指向不存在的保单
   if (isExisting) return { code: 200, data: { written: false, skipped: true, policyId: exist.data[0].id || doc.id } }
   // Phase 1：保单入库同步拆解为结构化三元组写入 facts（replace 旧单条 '购买了' 兜底；开放谓词 + policy 节点）
-  if (resolvedMemberId && product_name) {
+  // K-S2 修复：member_id 为空但有被保人姓名时也写 facts——"拥有保障"边由 addFact 按姓名解析，
+  // 保单节点事实（保额/保费等）本就与成员无关；成员不存在时 addFact 返回 404，被下方 catch 兜底不阻断入库
+  if ((resolvedMemberId || resolvedInsuredName) && product_name) {
     const factEvents = policyToFacts(doc, {
       memberId: resolvedMemberId, memberName: resolvedInsuredName,
       confidence: doc.confidence, source: 'ocr'
@@ -138,7 +146,10 @@ function _writePolicyStep(db, openid, familyId) {
       p.id = res.data.policyId
     }
     if (res.code === 200) {
-      return { policyId: (res.data && res.data.policyId) || '', ok: true }
+      // 全链路审计 S1：透出 skipped 标志（命中库中重复项）——重复项 member_id 已正确落库，
+      // 若参与成员匹配会被 match sync 无条件覆盖污染正确值，调用方须排除
+      const skipped = !!(res.data && res.data.skipped)
+      return { policyId: (res.data && res.data.policyId) || '', ok: true, skipped }
     }
     // S2-2 修复：writePolicy 返回非 200（如重复命中）记为失败并留痕
     logOperation(db, {
@@ -212,10 +223,24 @@ async function ingestPolicies(db, openid, event) {
 
   // Step 1：去重
   const { dedupedPolicies, dedupSkipped } = _dedupPolicies(policies)
+  // 全链路审计 S2：记录匹配前的 member_id 状态，供 Step 3 后判断"匹配才获得 member_id"的新保单补写 facts
+  for (const p of dedupedPolicies) p._hadMember = !!(p.member_id || p.memberId)
   // Step 2：限流并发写保单（并发 3）
   const results = await _runConcurrent(dedupedPolicies, 3, _writePolicyStep(db, openid, familyId), _writePolicyErrorLog(db, openid, familyId))
-  // Step 3：成员匹配（尊重已带 member_id 的保单，重复项未设 id 不参与）
-  await _matchMembersStep(db, openid, familyId, dedupedPolicies)
+  // 全链路审计 S1：命中库中重复的保单排除出成员匹配（其 member_id 已正确落库，match sync 无条件覆盖会污染正确值）
+  const matchTargets = dedupedPolicies.filter((p, i) => !(results[i] && results[i].skipped))
+  // Step 3：成员匹配（尊重已带 member_id 的保单）
+  await _matchMembersStep(db, openid, familyId, matchTargets)
+  // 全链路审计 S2：匹配后才获得 member_id 的新保单补写 facts（writePolicy 在 member_id 为空时不写 facts，
+  // 导致保单在 policies 有 member_id 但 facts 无记录 → 报告据 facts 判定时该保单不可见）
+  for (const p of matchTargets) {
+    if (p.member_id && !p._hadMember && p.id) {
+      const factEvents = policyToFacts(p, { memberId: p.member_id, memberName: p.insured_name, confidence: p.confidence || 0, source: 'ocr' })
+      for (const ev of factEvents) {
+        await addFact(db, openid, { familyId, ...ev }).catch(e => console.error('[dataWrite] match 后补写 facts 失败:', e.message))
+      }
+    }
+  }
   // Step 4：孤儿现价表反向匹配
   await _matchOrphanCashStep(db, openid, familyId, dedupedPolicies)
   // Step 5：现价表并发入库
@@ -231,33 +256,6 @@ async function ingestPolicies(db, openid, event) {
 // 向后兼容入口：测试与外部调用仍用 writePoliciesBatch
 async function writePoliciesBatch(db, openid, event) {
   return ingestPolicies(db, openid, event)
-}
-
-// ---------- migratePoliciesToFacts ----------
-// 一次性迁移：将历史保单补提取为结构化三元组。addFact dedup 保证可重复执行。
-async function migratePoliciesToFacts(db, openid, event) {
-  const { familyId } = event
-  if (!familyId) return { code: 400, msg: '缺少参数 familyId' }
-  // 架构审计第 16 轮候选 #1：读取走 loadActivePolicies 接缝（_openid 注入 + 过滤 deleted）
-  const policies = await loadActivePolicies(db, familyId, openid, { ensureStatus: false, limit: 1000 })
-  let factsCreated = 0, skipped = 0
-  const warnings = []
-  const factPromises = []
-  for (const p of policies) {
-    const missing = ['insurance_period', 'effective_date', 'sum_assured'].filter(k => !p[k])
-    if (missing.length) {
-      warnings.push(`${p.product_name || p._id}: 缺关键字段 [${missing.join(', ')}]，状态/保额可能退化为待确认`)
-    }
-    const events = policyToFacts(p, { memberId: p.member_id || '', memberName: p.insured_name, confidence: p.confidence, source: 'ocr' })
-    for (const ev of events) {
-      factPromises.push(addFact(db, openid, { familyId, ...ev }).then(r => {
-        if (r.code === 200 && r.data && r.data.action === 'skipped') skipped++
-        else if (r.code === 200) factsCreated++
-      }).catch(e => console.error('[dataWrite] migratePoliciesToFacts addFact 失败:', e.message)))
-    }
-  }
-  await Promise.all(factPromises)
-  return { code: 200, data: { policies_scanned: policies.length, facts_created: factsCreated, skipped, warnings } }
 }
 
 // ---------- deletePolicy ----------
@@ -283,8 +281,11 @@ async function deletePolicy(db, openid, event) {
   await ws.silentUpdateWhere('facts', { predicate: _.in(['拥有保障', '公司提供保障', '投保']), object_id: pid, status: 'active' }, { status: 'superseded' }).catch(e => { console.error('[dataWrite] deletePolicy coverage supersede 失败:', e.message); throw new Error('保障/投保边事实作废失败：' + e.message) })
 
   // 步骤 2：facts 已作废，现在软删保单（此时即使失败也只是"active 保单 + 已作废 facts"，报告安全降级）
+  // 安全审计 M7：reason 注入检测（防提示词注入产物写入 deleted_reason 留二次注入）
+  let delReason = reason || '对话确认作废'
+  if (typeof delReason === 'string' && detectInjection(delReason).detected) delReason = '对话确认作废'
   await ws.silentUpdateDoc('policies', target._id, {
-    status: 'deleted', deleted_reason: reason || '对话确认作废'
+    status: 'deleted', deleted_reason: delReason
   }).catch(e => { console.error('[dataWrite] deletePolicy 软删失败:', e.message); throw new Error('保单删除失败：' + e.message) })
 
   // 步骤 3：facts 层留决策备注（source=user_form 视为客户确认，报告据 facts 优先判定为已删除）
@@ -310,7 +311,7 @@ async function deletePolicy(db, openid, event) {
 
 // ---------- updatePolicy ----------
 // 修改已录入保单字段（白名单），保额/保费变化同步"拥有保障"事实边
-const POLICY_EDITABLE = ['product_name', 'insurer', 'sum_assured', 'annual_premium', 'insurance_category', 'insurance_type', 'effective_date', 'premium_term', 'coverage_term', 'policyholder_name', 'beneficiary_name', 'insured_name', 'policy_number']
+const POLICY_EDITABLE = ['product_name', 'insurer', 'sum_assured', 'annual_premium', 'insurance_category', 'insurance_type', 'effective_date', 'premium_term', 'coverage_term', 'policyholder_name', 'beneficiary_name', 'insured_name', 'policy_number', 'status']
 async function updatePolicy(db, openid, event) {
   const { familyId, policyId, policy_number, product_name, insured_name, data } = event
   if (!familyId) return { code: 400, msg: '缺少参数 familyId' }
@@ -326,6 +327,8 @@ async function updatePolicy(db, openid, event) {
   for (const k of Object.keys(data)) {
     if (!POLICY_EDITABLE.includes(k)) continue
     let v = data[k]
+    // 安全审计 M7：字符串字段注入检测（防提示词注入产物回写保单字段成二次注入载体）
+    if (typeof v === 'string' && detectInjection(v).detected) { console.warn('[dataWrite] updatePolicy 注入拦截:', k); continue }
     if (['sum_assured', 'annual_premium', 'premium_term', 'coverage_term'].includes(k) && v !== undefined && v !== '') v = Number(v)
     patch[k] = v
   }
@@ -423,28 +426,4 @@ async function writeCashValue(db, openid, event) {
   return { code: 200, data: { matched: effectiveMatched, policyId: effectivePolicyId, candidates } }
 }
 
-// ---------- matchCashValueManual ----------
-async function matchCashValueManual(db, openid, event) {
-  const { familyId, cashValueId, policyId } = event
-  if (!familyId) return { code: 400, msg: '缺少参数 familyId' }
-  if (!cashValueId || !policyId) return { code: 400, msg: '缺少参数 cashValueId/policyId' }
-
-  const r1 = await db.collection('policy_cash_values').where({ _id: cashValueId, family_id: familyId, _openid: openid }).limit(1).get()
-  if (!r1.data || !r1.data.length) return { code: 404, msg: '未找到该现价记录' }
-  const cashDoc = r1.data[0]
-
-  const r2 = await db.collection('policies').where({ id: policyId, family_id: familyId, _openid: openid }).limit(1).get()
-  if (!r2.data || !r2.data.length) return { code: 404, msg: '未找到该保单' }
-
-  const ws = writeSeam(db, openid, familyId)
-  await ws.silentUpdateDoc('policy_cash_values', cashDoc._id, {
-    policy_id: policyId, matched: true, matched_by: 'manual', matched_at: new Date()
-  })
-  await ws.silentUpdateWhere('policies', { id: policyId }, {
-    cash_value_available: true, latest_cash_value: cashDoc.latest_value || 0
-  })
-  await ws.triggerHooks()
-  return { code: 200, data: { matched: true, policyId } }
-}
-
-module.exports = { writePolicy, writePoliciesBatch, ingestPolicies, _dedupPolicies, _runConcurrent, migratePoliciesToFacts, deletePolicy, updatePolicy, writeCashValue, matchCashValueManual, POLICY_EDITABLE }
+module.exports = { writePolicy, writePoliciesBatch, ingestPolicies, _dedupPolicies, _runConcurrent, deletePolicy, updatePolicy, writeCashValue, POLICY_EDITABLE }

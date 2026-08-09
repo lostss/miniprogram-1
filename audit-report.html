@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>保单OCR到报告生成全链路审计报告</title>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --surface: #ffffff;
+    --surface-muted: #f1f3f5;
+    --border: #e3e6ea;
+    --text-primary: #1a1d21;
+    --text-secondary: #4a5159;
+    --text-muted: #868e96;
+    --brand: #7c5cff;
+    --brand-deep: #5a3fd6;
+    --critical: #e03131;
+    --critical-bg: #fff5f5;
+    --medium: #f08c00;
+    --medium-bg: #fff9db;
+    --low: #2f9e44;
+    --low-bg: #ebfbee;
+    --accent: #1971c2;
+    --shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.04);
+    --radius: 8px;
+    --radius-card: 12px;
+    --radius-full: 999px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --surface: #1a1d23;
+      --surface-muted: #25282f;
+      --border: #2c3038;
+      --text-primary: #e9ecef;
+      --text-secondary: #adb5bd;
+      --text-muted: #6c757d;
+      --critical-bg: #2a1717;
+      --medium-bg: #2a2117;
+      --low-bg: #172a1e;
+      --shadow: 0 1px 3px rgba(0,0,0,0.3), 0 4px 12px rgba(0,0,0,0.2);
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    line-height: 1.6;
+    padding: 24px;
+    max-width: 1200px;
+    margin: 0 auto;
+    font-size: 14px;
+  }
+  /* 头部 */
+  .header {
+    background: var(--surface);
+    border-radius: var(--radius-card);
+    padding: 32px;
+    box-shadow: var(--shadow);
+    margin-bottom: 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 24px;
+  }
+  .header-title h1 {
+    font-size: 24px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    letter-spacing: -0.01em;
+  }
+  .header-title .meta {
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+  .header-title .meta span { margin-right: 16px; }
+  .score-block {
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .score-num {
+    font-size: 48px;
+    font-weight: 700;
+    color: var(--brand);
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+  .score-num .max { font-size: 20px; color: var(--text-muted); font-weight: 400; }
+  .score-label { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
+
+  /* 概览卡片组 */
+  .overview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .stat-card {
+    background: var(--surface);
+    border-radius: var(--radius-card);
+    padding: 20px;
+    box-shadow: var(--shadow);
+    border-left: 4px solid var(--border);
+  }
+  .stat-card.critical { border-left-color: var(--critical); }
+  .stat-card.medium { border-left-color: var(--medium); }
+  .stat-card.low { border-left-color: var(--low); }
+  .stat-card.brand { border-left-color: var(--brand); }
+  .stat-num {
+    font-size: 32px;
+    font-weight: 700;
+    line-height: 1.1;
+    margin-bottom: 4px;
+  }
+  .stat-card.critical .stat-num { color: var(--critical); }
+  .stat-card.medium .stat-num { color: var(--medium); }
+  .stat-card.low .stat-num { color: var(--low); }
+  .stat-card.brand .stat-num { color: var(--brand); }
+  .stat-label { color: var(--text-secondary); font-size: 13px; }
+  .stat-sub { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
+
+  /* 区块标题 */
+  .section { margin-bottom: 32px; }
+  .section-title {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .section-title .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+  }
+  .section-title.critical .dot { background: var(--critical); }
+  .section-title.medium .dot { background: var(--medium); }
+  .section-title.low .dot { background: var(--low); }
+  .section-title.highlight .dot { background: var(--low); }
+  .section-title .count {
+    font-size: 13px; color: var(--text-muted); font-weight: 400;
+    background: var(--surface-muted); padding: 2px 10px; border-radius: var(--radius-full);
+  }
+
+  /* 问题列表 */
+  .issue-card {
+    background: var(--surface);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow);
+    margin-bottom: 12px;
+    overflow: hidden;
+    transition: box-shadow 0.15s;
+  }
+  .issue-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+  .issue-header {
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .issue-tag {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: var(--radius-full);
+    flex-shrink: 0;
+    letter-spacing: 0.02em;
+  }
+  .issue-tag.critical { background: var(--critical-bg); color: var(--critical); }
+  .issue-tag.medium { background: var(--medium-bg); color: var(--medium); }
+  .issue-tag.low { background: var(--low-bg); color: var(--low); }
+  .issue-id {
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    width: 52px;
+  }
+  .issue-title {
+    flex: 1;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+  .issue-arrow {
+    color: var(--text-muted);
+    transition: transform 0.2s;
+    flex-shrink: 0;
+  }
+  .issue-card.open .issue-arrow { transform: rotate(90deg); }
+  .issue-body {
+    display: none;
+    padding: 0 20px 16px 20px;
+    border-top: 1px solid var(--border);
+    margin-top: 0;
+    padding-top: 14px;
+  }
+  .issue-card.open .issue-body { display: block; }
+  .issue-body p { margin-bottom: 8px; color: var(--text-secondary); }
+  .issue-body .field { font-weight: 600; color: var(--text-primary); }
+  .issue-body code {
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 12px;
+    background: var(--surface-muted);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--accent);
+    word-break: break-all;
+  }
+  .issue-body .file-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 12px;
+    font-family: "SF Mono", Consolas, monospace;
+  }
+  .issue-body .file-link:hover { text-decoration: underline; }
+
+  /* 优先级矩阵 */
+  .priority-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+  }
+  .priority-card {
+    background: var(--surface);
+    border-radius: var(--radius-card);
+    padding: 16px 20px;
+    box-shadow: var(--shadow);
+    border-top: 3px solid var(--border);
+  }
+  .priority-card.p0 { border-top-color: var(--critical); }
+  .priority-card.p1 { border-top-color: var(--medium); }
+  .priority-card.p2 { border-top-color: var(--accent); }
+  .priority-card.p3 { border-top-color: var(--low); }
+  .priority-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+  }
+  .priority-label {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+  }
+  .priority-card.p0 .priority-label { color: var(--critical); }
+  .priority-card.p1 .priority-label { color: var(--medium); }
+  .priority-card.p2 .priority-label { color: var(--accent); }
+  .priority-card.p3 .priority-label { color: var(--low); }
+  .priority-effort {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .priority-items { font-size: 13px; color: var(--text-secondary); }
+  .priority-items li {
+    list-style: none;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .priority-items li:last-child { border-bottom: none; }
+  .priority-items code {
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-right: 6px;
+  }
+
+  /* 亮点 */
+  .highlight-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 12px;
+  }
+  .highlight-card {
+    background: var(--surface);
+    border-radius: var(--radius-card);
+    padding: 16px 20px;
+    box-shadow: var(--shadow);
+    border-left: 3px solid var(--low);
+  }
+  .highlight-card h4 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: var(--text-primary);
+  }
+  .highlight-card p {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  /* 雷达图 */
+  .radar-wrap {
+    background: var(--surface);
+    border-radius: var(--radius-card);
+    padding: 24px;
+    box-shadow: var(--shadow);
+    text-align: center;
+  }
+  .radar-wrap h3 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+  .radar-svg { max-width: 400px; margin: 0 auto; }
+
+  /* 页脚 */
+  .footer {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12px;
+    padding: 24px 0;
+    border-top: 1px solid var(--border);
+    margin-top: 32px;
+  }
+  @media (max-width: 640px) {
+    body { padding: 12px; }
+    .header { padding: 20px; flex-direction: column; }
+    .score-block { text-align: left; }
+    .score-num { font-size: 36px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- 头部 -->
+<div class="header">
+  <div class="header-title">
+    <h1>保单OCR到报告生成全链路审计报告</h1>
+    <div class="meta">
+      <span>审计日期：2026-08-08</span>
+      <span>覆盖文件：48个</span>
+      <span>审计方法：穿行测试 + 9大模式扫描</span>
+    </div>
+  </div>
+  <div class="score-block">
+    <div class="score-num">7.8<span class="max">/10</span></div>
+    <div class="score-label">综合评分</div>
+  </div>
+</div>
+
+<!-- 概览 -->
+<div class="overview-grid">
+  <div class="stat-card critical">
+    <div class="stat-num">8</div>
+    <div class="stat-label">严重问题</div>
+    <div class="stat-sub">必须立即修复</div>
+  </div>
+  <div class="stat-card medium">
+    <div class="stat-num">22</div>
+    <div class="stat-label">中等问题</div>
+    <div class="stat-sub">建议优先处理</div>
+  </div>
+  <div class="stat-card low">
+    <div class="stat-num">20</div>
+    <div class="stat-label">低风险问题</div>
+    <div class="stat-sub">可选优化</div>
+  </div>
+  <div class="stat-card brand">
+    <div class="stat-num">10</div>
+    <div class="stat-label">审计亮点</div>
+    <div class="stat-sub">值得保持的设计</div>
+  </div>
+</div>
+
+<!-- 雷达图 -->
+<div class="radar-wrap" style="margin-bottom:24px">
+  <h3>代码质量六维评估</h3>
+  <svg class="radar-svg" viewBox="0 0 320 320" xmlns="http://www.w3.org/2000/svg">
+    <!-- 网格 -->
+    <g fill="none" stroke="var(--border)" stroke-width="1">
+      <polygon points="160,40 273,122 230,254 90,254 47,122"/>
+      <polygon points="160,70 246,134 213,239 107,239 74,134"/>
+      <polygon points="160,100 219,146 196,224 124,224 101,146"/>
+      <polygon points="160,130 192,158 179,209 141,209 128,158"/>
+    </g>
+    <!-- 轴线 -->
+    <g stroke="var(--border)" stroke-width="1">
+      <line x1="160" y1="160" x2="160" y2="40"/>
+      <line x1="160" y1="160" x2="273" y2="122"/>
+      <line x1="160" y1="160" x2="230" y2="254"/>
+      <line x1="160" y1="160" x2="90" y2="254"/>
+      <line x1="160" y1="160" x2="47" y2="122"/>
+    </g>
+    <!-- 数据区域：数据一致性8.5 错误处理8 架构8 可维护性7.5 UI/UX7 性能7.5 -->
+    <polygon points="160,58 261,127 221,243 109,239 63,134"
+             fill="var(--brand)" fill-opacity="0.15"
+             stroke="var(--brand)" stroke-width="2"/>
+    <!-- 数据点 -->
+    <g fill="var(--brand)">
+      <circle cx="160" cy="58" r="4"/>
+      <circle cx="261" cy="127" r="4"/>
+      <circle cx="221" cy="243" r="4"/>
+      <circle cx="109" cy="239" r="4"/>
+      <circle cx="63" cy="134" r="4"/>
+    </g>
+    <!-- 标签 -->
+    <g font-size="12" fill="var(--text-secondary)" font-family="sans-serif">
+      <text x="160" y="28" text-anchor="middle">数据一致性 8.5</text>
+      <text x="285" y="118" text-anchor="start">错误处理 8.0</text>
+      <text x="245" y="274" text-anchor="middle">架构分层 8.0</text>
+      <text x="75" y="274" text-anchor="middle">可维护性 7.5</text>
+      <text x="35" y="118" text-anchor="end">性能 7.5</text>
+    </g>
+    <text x="35" y="135" text-anchor="end" font-size="12" fill="var(--text-secondary)" font-family="sans-serif">UI/UX 7.0</text>
+  </svg>
+  <p style="color:var(--text-muted);font-size:12px;margin-top:8px">核心链路工程质量良好，严重问题集中在边界场景与UX细节</p>
+</div>
+
+<!-- 严重问题 -->
+<div class="section">
+  <div class="section-title critical">
+    <span class="dot"></span>严重问题
+    <span class="count">8 项 · P0</span>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-id">S1</span>
+      <span class="issue-title">matchPoliciesToMembers 无条件覆盖已入库保单的 member_id</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">影响：</span>OCR 重提取已入库保单时，insured_name 轻微偏差会导致模糊匹配关联错误成员，覆盖原有正确 member_id</p>
+      <p><span class="field">根因：</span>dedupedPolicies 中 member_id 始终为空，matchPoliciesToMembers 不跳过已存在保单，silentUpdateWhere 无条件覆盖</p>
+      <p><span class="field">位置：</span><code>policy-write.js:216-218</code> · <code>member-matcher.js:150-162</code></p>
+      <p><span class="field">修复：</span>sync 添加保护——仅更新 member_id 为空的记录，或在 _matchMembersStep 排除 skipped:true 的重复项</p>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-id">S2</span>
+      <span class="issue-title">member_id 为空时 facts 不写入，匹配后也不补写</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">影响：</span>保单存在于 policies 集合且有 member_id，但 facts 集合无对应记录，报告系统据 facts 判定时该保单不可见</p>
+      <p><span class="field">根因：</span>writePolicy 仅在 resolvedMemberId 非空时写 facts，matchPoliciesToMembers 创建新成员后不补写</p>
+      <p><span class="field">位置：</span><code>policy-write.js:77-83</code></p>
+      <p><span class="field">修复：</span>匹配后补写 facts（调用 policyToFacts + addFact）</p>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-id">RC1</span>
+      <span class="issue-title">milestones 字段契约断裂——返回但永不持久化</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">影响：</span>首次报告响应有 milestones，刷新后永久丢失。前端 timeline-builder 设计期望消费却拿不到值</p>
+      <p><span class="field">根因：</span>FIELD_KEYS 数组不包含 milestones，prompt 契约也不含，但 index.js 返回了它</p>
+      <p><span class="field">位置：</span><code>reportAI/index.js:162</code> · <code>report-fields.js:9</code> · <code>prompts.js:337-349</code></p>
+      <p><span class="field">修复：</span>决定：要么加入 FIELD_KEYS + prompt 契约，要么从返回值删除</p>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-id">RC2</span>
+      <span class="issue-title">prompt_cache_key 完全未使用，336行系统提示每次重发</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">影响：</span>每次报告生成重复发送并处理336行系统提示，增加 token 消耗与首字延迟</p>
+      <p><span class="field">位置：</span><code>reportAI/_shared/ai-client.js:70-95</code></p>
+      <p><span class="field">修复：</span>确认 SDK 支持后按 familyId 维度加 cache key</p>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-id">UC1</span>
+      <span class="issue-title">OCR 进度卡片 --sp-3-5 CSS变量未定义，padding 失效回退为0</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">影响：</span>待识别缩略图卡、结果卡、匹配卡左右内边距全为0，内容紧贴边缘</p>
+      <p><span class="field">根因：</span>app.wxss 间距系统未定义 --sp-3-5，padding shorthand 整体无效</p>
+      <p><span class="field">位置：</span><code>ocr-flow/index.wxss:13,27,47</code></p>
+      <p><span class="field">修复：</span>app.wxss 补充定义 <code>--sp-3-5: 14rpx</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-id">UC3</span>
+      <span class="issue-title">OCR 识别阶段进度条显示100%具有误导性</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">影响：</span>AI识别中（10-40秒）进度条满格，用户产生"卡住"错觉</p>
+      <p><span class="field">位置：</span><code>ocr-flow/index.wxml:11</code></p>
+      <p><span class="field">修复：</span>recognize-stream 阶段改用不定式动画（.proc-progress-fill--indef 已定义未使用）</p>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-id">UC4</span>
+      <span class="issue-title">报告页无保单空状态缺失</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">影响：</span>保单全删后显示一堆红色告警和零值数字，无"暂无保单，请上传"引导</p>
+      <p><span class="field">位置：</span><code>report/index.wxml:15-70</code></p>
+      <p><span class="field">修复：</span>增加空状态引导UI，参考首页和客户列表页的空状态设计</p>
+    </div>
+  </div>
+</div>
+
+<!-- 中等问题 -->
+<div class="section">
+  <div class="section-title medium">
+    <span class="dot"></span>中等问题（精选）
+    <span class="count">22 项</span>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-id">RM1</span>
+      <span class="issue-title">版本归档时间戳错位——旧内容贴新时间</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">影响：</span>归档的是上一版报告内容，但 version_at 取的是本次触发时间，版本时间线误导</p>
+      <p><span class="field">位置：</span><code>reportAI/index.js:71,133-138</code> · <code>report-versions.js:40</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-id">RM5</span>
+      <span class="issue-title">CAS占用后AI失败导致30秒重试锁定，前端无提示</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">影响：</span>AI调用失败后 last_analysis_at 停在 casNow，30秒内无法重试，前端仅 toast"分析失败，请重试"</p>
+      <p><span class="field">位置：</span><code>reportAI/index.js:66-76</code></p>
+      <p><span class="field">修复：</span>失败时返回剩余冷却时间，前端 toast 提示需等待</p>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-id">PM5</span>
+      <span class="issue-title">deleteFamily 删除顺序导致孤儿数据风险</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">影响：</span>先删 family 后删关联数据，若 batchTx 失败会残留 policies/facts 等孤儿</p>
+      <p><span class="field">位置：</span><code>family-write.js:180-181</code></p>
+      <p><span class="field">修复：</span>调整顺序：先 batchTx 删关联 → 再删 family</p>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-id">UM1</span>
+      <span class="issue-title">深度分析60秒加载无进度反馈</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">影响：</span>60秒全屏 loading 仅静态"AI分析中..."，无进度/倒计时/阶段提示，用户易误判卡死</p>
+      <p><span class="field">位置：</span><code>report/index.js:82-101</code></p>
+      <p><span class="field">修复：</span>增加阶段提示文案轮播（参考报告加载的3条轮播文案）</p>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-id">UM8</span>
+      <span class="issue-title">保单矩阵表格窄屏列挤压</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">影响：</span>超5种险种时每列仅约100rpx，数字溢出或换行，无横向滚动</p>
+      <p><span class="field">位置：</span><code>report-markdown/index.wxss:55-63</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-id">UM9</span>
+      <span class="issue-title">乐观更新失败无回滚或提示</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">影响：</span>后台校验失败仅 console.error，界面停留在乐观更新状态，可能与服务端不一致</p>
+      <p><span class="field">位置：</span><code>report/index.js:281-284</code></p>
+    </div>
+  </div>
+
+  <p style="color:var(--text-muted);font-size:13px;margin-top:8px">还有 16 项中等问题，详见审计报告文本。</p>
+</div>
+
+<!-- 修复优先级 -->
+<div class="section">
+  <div class="section-title">
+    <span class="dot" style="background:var(--brand)"></span>修复优先级矩阵
+  </div>
+  <div class="priority-grid">
+    <div class="priority-card p0">
+      <div class="priority-header">
+        <span class="priority-label">P0 · 立即修复</span>
+        <span class="priority-effort">工作量：小</span>
+      </div>
+      <ul class="priority-items">
+        <li><code>S1</code>matchPolicies 覆盖保护</li>
+        <li><code>S2</code>facts 补写</li>
+        <li><code>UC1</code>--sp-3-5 定义</li>
+        <li><code>UC3</code>进度条不定式动画</li>
+        <li><code>UC4</code>报告页空状态</li>
+      </ul>
+    </div>
+    <div class="priority-card p1">
+      <div class="priority-header">
+        <span class="priority-label">P1 · 优先处理</span>
+        <span class="priority-effort">工作量：中</span>
+      </div>
+      <ul class="priority-items">
+        <li><code>RC1</code>milestones 契约</li>
+        <li><code>RC2</code>prompt_cache_key</li>
+        <li><code>RM5</code>30s锁定提示</li>
+        <li><code>PM5</code>删除顺序</li>
+      </ul>
+    </div>
+    <div class="priority-card p2">
+      <div class="priority-header">
+        <span class="priority-label">P2 · 计划处理</span>
+        <span class="priority-effort">工作量：小-中</span>
+      </div>
+      <ul class="priority-items">
+        <li><code>RM3/4</code>死字段清理</li>
+        <li><code>UM1</code>60s加载进度</li>
+        <li><code>UM8</code>表格横向滚动</li>
+        <li><code>RM1</code>版本时间戳</li>
+      </ul>
+    </div>
+    <div class="priority-card p3">
+      <div class="priority-header">
+        <span class="priority-label">P3 · 按需处理</span>
+        <span class="priority-effort">工作量：小</span>
+      </div>
+      <ul class="priority-items">
+        <li><code>RM6</code>fmt 死代码</li>
+        <li><code>RM7</code>归档吞错监控</li>
+        <li><code>PM2</code>queryMembers 规范化</li>
+        <li>低风险项 20 项</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- 审计亮点 -->
+<div class="section">
+  <div class="section-title highlight">
+    <span class="dot"></span>审计亮点
+    <span class="count">值得保持</span>
+  </div>
+  <div class="highlight-grid">
+    <div class="highlight-card">
+      <h4>family_id 字段一致性 100%</h4>
+      <p>DB查询全用 family_id（snake_case），API参数用 familyId（camelCase），71处引用零错配</p>
+    </div>
+    <div class="highlight-card">
+      <h4>member_id 穿透链路完整</h4>
+      <p>通过 subject_id 正确穿透 fact-write 去重/作废/查询全链路</p>
+    </div>
+    <div class="highlight-card">
+      <h4>_shared 副本同步良好</h4>
+      <p>6个 guard.js / config.js / ai-client.js 副本内容完全一致，sync-shared.js 闭包式同步</p>
+    </div>
+    <div class="highlight-card">
+      <h4>防重复提交五重守卫</h4>
+      <p>_ocrBusy / _saving / editSaving / _refreshingReport / _analysisBusy 全链路覆盖</p>
+    </div>
+    <div class="highlight-card">
+      <h4>错误码到用户语言映射</h4>
+      <p>13种错误码转为用户友好文案，超长文案自动截断</p>
+    </div>
+    <div class="highlight-card">
+      <h4>AI调用不重试</h4>
+      <p>maxAttempts=1 严格遵循，避免双倍Token消耗和排队</p>
+    </div>
+    <div class="highlight-card">
+      <h4>OCR跨会话恢复</h4>
+      <p>检测未完成批次时弹窗提示，支持继续或放弃</p>
+    </div>
+    <div class="highlight-card">
+      <h4>置信度可视化</h4>
+      <p>四档底色标注字段置信度，低置信标⚠️引导核对</p>
+    </div>
+    <div class="highlight-card">
+      <h4>30秒节流+CAS原子占用</h4>
+      <p>防并发双跑设计正确，一级检查+二级CAS原子占用</p>
+    </div>
+    <div class="highlight-card">
+      <h4>减少动效偏好支持</h4>
+      <p>@media (prefers-reduced-motion: reduce) 禁用装饰动画</p>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  保单OCR到报告生成全链路审计报告 · 生成于 2026-08-08 · 审计方法：穿行测试 + 9大模式扫描
+</div>
+
+<script>
+  // 平滑滚动到问题区
+  document.querySelectorAll('.issue-header').forEach(function(h){
+    h.addEventListener('keydown', function(e){
+      if(e.key === 'Enter' || e.key === ' '){
+        e.preventDefault();
+        this.parentElement.classList.toggle('open');
+      }
+    });
+    h.setAttribute('tabindex','0');
+    h.setAttribute('role','button');
+  });
+</script>
+
+</body>
+</html>

@@ -126,17 +126,27 @@ describe('C. dataWrite 写入', function() {
 // D. conversationAI 提示词
 // ============================================================
 describe('D. conversationAI 提示词', function() {
-  test('SYSTEM_PROMPT 含关键章节', function() {
-    const { ADVISOR_PROMPT } = require('../cloudfunctions/conversationAI/prompts')
-    const chapters = ['角色定位', '工具使用场景', '输出格式', '安全', '信息确认']
-    chapters.forEach(ch => {
-      expect(ADVISOR_PROMPT).toContain(ch)
-    })
+  test('SYSTEM_PROMPT 含关键章节（v9 双通道：A 流式含工具意图协议 / B 工具执行）', function() {
+    const { STREAMING_PROMPT, TOOL_PROMPT, BASE_PROMPT } = require('../cloudfunctions/conversationAI/prompts')
+    // 通道 A：基础角色 + 工具意图协议（v9.6 中性理解/矛盾澄清/标识输出，不断言结果）
+    const aChapters = ['核心职责', '对话风格', '工具意图协议', '红线']
+    aChapters.forEach(ch => expect(STREAMING_PROMPT).toContain(ch))
+    expect(STREAMING_PROMPT).toContain('{TOOL_INTENT:')
+    expect(STREAMING_PROMPT).toContain('中性理解')
+    expect(STREAMING_PROMPT).not.toContain('结果断言')
+    expect(STREAMING_PROMPT).toContain(BASE_PROMPT)
+    // 通道 B：工具执行 + 最终答复（v9.6 回流角色）
+    expect(TOOL_PROMPT).toContain('工具执行员')
+    expect(TOOL_PROMPT).toContain('执行规则')
+    expect(TOOL_PROMPT).toContain('最终答复规则')
+    expect(TOOL_PROMPT).toContain('红线')
   })
 
-  test('buildContext 函数可调用', function() {
-    const { buildAdvisorSystemPrompt } = require('../cloudfunctions/conversationAI/prompts')
-    expect(typeof buildAdvisorSystemPrompt).toBe('function')
+  test('buildContext 函数可调用（v9：buildStreamingPrompt + buildToolSystemPrompt）', function() {
+    const { buildStreamingPrompt, buildToolSystemPrompt, stripToolCardMarkers } = require('../cloudfunctions/conversationAI/prompts')
+    expect(typeof buildStreamingPrompt).toBe('function')
+    expect(typeof buildToolSystemPrompt).toBe('function')
+    expect(typeof stripToolCardMarkers).toBe('function')
   })
 
 })

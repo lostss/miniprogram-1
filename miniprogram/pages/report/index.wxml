@@ -12,24 +12,29 @@
     </view>
   </view>
 
-  <scroll-view class="content" scroll-y scroll-into-view="{{focusAnchor}}" wx:if="{{!loading && family}}">
-    <view class="update-toast {{reportUpdated && !refreshing ? 'show' : ''}}" catchtap="onRefreshReport">数据有更新，点击更新报告</view>
+  <!-- UI 审计 R-S1：加载失败错误态（原 loading=false && family=null 时页面全空白无出口） -->
+  <view class="load-error" wx:if="{{!loading && !family && loadError}}">
+    <text class="load-error-title">报告加载失败</text>
+    <text class="load-error-sub">网络异常或客户档案不存在</text>
+    <button class="load-error-btn pressable" bindtap="onRetryReport">重新加载</button>
+    <button class="load-error-btn load-error-btn--ghost pressable" bindtap="onGoHome">返回首页</button>
+  </view>
+
+  <scroll-view class="content" scroll-y wx:if="{{!loading && family}}">
     <view class="title-bar">
       <view class="report-title">
         <text class="title-name">{{family.name}}</text>
-        <text class="title-sub">家庭保障检视报告</text>
+        <!-- 副标题行：标题与生成时间并排两端分散对齐 -->
+        <view class="title-subrow">
+          <text class="title-sub">家庭保障检视报告</text>
+          <text class="title-meta" wx:if="{{reportMeta.dateTime}}">{{reportMeta.dateTime}}</text>
+        </view>
       </view>
     </view>
-    <!-- 封面元数据：日期 / 编号 / 印章 -->
-    <view class="report-meta" wx:if="{{reportMeta.no}}">
-      <text class="report-meta-text">{{reportMeta.date}}</text>
-      <view class="report-meta-line"></view>
-      <text class="report-meta-text">No.{{reportMeta.no}}</text>
-      <view class="report-seal">保小秘</view>
-    </view>
-    <view class="report-divider" wx:if="{{reportMeta.no}}"></view>
-    <!-- 🟡 Hero 结论先行：保障覆盖检查 + 摘要数字卡 -->
-    <view class="hero anim-fade-up" wx:if="{{hero.alerts.length}}">
+    <!-- 标题区域与正文分隔线 -->
+    <view class="title-divider"></view>
+    <!-- 🟡 Hero 结论先行：保障覆盖检查（全链路审计 UC4：无保单时隐藏，走空状态卡） -->
+    <view class="hero" wx:if="{{hasPolicy && hero.alerts.length}}">
       <view class="hero-title">保障覆盖检查</view>
       <view class="hero-alert {{item.ok ? 'is-ok' : 'is-warn'}}" wx:for="{{hero.alerts}}" wx:key="name">
         <text class="hero-alert-icon">{{item.ok ? '✅' : '⚠️'}}</text>
@@ -38,43 +43,65 @@
       <view class="hero-summary-line">{{hero.summary}}</view>
       <view class="hero-advice" wx:if="{{hero.topAdvice}}">💡 {{hero.topAdvice}}</view>
     </view>
-    <view class="summary-cards anim-fade-up">
-      <view class="sc-card">
-        <text class="sc-val">{{summaryCards.premium}}</text>
-        <text class="sc-unit">万</text>
-        <text class="sc-lbl">总保费</text>
-      </view>
-      <view class="sc-card">
-        <text class="sc-val">{{summaryCards.coverage}}</text>
-        <text class="sc-unit">万</text>
-        <text class="sc-lbl">总保额</text>
-      </view>
-      <view class="sc-card">
-        <text class="sc-val">{{summaryCards.count}}</text>
-        <text class="sc-unit">份</text>
-        <text class="sc-lbl">保单数</text>
+    <!-- 全链路审计 UC4：无保单空状态（引导上传，替代零值数字+红色告警） -->
+    <view class="empty-report" wx:if="{{!hasPolicy}}">
+      <view class="empty-report-icon">📄</view>
+      <view class="empty-report-title">暂无保单</view>
+      <view class="empty-report-desc">点击下方金色按钮上传保单，小秘自动识别并生成保障检视报告</view>
+    </view>
+    <!-- 保障摘要：标题在卡内，与 Hero 同构 -->
+    <view class="summary-card" wx:if="{{hasPolicy}}">
+      <view class="summary-card-title">保障摘要</view>
+      <view class="summary-card-grid">
+        <view class="num-cell">
+          <text class="num-val">{{summaryCards.premium}}</text>
+          <text class="num-unit">万</text>
+          <text class="num-lbl">年保费</text>
+        </view>
+        <view class="num-cell">
+          <text class="num-val">{{summaryCards.coverage}}</text>
+          <text class="num-unit">万</text>
+          <text class="num-lbl">总保额</text>
+        </view>
+        <view class="num-cell">
+          <text class="num-val">{{summaryCards.count}}</text>
+          <text class="num-unit">人</text>
+          <text class="num-lbl">保障人数</text>
+        </view>
       </view>
     </view>
-    <view class="hints" wx:if="{{hints.length}}">
+    <view class="hints" wx:if="{{hasPolicy && hints.length}}">
       <view class="hint-chip pressable" wx:for="{{hints}}" wx:key="index" catchtap="onHintTap" data-q="{{item.q}}">{{item.text}}</view>
     </view>
-    <report-markdown chapters="{{chapters}}" bind:policytap="onPolicyTap" />
+    <report-markdown wx:if="{{hasPolicy}}" chapters="{{chapters}}" bind:policytap="onPolicyTap" bind:chapteredit="onChapterEdit" bind:riskcheck="onRiskCheck" />
+    <!-- 免责声明：报告正文最末（附录之后、转发按钮之前）静态合规小字 -->
+    <view class="report-disclaimer" wx:if="{{disclaimer}}">{{disclaimer}}</view>
     <view class="report-footer">
       <button class="footer-share pressable" open-type="share" aria-label="转发客户">转发报告给客户</button>
+      <button class="footer-analyze pressable" bindtap="onDeepAnalysis" aria-label="深度分析">深度分析</button>
     </view>
-    <view class="content-pad"></view>
   </scroll-view>
 
-  <chat-panel id="chatpanel" wx:if="{{!loading}}" familyId="{{familyId}}" bindreportRefresh="onChatReportRefresh" />
+  <chat-panel id="chatpanel" wx:if="{{!loading}}" familyId="{{familyId}}" bindreportRefresh="onChatReportRefresh" bindcollapse="onChatCollapse" bindbusy="onChatBusy" />
+
+  <!-- UI 审计 状态 S3：AI 深度分析中（可取消） -->
+  <view class="analysis-mask" wx:if="{{analysisShow}}" catchtouchmove="onNoop">
+    <view class="analysis-card">
+      <view class="analysis-spinner"></view>
+      <text class="analysis-title">AI 深度分析中</text>
+      <text class="analysis-sec">已进行 {{analysisSec}}s，正在梳理保障缺口…</text>
+      <button class="analysis-cancel pressable" bindtap="onAnalysisCancel">取消分析</button>
+    </view>
+  </view>
   <!-- FAB 栏提到页面层，确保 position:fixed 相对视口生效 -->
   <view class="fab-wrap" wx:if="{{!loading}}">
     <view class="fab-bar">
       <view class="fab-inner" catchtap="onFabTap">
-        <view class="fab-upload pressable" catchtap="onUploadFab" aria-label="上传保单"><text class="fab-plus">+</text><text class="fab-upload-label">保单</text></view>
-        <view class="fab-input {{!fabCollapsed ? 'fab-input-active' : ''}}">
+        <view class="fab-upload pressable" catchtap="onUploadFab" aria-label="上传保单"><image class="fab-upload-icon" src="/images/upload.svg" mode="aspectFit" /></view>
+        <view class="fab-input">
           <input class="fab-real-input" value="{{fabText}}" placeholder="问小秘..." bindinput="onFabInput" bindconfirm="onFabSend" confirm-type="send" bindfocus="onFabFocus" aria-label="输入消息" />
         </view>
-        <view class="fab-send pressable {{(!fabText || false) ? 'is-disabled' : ''}}" bindtap="onFabSend" aria-label="发送消息"><text class="fab-arrow">→</text></view>
+        <view class="fab-send pressable {{(!fabText || chatBusy) ? 'is-disabled' : ''}}" bindtap="onFabSend" aria-label="发送消息"><text class="fab-arrow">→</text></view>
       </view>
     </view>
   </view>
@@ -83,35 +110,43 @@
 
 
   <!-- 成员管理 Sheet（家庭结构标题 [编辑] 进入） -->
-  <view class="member-manage-overlay" wx:if="{{showMemberManage}}" catchtap="closeMemberManage">
+  <view class="member-manage-overlay" wx:if="{{showMemberManage}}" catchtap="closeMemberManage" catchtouchmove="onNoop">
     <view class="member-manage" catchtap="onSheetNoop">
       <view class="mm-grabber"></view>
+      <!-- UI 审计 #⑤：成员管理 Sheet 补显式关闭按钮（原仅遮罩 catchtap，可发现性弱） -->
+      <view class="mm-close pressable" bindtap="closeMemberManage" aria-label="关闭"><image class="mm-close-icon" src="/images/close.svg" mode="aspectFit" /></view>
       <view class="mm-title">家庭成员</view>
-      <view class="mm-list">
+      <scroll-view class="mm-list" scroll-y>
         <view class="mm-item pressable" wx:for="{{memberManageList}}" wx:key="member_id" data-mid="{{item.member_id}}" catchtap="onMemberManageEdit">
           <text class="mm-name">{{item.name}}</text>
           <text class="mm-role">{{item.display}}</text>
           <text class="mm-edit">编辑</text>
+          <!-- 家庭结构可编辑性：删除成员（catchtap 阻止冒泡到行编辑；软删走 _syncMembers diff） -->
+          <view class="mm-del pressable" catchtap="onMemberManageDelete" data-mid="{{item.member_id}}" aria-label="删除成员">删除</view>
         </view>
-      </view>
+      </scroll-view>
       <view class="mm-divider"></view>
       <button class="mm-add pressable" bindtap="onMemberManageAdd" aria-label="添加成员">+ 添加成员</button>
     </view>
   </view>
 
   <!-- 保单明细只读 Sheet（点击附录卡片弹出，底部编辑入口） -->
-  <view class="policy-sheet-overlay" wx:if="{{showPolicySheet}}" catchtap="onPolicySheetClose">
+  <view class="policy-sheet-overlay" wx:if="{{showPolicySheet}}" catchtap="onPolicySheetClose" catchtouchmove="onNoop">
     <view class="policy-sheet" catchtap="onSheetNoop">
       <view class="ps-grabber"></view>
+      <!-- UI 审计 #⑤：保单明细 Sheet 补显式关闭按钮 -->
+      <view class="ps-close pressable" bindtap="onPolicySheetClose" aria-label="关闭"><image class="ps-close-icon" src="/images/close.svg" mode="aspectFit" /></view>
       <view class="ps-title">{{currentPolicy.product_name}} · {{policyCat}}</view>
-      <view class="ps-body">
+      <scroll-view class="ps-body" scroll-y>
         <view class="ps-row" wx:for="{{policyRows}}" wx:key="label">
           <text class="ps-row-lbl">{{item.label}}</text>
           <text class="ps-row-val">{{item.value}}</text>
         </view>
+      </scroll-view>
+      <view class="ps-actions">
+        <button class="ps-cancel-btn pressable" bindtap="onPolicySheetClose" aria-label="取消">取消</button>
+        <button class="ps-edit-btn pressable" bindtap="onPolicySheetEdit" aria-label="编辑保单">编辑</button>
       </view>
-      <view class="ps-divider"></view>
-      <button class="ps-edit-btn pressable" bindtap="onPolicySheetEdit" aria-label="编辑保单">编辑</button>
     </view>
   </view>
 

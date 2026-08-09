@@ -1,0 +1,1035 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UI/UX 交互设计专项审计报告</title>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --surface: #ffffff;
+    --surface-muted: #f1f3f5;
+    --border: #e3e6ea;
+    --border-light: #f0f1f3;
+    --text-primary: #1a1d21;
+    --text-secondary: #4a5159;
+    --text-muted: #868e96;
+    --brand: #7c5cff;
+    --brand-deep: #5a3fd6;
+    --critical: #e03131;
+    --critical-bg: #fff5f5;
+    --medium: #f08c00;
+    --medium-bg: #fff9db;
+    --low: #2f9e44;
+    --low-bg: #ebfbee;
+    --accent: #1971c2;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+    --shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.04);
+    --radius: 8px;
+    --radius-card: 12px;
+    --radius-full: 999px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --surface: #1a1d23;
+      --surface-muted: #25282f;
+      --border: #2c3038;
+      --border-light: #232630;
+      --text-primary: #e9ecef;
+      --text-secondary: #adb5bd;
+      --text-muted: #6c757d;
+      --critical-bg: #2a1717;
+      --medium-bg: #2a2117;
+      --low-bg: #172a1e;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+      --shadow: 0 1px 3px rgba(0,0,0,0.3), 0 4px 12px rgba(0,0,0,0.2);
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    line-height: 1.6;
+    padding: 24px;
+    max-width: 1280px;
+    margin: 0 auto;
+    font-size: 14px;
+  }
+
+  /* 头部 */
+  .header {
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-deep) 100%);
+    border-radius: var(--radius-card);
+    padding: 36px 32px;
+    box-shadow: var(--shadow);
+    margin-bottom: 24px;
+    color: #fff;
+  }
+  .header h1 {
+    font-size: 26px;
+    font-weight: 700;
+    margin-bottom: 10px;
+    letter-spacing: -0.01em;
+  }
+  .header .meta {
+    opacity: 0.85;
+    font-size: 13px;
+  }
+  .header .meta span { margin-right: 20px; }
+
+  /* 统计卡片 */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .stat-card {
+    background: var(--surface);
+    border-radius: var(--radius-card);
+    padding: 20px 24px;
+    box-shadow: var(--shadow-sm);
+    position: relative;
+    overflow: hidden;
+  }
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 4px;
+  }
+  .stat-card.critical::before { background: var(--critical); }
+  .stat-card.medium::before { background: var(--medium); }
+  .stat-card.low::before { background: var(--low); }
+  .stat-card.total::before { background: var(--brand); }
+  .stat-num {
+    font-size: 36px;
+    font-weight: 700;
+    line-height: 1.1;
+    margin-bottom: 4px;
+  }
+  .stat-card.critical .stat-num { color: var(--critical); }
+  .stat-card.medium .stat-num { color: var(--medium); }
+  .stat-card.low .stat-num { color: var(--low); }
+  .stat-card.total .stat-num { color: var(--brand); }
+  .stat-label { color: var(--text-secondary); font-size: 13px; font-weight: 500; }
+
+  /* 维度分布 */
+  .dimension-section {
+    background: var(--surface);
+    border-radius: var(--radius-card);
+    padding: 24px 28px;
+    box-shadow: var(--shadow-sm);
+    margin-bottom: 28px;
+  }
+  .dimension-section h2 {
+    font-size: 17px;
+    font-weight: 600;
+    margin-bottom: 18px;
+  }
+  .dim-row {
+    display: grid;
+    grid-template-columns: 160px 1fr 80px;
+    gap: 16px;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .dim-row:last-child { border-bottom: none; }
+  .dim-name { font-weight: 500; color: var(--text-primary); }
+  .dim-bar {
+    height: 24px;
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    background: var(--surface-muted);
+  }
+  .dim-bar-seg {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: #fff;
+    min-width: 0;
+  }
+  .dim-bar-seg.critical { background: var(--critical); }
+  .dim-bar-seg.medium { background: var(--medium); }
+  .dim-bar-seg.low { background: var(--low); }
+  .dim-total {
+    text-align: right;
+    font-weight: 600;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+
+  /* 筛选标签 */
+  .filter-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+  .filter-chip {
+    padding: 6px 16px;
+    border-radius: var(--radius-full);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .filter-chip:hover { border-color: var(--brand); color: var(--brand); }
+  .filter-chip.active {
+    background: var(--brand);
+    color: #fff;
+    border-color: var(--brand);
+  }
+  .filter-chip .count {
+    font-size: 11px;
+    opacity: 0.7;
+    margin-left: 4px;
+  }
+
+  /* 问题卡片 */
+  .issue-list { margin-bottom: 32px; }
+  .issue-card {
+    background: var(--surface);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-sm);
+    margin-bottom: 10px;
+    overflow: hidden;
+    border-left: 4px solid transparent;
+    transition: box-shadow 0.15s, transform 0.15s;
+  }
+  .issue-card:hover { box-shadow: var(--shadow); }
+  .issue-card.critical { border-left-color: var(--critical); }
+  .issue-card.medium { border-left-color: var(--medium); }
+  .issue-card.low { border-left-color: var(--low); }
+  .issue-card.hidden { display: none; }
+
+  .issue-header {
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .issue-tag {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: var(--radius-full);
+    flex-shrink: 0;
+    letter-spacing: 0.02em;
+  }
+  .issue-tag.critical { background: var(--critical-bg); color: var(--critical); }
+  .issue-tag.medium { background: var(--medium-bg); color: var(--medium); }
+  .issue-tag.low { background: var(--low-bg); color: var(--low); }
+  .issue-cat {
+    font-size: 11px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    width: 70px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .issue-id {
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    width: 60px;
+  }
+  .issue-title {
+    flex: 1;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+  .issue-arrow {
+    color: var(--text-muted);
+    transition: transform 0.2s;
+    flex-shrink: 0;
+    font-size: 16px;
+  }
+  .issue-card.open .issue-arrow { transform: rotate(90deg); }
+  .issue-body {
+    display: none;
+    padding: 0 20px 16px 20px;
+    border-top: 1px solid var(--border-light);
+    padding-top: 14px;
+  }
+  .issue-card.open .issue-body { display: block; }
+  .issue-body p { margin-bottom: 8px; color: var(--text-secondary); }
+  .issue-body .field { font-weight: 600; color: var(--text-primary); }
+  .issue-body code {
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 12px;
+    background: var(--surface-muted);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--accent);
+    word-break: break-all;
+  }
+
+  /* 修复优先级 */
+  .priority-section { margin-bottom: 32px; }
+  .priority-section h2 {
+    font-size: 17px;
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+  .priority-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 14px;
+  }
+  .priority-card {
+    background: var(--surface);
+    border-radius: var(--radius-card);
+    padding: 18px 22px;
+    box-shadow: var(--shadow-sm);
+    border-top: 3px solid var(--border);
+  }
+  .priority-card.p0 { border-top-color: var(--critical); }
+  .priority-card.p1 { border-top-color: var(--medium); }
+  .priority-card.p2 { border-top-color: var(--accent); }
+  .priority-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+  }
+  .priority-label {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+  }
+  .priority-card.p0 .priority-label { color: var(--critical); }
+  .priority-card.p1 .priority-label { color: var(--medium); }
+  .priority-card.p2 .priority-label { color: var(--accent); }
+  .priority-effort { font-size: 11px; color: var(--text-muted); }
+  .priority-items { font-size: 13px; color: var(--text-secondary); }
+  .priority-items li {
+    list-style: none;
+    padding: 5px 0;
+    border-bottom: 1px solid var(--border-light);
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .priority-items li:last-child { border-bottom: none; }
+  .priority-items code {
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    min-width: 52px;
+  }
+
+  /* 结论卡片 */
+  .conclusion-section {
+    background: var(--surface);
+    border-radius: var(--radius-card);
+    padding: 24px 28px;
+    box-shadow: var(--shadow-sm);
+    margin-bottom: 32px;
+  }
+  .conclusion-section h2 {
+    font-size: 17px;
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+  .conclusion-item {
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    margin-bottom: 8px;
+    border-left: 3px solid var(--border);
+  }
+  .conclusion-item.risk { border-left-color: var(--critical); background: var(--critical-bg); }
+  .conclusion-item.exp { border-left-color: var(--medium); background: var(--medium-bg); }
+  .conclusion-item.waste { border-left-color: var(--accent); background: rgba(25,113,194,0.08); }
+  .conclusion-item.visual { border-left-color: var(--brand); background: rgba(124,92,255,0.08); }
+  .conclusion-item.positive { border-left-color: var(--low); background: var(--low-bg); }
+  .conclusion-item h4 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .conclusion-item p {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .footer {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12px;
+    padding: 24px 0;
+    border-top: 1px solid var(--border);
+    margin-top: 32px;
+  }
+  @media (max-width: 768px) {
+    body { padding: 12px; }
+    .header { padding: 24px 20px; }
+    .header h1 { font-size: 20px; }
+    .dim-row { grid-template-columns: 1fr; gap: 4px; }
+    .dim-total { text-align: left; }
+  }
+</style>
+</head>
+<body>
+
+<!-- 头部 -->
+<div class="header">
+  <h1>UI/UX 交互设计专项审计报告</h1>
+  <div class="meta">
+    <span>审计日期：2026-08-08</span>
+    <span>覆盖文件：15+ 核心文件</span>
+    <span>审计维度：4大方向</span>
+  </div>
+</div>
+
+<!-- 统计卡片 -->
+<div class="stat-grid">
+  <div class="stat-card critical">
+    <div class="stat-num">16</div>
+    <div class="stat-label">严重问题</div>
+  </div>
+  <div class="stat-card medium">
+    <div class="stat-num">40</div>
+    <div class="stat-label">中等问题</div>
+  </div>
+  <div class="stat-card low">
+    <div class="stat-num">28</div>
+    <div class="stat-label">低风险问题</div>
+  </div>
+  <div class="stat-card total">
+    <div class="stat-num">84</div>
+    <div class="stat-label">问题总数</div>
+  </div>
+</div>
+
+<!-- 维度分布 -->
+<div class="dimension-section">
+  <h2>四大维度问题分布</h2>
+  <div class="dim-row">
+    <div class="dim-name">交互流程完整性</div>
+    <div class="dim-bar">
+      <div class="dim-bar-seg critical" style="flex:4">4</div>
+      <div class="dim-bar-seg medium" style="flex:8">8</div>
+      <div class="dim-bar-seg low" style="flex:6">6</div>
+    </div>
+    <div class="dim-total">18 项</div>
+  </div>
+  <div class="dim-row">
+    <div class="dim-name">视觉一致性</div>
+    <div class="dim-bar">
+      <div class="dim-bar-seg critical" style="flex:6">6</div>
+      <div class="dim-bar-seg medium" style="flex:7">7</div>
+      <div class="dim-bar-seg low" style="flex:5">5</div>
+    </div>
+    <div class="dim-total">18 项</div>
+  </div>
+  <div class="dim-row">
+    <div class="dim-name">状态反馈与加载</div>
+    <div class="dim-bar">
+      <div class="dim-bar-seg critical" style="flex:2">2</div>
+      <div class="dim-bar-seg medium" style="flex:12">12</div>
+      <div class="dim-bar-seg low" style="flex:11">11</div>
+    </div>
+    <div class="dim-total">25 项</div>
+  </div>
+  <div class="dim-row">
+    <div class="dim-name">表单与无障碍</div>
+    <div class="dim-bar">
+      <div class="dim-bar-seg critical" style="flex:4">4</div>
+      <div class="dim-bar-seg medium" style="flex:13">13</div>
+      <div class="dim-bar-seg low" style="flex:6">6</div>
+    </div>
+    <div class="dim-total">23 项</div>
+  </div>
+</div>
+
+<!-- 筛选 -->
+<div class="filter-bar">
+  <div class="filter-chip active" data-filter="all">全部<span class="count">84</span></div>
+  <div class="filter-chip" data-filter="critical">严重<span class="count">16</span></div>
+  <div class="filter-chip" data-filter="medium">中等<span class="count">40</span></div>
+  <div class="filter-chip" data-filter="low">低<span class="count">28</span></div>
+  <div class="filter-chip" data-filter="flow">交互流程<span class="count">18</span></div>
+  <div class="filter-chip" data-filter="visual">视觉一致性<span class="count">18</span></div>
+  <div class="filter-chip" data-filter="feedback">状态反馈<span class="count">25</span></div>
+  <div class="filter-chip" data-filter="a11y">表单无障碍<span class="count">23</span></div>
+</div>
+
+<!-- 问题列表 -->
+<div class="issue-list" id="issueList">
+
+  <!-- ===== 严重问题 ===== -->
+
+  <div class="issue-card critical" data-severity="critical" data-cat="flow">
+    <div class="issue-header">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-cat">交互流程</span>
+      <span class="issue-id">F-S1</span>
+      <span class="issue-title">客户搜索竞态：loading 守卫静默丢弃后续搜索请求</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>用户输入"a"搜索 in-flight 时，继续输入"ab"被 <code>if (this.data.loading) return</code> 静默丢弃，搜索框显示"ab"但列表仍是"a"的结果</p>
+      <p><span class="field">位置：</span><code>clients/index.js:15,34-38</code></p>
+      <p><span class="field">修复：</span>loading 改为请求ID追踪，不阻塞新请求；或取消旧请求再发新的</p>
+    </div>
+  </div>
+
+  <div class="issue-card critical" data-severity="critical" data-cat="flow">
+    <div class="issue-header">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-cat">交互流程</span>
+      <span class="issue-id">F-S2</span>
+      <span class="issue-title">OCR 编辑 sheet 无防重复提交，手动录入双击产生重复保单</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>onSheetConfirm 无 saving/busy 守卫，WXML 保存按钮无 disabled 绑定，快速双击会向 _procPolicies 推入两条相同保单并持久化到数据库</p>
+      <p><span class="field">位置：</span><code>ocr-flow/index.js:567-601</code> · <code>ocr-flow/index.wxml:182</code></p>
+      <p><span class="field">修复：</span>onSheetConfirm 加 <code>_saving</code> 守卫 + 按钮 <code>disabled="{{ocrSheet.saving}}"</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card critical" data-severity="critical" data-cat="flow">
+    <div class="issue-header">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-cat">交互流程</span>
+      <span class="issue-id">F-S3</span>
+      <span class="issue-title">_doSave 成功后新成员角色补写失败被静默吞错</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>保单已写入成功，但若 apiGetFamily 返回 null（网络抖动），新成员角色永远不会被写入，用户看到保存成功但报告页家庭成员角色缺失</p>
+      <p><span class="field">位置：</span><code>ocr-flow/index.js:336-345</code></p>
+      <p><span class="field">修复：</span>fam 为 null 时 toast 提示 + 日志上报 + 重试机制</p>
+    </div>
+  </div>
+
+  <div class="issue-card critical" data-severity="critical" data-cat="flow">
+    <div class="issue-header">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-cat">交互流程</span>
+      <span class="issue-id">F-S4</span>
+      <span class="issue-title">checkResume 恢复后 _ocrBusy 未设置，300ms 窗口可被新 OCR 覆盖</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>恢复路径从未设置 _ocrBusy=true，300ms 延迟内用户点击上传会启动新 OCR，到期后 _procRefresh 用旧恢复数据覆盖新 OCR 的 upload 相位</p>
+      <p><span class="field">位置：</span><code>ocr-flow/index.js:78-87</code></p>
+      <p><span class="field">修复：</span>checkResume 确认后立即设 <code>self._ocrBusy = true</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card critical" data-severity="critical" data-cat="visual">
+    <div class="issue-header">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-cat">视觉</span>
+      <span class="issue-id">V-S1</span>
+      <span class="issue-title">--fw-regular 未定义但被引用，字重失效</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>app.wxss 仅定义 --fw-normal/medium/semi/bold，无 --fw-regular。.h1n-unit 字重失效回退为 normal</p>
+      <p><span class="field">位置：</span><code>report-markdown/index.wxss:11</code></p>
+      <p><span class="field">修复：</span>改引用 <code>--fw-normal</code> 或在 app.wxss 补定义</p>
+    </div>
+  </div>
+
+  <div class="issue-card critical" data-severity="critical" data-cat="visual">
+    <div class="issue-header">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-cat">视觉</span>
+      <span class="issue-id">V-S2</span>
+      <span class="issue-title">--warn 未定义且无 fallback，置信度徽章颜色完全失效</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>app.wxss 无 --warn 变量，.tone-badge 颜色完全失效，文字继承默认色，无法区分告警态</p>
+      <p><span class="field">位置：</span><code>edit-sheet/index.wxss:25</code></p>
+      <p><span class="field">修复：</span>app.wxss 补定义 <code>--warn</code> 或改引用 <code>--amber</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card critical" data-severity="critical" data-cat="visual">
+    <div class="issue-header">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-cat">视觉</span>
+      <span class="issue-id">V-S3</span>
+      <span class="issue-title">--ease-in-out 未定义，进度条动画 timing 失效</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>app.wxss 仅定义 --ease-out/in/out-expo/spring，无 --ease-in-out。进度条不定式动画回退为默认 ease</p>
+      <p><span class="field">位置：</span><code>ocr-flow/index.wxss:10</code></p>
+      <p><span class="field">修复：</span>改引用 <code>--ease-out</code> 或补定义</p>
+    </div>
+  </div>
+
+  <div class="issue-card critical" data-severity="critical" data-cat="visual">
+    <div class="issue-header">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-cat">视觉</span>
+      <span class="issue-id">V-S5</span>
+      <span class="issue-title">暗色模式覆盖完全缺失</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>全项目仅 1 个 @media（reduced-motion），无任何 prefers-color-scheme: dark 适配。系统暗色模式下页面仍是亮底，74个变量均为亮色固定值</p>
+      <p><span class="field">位置：</span><code>app.wxss</code></p>
+      <p><span class="field">修复：</span>增加 <code>@media (prefers-color-scheme: dark)</code> 覆盖核心变量</p>
+    </div>
+  </div>
+
+  <div class="issue-card critical" data-severity="critical" data-cat="visual">
+    <div class="issue-header">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-cat">视觉</span>
+      <span class="issue-id">V-S6</span>
+      <span class="issue-title">保障全景矩阵 overflow:hidden 裁剪溢出内容</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>pano 表格 overflow:hidden 直接裁剪溢出内容，窄屏/多成员场景数据丢失。对比 markdown-render 的表格正确用了 overflow-x:auto</p>
+      <p><span class="field">位置：</span><code>report-markdown/index.wxss:51</code></p>
+      <p><span class="field">修复：</span><code>overflow:hidden</code> → <code>overflow-x:auto</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card critical" data-severity="critical" data-cat="feedback">
+    <div class="issue-header">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-cat">状态反馈</span>
+      <span class="issue-id">R-S1</span>
+      <span class="issue-title">报告页未捕获异常导致空白页死胡同</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>_loadReport catch 块仅 console.error 并设 loading:false，family 保持 null。WXML 中 loading=false 且 family=null 时两个区块均不渲染，页面主区域完全空白，无错误提示无重试入口</p>
+      <p><span class="field">位置：</span><code>report/index.js:208</code> · <code>report/index.wxml:3-15</code></p>
+      <p><span class="field">修复：</span>WXML 增加 <code>!loading && !family</code> 错误状态分支 + 重试按钮</p>
+    </div>
+  </div>
+
+  <div class="issue-card critical" data-severity="critical" data-cat="feedback">
+    <div class="issue-header">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-cat">状态反馈</span>
+      <span class="issue-id">R-S2</span>
+      <span class="issue-title">报告页错误弹窗"留在本页"选项是死胡同</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>getFamily 返回 404（家庭已删除）时，用户点击"留在本页"后 loading=false 且 family=null，陷入空白页。家庭已不存在，留在本页无内容可看、无重试入口</p>
+      <p><span class="field">位置：</span><code>report/index.js:202</code></p>
+      <p><span class="field">修复：</span>404 场景下移除"留在本页"选项，或留本页时显示错误态+返回首页按钮</p>
+    </div>
+  </div>
+
+  <div class="issue-card critical" data-severity="critical" data-cat="a11y">
+    <div class="issue-header">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-cat">表单</span>
+      <span class="issue-id">A-S1</span>
+      <span class="issue-title">OCR编辑表单数值字段弹文本键盘（无 keyboard-type）</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>输入框无 type 属性，保额、保费、缴费年限等数值字段全部弹起文本键盘，用户需手动切换输入数字。对比 edit-sheet 已正确设置 type:'number'</p>
+      <p><span class="field">位置：</span><code>ocr-flow/index.wxml:176</code> · <code>ocr-flow/index.js:663-696</code></p>
+      <p><span class="field">修复：</span>_buildSheetFields 数值字段补 <code>type:'digit'</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card critical" data-severity="critical" data-cat="a11y">
+    <div class="issue-header">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-cat">表单</span>
+      <span class="issue-id">A-S2</span>
+      <span class="issue-title">OCR编辑表单"编辑模式"完全无校验</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>编辑已有保单时仅 trim 后直接写回，不校验产品名称必填、不校验数值格式（保额可填"abc"）、不校验日期格式、不校验长度。脏数据直接进入 _procPolicies 并最终写库</p>
+      <p><span class="field">位置：</span><code>ocr-flow/index.js:587-600</code></p>
+      <p><span class="field">修复：</span>复用 edit-form.js 的 validate 逻辑或内联校验</p>
+    </div>
+  </div>
+
+  <div class="issue-card critical" data-severity="critical" data-cat="a11y">
+    <div class="issue-header">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-cat">表单</span>
+      <span class="issue-id">A-S3</span>
+      <span class="issue-title">OCR编辑表单"手动录入"仅校验产品名称</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>仅 if (!np.product_name) 一行校验，保额、保费等数值字段可填任意非法字符串后保存，无类型/范围/格式校验</p>
+      <p><span class="field">位置：</span><code>ocr-flow/index.js:567-586</code></p>
+      <p><span class="field">修复：</span>补全数值字段 Number() 校验、日期格式校验</p>
+    </div>
+  </div>
+
+  <div class="issue-card critical" data-severity="critical" data-cat="a11y">
+    <div class="issue-header">
+      <span class="issue-tag critical">严重</span>
+      <span class="issue-cat">表单</span>
+      <span class="issue-id">A-S4</span>
+      <span class="issue-title">edit-sheet 字段级校验基础设施完全闲置</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>edit-sheet 内置了 required/maxLen/pattern 校验逻辑及 onFieldBlur 实时校验、_validateAll 保存校验，但 edit-form.js 所有字段配置均未设置这些属性。失焦校验永不触发、必填星号永不渲染、实时反馈完全失效</p>
+      <p><span class="field">位置：</span><code>edit-form.js:17-25,35-39,53-66</code> · <code>edit-sheet/index.js:47-73</code></p>
+      <p><span class="field">修复：</span>edit-form.js 字段配置补 required/maxLen/pattern，激活已有校验能力</p>
+    </div>
+  </div>
+
+  <!-- ===== 中等问题精选 ===== -->
+
+  <div class="issue-card medium" data-severity="medium" data-cat="flow">
+    <div class="issue-header">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-cat">交互流程</span>
+      <span class="issue-id">F-M1</span>
+      <span class="issue-title">报告页 onPullDownRefresh 遗漏 chat-panel 展开态拦截</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>chat-panel 展开时下拉会触发 onRefreshReport → wx.showLoading 盖在对话面板上方，造成视觉混乱</p>
+      <p><span class="field">位置：</span><code>report/index.js:265-273</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card medium" data-severity="medium" data-cat="flow">
+    <div class="issue-header">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-cat">交互流程</span>
+      <span class="issue-id">F-M3</span>
+      <span class="issue-title">首页 60s TTL 缓存：报告页编辑后返回首页不刷新</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>60s 内缓存命中即 return，报告页编辑成员/财务后返回首页，列表显示缓存旧数据（成员数/完整度过期）</p>
+      <p><span class="field">位置：</span><code>index/index.js:32-38,16-20</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card medium" data-severity="medium" data-cat="flow">
+    <div class="issue-header">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-cat">交互流程</span>
+      <span class="issue-id">F-M6</span>
+      <span class="issue-title">客户列表 toast 提示"下拉重试"但页面未开启下拉刷新</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>clients/index.json 无 enablePullDownRefresh，用户按提示下拉无响应，错误恢复路径断裂</p>
+      <p><span class="field">位置：</span><code>clients/index.js:27</code> + <code>clients/index.json</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card medium" data-severity="medium" data-cat="visual">
+    <div class="issue-header">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-cat">视觉</span>
+      <span class="issue-id">V-M1</span>
+      <span class="issue-title">置信度底色硬编码且跨组件重复</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>#FFF8E1/#FFF0E0/#E3F2FD 在 ocr-flow 和 edit-sheet 两处各自硬编码，冷黄/冷橙/冷蓝与暖金主题冲突，两处不同步风险高</p>
+      <p><span class="field">位置：</span><code>ocr-flow/index.wxss:109-111</code> · <code>edit-sheet/index.wxss:22-24</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card medium" data-severity="medium" data-cat="visual">
+    <div class="issue-header">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-cat">视觉</span>
+      <span class="issue-id">V-M4</span>
+      <span class="issue-title">pano 状态色对比度风险（均低于 WCAG AA 4.5:1）</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>amber 3:1、ok 3.5:1、red 4:1，小字（24rpx）场景下不达标</p>
+      <p><span class="field">位置：</span><code>report-markdown/index.wxss:64-66</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card medium" data-severity="medium" data-cat="visual">
+    <div class="issue-header">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-cat">视觉</span>
+      <span class="issue-id">V-M6</span>
+      <span class="issue-title">同名类跨文件冲突（.sk-shimmer 两处定义不同）</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>.sk-shimmer 在 report 是完整 shimmer 渐变动画，在 index 仅 background:var(--border) 纯色。.card-removing + @keyframes fadeOut 也在两处完全相同重复</p>
+      <p><span class="field">位置：</span><code>report/index.wxss:138</code> vs <code>index/index.wxss:51</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card medium" data-severity="medium" data-cat="feedback">
+    <div class="issue-header">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-cat">状态反馈</span>
+      <span class="issue-id">R-M1</span>
+      <span class="issue-title">深度分析 60 秒长操作无进度反馈</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>60秒全屏 loading 仅静态"AI 分析中..."，无已用时长、无进度条、无阶段提示。对比 OCR 流程有 elapsed 计时器</p>
+      <p><span class="field">位置：</span><code>report/index.js:88</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card medium" data-severity="medium" data-cat="feedback">
+    <div class="issue-header">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-cat">状态反馈</span>
+      <span class="issue-id">R-M5</span>
+      <span class="issue-title">网络失败伪装为空状态（客户页+首页）</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>加载失败后 families=[] 渲染"尚无客户档案"空状态，用户误判为"无数据"而放弃。首页同理显示 onboarding 引导</p>
+      <p><span class="field">位置：</span><code>clients/index.wxml:26-30</code> · <code>index/index.wxml:10-31</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card medium" data-severity="medium" data-cat="feedback">
+    <div class="issue-header">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-cat">状态反馈</span>
+      <span class="issue-id">R-M7</span>
+      <span class="issue-title">报告页编辑表单关闭不确认未保存变更</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>编辑家庭结构/财务/保单信息时误触遮罩或关闭按钮，已输入内容全部丢失且无确认。对比删除操作有二次确认</p>
+      <p><span class="field">位置：</span><code>report/index.js:371</code> · <code>edit-sheet/index.js:81-84</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card medium" data-severity="medium" data-cat="feedback">
+    <div class="issue-header">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-cat">状态反馈</span>
+      <span class="issue-id">R-M9</span>
+      <span class="issue-title">errorHandler 缺少 429 限流错误映射</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>ERROR_MAP 覆盖 400/401/403/404/500/NETWORK/TIMEOUT/UNKNOWN，但未包含 429。AI 服务频繁返回 429，回退到 UNKNOWN → "操作失败，请重试"。而 ocr-flow.js 的 errorToUI 正确映射 429 为"AI服务繁忙"</p>
+      <p><span class="field">位置：</span><code>errorHandler.js:17-26</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card medium" data-severity="medium" data-cat="feedback">
+    <div class="issue-header">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-cat">状态反馈</span>
+      <span class="issue-id">R-M11</span>
+      <span class="issue-title">errorLabel 丢弃 errorToUI 计算的恢复引导文案</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>errorToUI 精心映射了每个错误码的 {title, content}（如"请确认图片清晰后重试"），但 errorLabel 仅返回 ui.title，content 中的恢复引导文案被完全丢弃，错误卡只显示标题无具体建议</p>
+      <p><span class="field">位置：</span><code>ocr-flow.js:341-402</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card medium" data-severity="medium" data-cat="a11y">
+    <div class="issue-header">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-cat">表单</span>
+      <span class="issue-id">A-M3</span>
+      <span class="issue-title">OCR编辑表单无焦点管理</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>sheet 打开时不聚焦首个输入框，关闭时不还原焦点到触发元素，键盘交互断裂</p>
+      <p><span class="field">位置：</span><code>ocr-flow/index.js:548-555</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card medium" data-severity="medium" data-cat="a11y">
+    <div class="issue-header">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-cat">表单</span>
+      <span class="issue-id">A-M9</span>
+      <span class="issue-title">OCR编辑表单清空字段不生效（无法删除错误数据）</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>编辑模式下用户清空某字段时 v 为空，走 if(v) 的 else 分支什么都不做，旧值保留。用户无法通过清空来删除 OCR 识别的错误数据</p>
+      <p><span class="field">位置：</span><code>ocr-flow/index.js:592-596</code></p>
+    </div>
+  </div>
+
+  <div class="issue-card medium" data-severity="medium" data-cat="a11y">
+    <div class="issue-header">
+      <span class="issue-tag medium">中等</span>
+      <span class="issue-cat">表单</span>
+      <span class="issue-id">A-M13</span>
+      <span class="issue-title">多处点击区域过小（48-64rpx < 88rpx 建议）</span>
+      <span class="issue-arrow">›</span>
+    </div>
+    <div class="issue-body">
+      <p><span class="field">问题：</span>OCR sheet 关闭按钮 56rpx、成员管理关闭 64rpx、搜索清除 48rpx、成员删除按钮约 40rpx、角色选项约 36rpx，均低于 88rpx 建议</p>
+      <p><span class="field">位置：</span>ocr-flow/clients/report 多处</p>
+    </div>
+  </div>
+
+  <p style="color:var(--text-muted);font-size:13px;margin:12px 0 24px;padding:0 4px">还有 26 项中等问题和 28 项低风险问题，详见审计报告文本。</p>
+
+  <!-- ===== 修复优先级 ===== -->
+  <div class="priority-section">
+    <h2>修复优先级矩阵</h2>
+    <div class="priority-grid">
+      <div class="priority-card p0">
+        <div class="priority-header">
+          <span class="priority-label">P0 · 立即修复</span>
+          <span class="priority-effort">数据完整性</span>
+        </div>
+        <ul class="priority-items">
+          <li><code>F-S1</code>搜索竞态改请求ID追踪</li>
+          <li><code>F-S2</code>OCR sheet 加 _saving 守卫</li>
+          <li><code>F-S4</code>resume 后立即设 _ocrBusy</li>
+          <li><code>R-S1/S2</code>报告页错误状态分支</li>
+          <li><code>V-S1/2/3</code>3个CSS变量补定义</li>
+          <li><code>V-S6</code>pano overflow 改 auto</li>
+          <li><code>A-S1</code>数值字段补 type:digit</li>
+          <li><code>A-S2/3</code>OCR sheet 补校验</li>
+        </ul>
+      </div>
+      <div class="priority-card p1">
+        <div class="priority-header">
+          <span class="priority-label">P1 · 优先处理</span>
+          <span class="priority-effort">体验一致性</span>
+        </div>
+        <ul class="priority-items">
+          <li><code>F-S3</code>newRoles 失败 toast 提示</li>
+          <li><code>F-M6</code>开启下拉刷新能力</li>
+          <li><code>R-M5</code>区分错误态与空态</li>
+          <li><code>R-M7/8</code>编辑放弃确认</li>
+          <li><code>A-S4</code>edit-form 补字段配置</li>
+          <li><code>V-S5</code>暗色模式覆盖</li>
+          <li><code>F-M3</code>编辑后清首页缓存</li>
+        </ul>
+      </div>
+      <div class="priority-card p2">
+        <div class="priority-header">
+          <span class="priority-label">P2 · 计划处理</span>
+          <span class="priority-effort">体验优化</span>
+        </div>
+        <ul class="priority-items">
+          <li><code>R-M1</code>60s加载阶段提示</li>
+          <li><code>R-M9</code>429错误码映射</li>
+          <li><code>R-M11</code>恢复引导文案</li>
+          <li><code>A-M3</code>焦点管理</li>
+          <li><code>A-M13</code>放大点击区域</li>
+          <li><code>V-M1</code>置信度色提取token</li>
+          <li><code>V-M6</code>同名类去重</li>
+          <li>aria-label 补充</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 关键结论 ===== -->
+  <div class="conclusion-section">
+    <h2>五大关键结论</h2>
+    <div class="conclusion-item risk">
+      <h4>1. 最大风险：竞态与防重复提交</h4>
+      <p>F-S1（搜索竞态）、F-S2（sheet双击）、F-S4（resume窗口）三处均为快速操作下的数据丢失/重复问题，建议优先修复</p>
+    </div>
+    <div class="conclusion-item exp">
+      <h4>2. 最差体验：错误恢复路径断裂</h4>
+      <p>R-S1/S2（空白页死胡同）、R-M4（下拉重试无效）、R-M5（错误伪装空态）让用户卡死无出路</p>
+    </div>
+    <div class="conclusion-item waste">
+      <h4>3. 最大浪费：校验基础设施闲置</h4>
+      <p>A-S4（edit-sheet 内置完整校验但字段未配置），已有能力未启用，补配置即可激活实时反馈</p>
+    </div>
+    <div class="conclusion-item visual">
+      <h4>4. 视觉系统：token体系完整但执行不彻底</h4>
+      <p>74个变量定义完善，但6处未定义引用 + 大量硬编码绕过 + 暗色模式完全缺失</p>
+    </div>
+    <div class="conclusion-item positive">
+      <h4>5. 正面发现：防御性设计值得保持</h4>
+      <p>OCR流程进度反馈较完善、删除有双重确认、防重入守卫覆盖主链路、骨架屏与渐进加载设计良好、减少动效偏好已支持</p>
+    </div>
+  </div>
+
+  <div class="footer">
+    UI/UX 交互设计专项审计报告 · 生成于 2026-08-08 · 覆盖交互流程/视觉一致性/状态反馈/表单无障碍四大维度
+  </div>
+
+</div>
+
+<script>
+  // 筛选功能
+  var chips = document.querySelectorAll('.filter-chip');
+  var cards = document.querySelectorAll('.issue-card');
+  var currentFilter = 'all';
+
+  chips.forEach(function(chip){
+    chip.addEventListener('click', function(){
+      chips.forEach(function(c){ c.classList.remove('active'); });
+      this.classList.add('active');
+      currentFilter = this.dataset.filter;
+      applyFilter();
+    });
+  });
+
+  function applyFilter(){
+    cards.forEach(function(card){
+      var show = false;
+      if (currentFilter === 'all') {
+        show = true;
+      } else if (['critical','medium','low'].indexOf(currentFilter) !== -1) {
+        show = card.dataset.severity === currentFilter;
+      } else {
+        var catMap = { flow:'flow', visual:'visual', feedback:'feedback', a11y:'a11y' };
+        show = card.dataset.cat === catMap[currentFilter];
+      }
+      card.classList.toggle('hidden', !show);
+    });
+  }
+
+  // 展开/收起
+  document.querySelectorAll('.issue-header').forEach(function(h){
+    h.setAttribute('tabindex','0');
+    h.setAttribute('role','button');
+    h.addEventListener('click', function(){
+      this.parentElement.classList.toggle('open');
+    });
+    h.addEventListener('keydown', function(e){
+      if(e.key === 'Enter' || e.key === ' '){
+        e.preventDefault();
+        this.parentElement.classList.toggle('open');
+      }
+    });
+  });
+</script>
+
+</body>
+</html>

@@ -72,7 +72,8 @@ async function handleConfirm({
   const actualUserText = userText || ('{CONFIRM:' + pendingId + '}')
 
   // 三分支统一骨架：清缓存 → 执行 → 写 user 消息 → 构造 reply → 写 assistant 消息 → log
-  ctxCache.invalidate(familyId)
+  // R3v2 #3：key 带 openid，与 _buildToolContext 一致
+  ctxCache.invalidate(familyId + ':' + openid)
   const result = await strategy.exec({ pc, familyId, dispatch })
   await writeMessage(familyId, openid, 'user', actualUserText, { sessionId: sid })
   const replyText = strategy.reply(result, pc)

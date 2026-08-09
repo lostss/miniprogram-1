@@ -8,8 +8,17 @@
     </view>
   </view>
 
-  <!-- 加载中 -->
-  <view class="loading-hint" wx:if="{{loading}}"><view class="loading-pulse"></view></view>
+  <!-- 加载中：骨架屏（UI 审计 状态 M5：与首页 sk-client-card 风格统一） -->
+  <block wx:if="{{loading}}">
+    <view class="sk-client-card" wx:for="{{[1,2,3]}}" wx:key="*this">
+      <view class="sk-ring"></view>
+      <view class="sk-body">
+        <view class="sk-row"><view class="sk-name sk-shimmer"></view></view>
+        <view class="sk-row"><view class="sk-label sk-shimmer"></view><view class="sk-label sk-shimmer" style="margin-left:16rpx"></view></view>
+        <view class="sk-time sk-shimmer"></view>
+      </view>
+    </view>
+  </block>
 
   <!-- 列表 -->
   <view class="card-wrap {{removingId === item._id ? 'card-removing' : ''}}" wx:for="{{families}}" wx:key="_id" wx:for-index="idx">
@@ -20,6 +29,13 @@
   <view class="empty" wx:if="{{!loading && families.length === 0 && keyword}}">
     <text class="empty-text">未找到"{{keyword}}"</text>
     <text class="empty-sub">换个关键词试试</text>
+  </view>
+
+  <!-- 错误态：加载失败（UI 审计 R-M5：不再伪装"尚无客户档案"空态） -->
+  <view class="empty" wx:elif="{{!loading && families.length === 0 && loadError}}">
+    <text class="empty-text">加载失败</text>
+    <text class="empty-sub">请检查网络后重试</text>
+    <button class="empty-btn pressable" bindtap="onRetryLoad">重新加载</button>
   </view>
 
   <!-- 空态：无任何客户 -->

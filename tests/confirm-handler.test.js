@@ -80,7 +80,7 @@ describe('handleConfirm - fact_confirm', () => {
       ctxCache, dispatch, writeMessage
     })
     expect(r.code).toBe(200)
-    expect(ctxCache.invalidate).toHaveBeenCalledWith('fam_001')
+    expect(ctxCache.invalidate).toHaveBeenCalledWith('fam_001:op_test')
     expect(dispatch).toHaveBeenCalledWith('updateFactConfidence', expect.objectContaining({
       familyId: 'fam_001', factId: 'fact_001', confidence: 1, source: 'agent_confirmed'
     }))

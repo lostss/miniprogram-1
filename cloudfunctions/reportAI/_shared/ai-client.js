@@ -1,11 +1,10 @@
 /**
- * ai-client.js v4.1 — hunyuan-v3 + hy3 流式协议
+ * ai-client.js v4.1 — hy3-preview（hunyuan-exp 分组）+ hy3 流式协议
  */
 const tcb = require('@cloudbase/node-sdk')
 const { AI, ENV_ID } = require('./config')
 
 // 模型名常量 — 切换推理模型只需改 config.js
-const THINK_MODEL = AI.THINK_MODEL
 const CHAT_MODEL = AI.CHAT_MODEL
 const GROUP = AI.GROUP
 
@@ -17,50 +16,6 @@ function _getAI() {
 
 function _createModel() {
   return _getAI().createModel(GROUP)
-}
-
-/**
- * 内部推理 — 非流式，不传 response_format/temperature
- * thinking 模型无 system role，自动合并到首条 user message
- * 超时降级：超过 timeoutMs 自动回退 callChat
- */
-async function callThink(messages, timeoutMs = AI.THINK_TIMEOUT) {
-  const ai = _getAI()
-  const systemContent = messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n')
-  let userMessages = messages.filter(m => m.role !== 'system')
-  if (systemContent) {
-    if (userMessages.length > 0) {
-      userMessages[0] = { role: 'user', content: systemContent + '\n\n' + userMessages[0].content }
-    } else {
-      userMessages = [{ role: 'user', content: systemContent }]
-    }
-  }
-  const model = _createModel()
-
-  const thinkPromise = model.generateText({
-    model: THINK_MODEL,
-    messages: userMessages
-  }).then(res => ({
-    result: 'think',
-    text: (res.text || '').trim(),
-    usage: res.usage || {}
-  }))
-
-  // S3-1 修复：保存 timerId，Promise.race 后清理，避免定时器残留导致 unhandled rejection
-  let timerId
-  const timeoutPromise = new Promise((_, reject) => {
-    timerId = setTimeout(() => reject(new Error('THINK_TIMEOUT')), timeoutMs)
-  })
-
-  try {
-    const { text, usage } = await Promise.race([thinkPromise, timeoutPromise])
-    clearTimeout(timerId)
-    return { text, usage }
-  } catch (e) {
-    clearTimeout(timerId)
-    console.warn('[ai-client] callThink 失败(' + (e.message || e) + ')，交由 reasoningDispatcher 降级')
-    throw e
-  }
 }
 
 /**
@@ -229,4 +184,4 @@ async function callChatDirect(messages, opts = {}) {
   }
 }
 
-module.exports = { callThink, callChat, callChatWithTools, callChatDirect }
+module.exports = { callChat, callChatWithTools, callChatDirect }

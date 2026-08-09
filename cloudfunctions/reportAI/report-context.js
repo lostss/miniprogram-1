@@ -39,6 +39,55 @@ function buildSummaryMd(policies, snap) {
 }
 
 /**
+ * 保障缺口矩阵（数值审计 #3：与前端 gap-engine 阈值同源复刻，注入 AI 上下文统一两侧口径——
+ * 前端 hero 按阈值判缺口，AI 画像按存在性判覆盖，两者不一致导致报告内矛盾。
+ * 本快照为系统预计算，AI 只引用结论不自行重算）
+ * @param {array} policies - 已 ensureStatus 的保单数组
+ * @param {object} snap - financial_snapshot { income, debt, fixed_expense }
+ * @param {array} members - 家庭成员列表（识别无保单成员；prompt 工程审计，空家庭须有显式矩阵依据）
+ * @returns {string}
+ */
+function buildGapSnapshot(policies, snap, members) {
+  const s = snap || {}
+  const income = parseFloat(s.income) || 0
+  const debtVal = s.debt && typeof s.debt === 'object' ? (s.debt.amount || 0) : (s.debt || 0)
+  const debt = parseFloat(debtVal) || 0
+  const active = (policies || []).filter(p => p.status === 'active' || !p.status)
+  const byMember = {}
+  for (const p of active) {
+    const k = p.member_id || p.insured_name || 'unknown'
+    if (!byMember[k]) byMember[k] = { name: p.insured_name || '未署名', sums: {} }
+    const cat = p.insurance_category || ''
+    byMember[k].sums[cat] = (byMember[k].sums[cat] || 0) + (p.sum_assured || 0)
+  }
+  const cats = ['重疾险', '医疗险', '寿险', '意外险']
+  // 无保单成员兜底：成员名单中存在但无任何 active 保单者 → 显式"无保障"行
+  // 全空家庭：members 与 policies 均无 → 单行声明，保证 AI 有矩阵依据可引用而非编造
+  const memberList = Array.isArray(members) ? members : []
+  const noPolicyMembers = memberList.filter(m => m && !byMember[m.member_id])
+  if (!Object.keys(byMember).length && !noPolicyMembers.length) {
+    return '## 保障缺口矩阵（系统预计算，review/analysis 直接引用结论，禁止自行重算或引用缺口金额）\n\n| 成员 | 险种 | 覆盖状态 | 依据 |\n|------|------|---------|------|\n| 全体 | - | ❌ 无任何保障 | 该家庭暂无任何保单，所有成员均无保障 |'
+  }
+  const lines = ['## 保障缺口矩阵（系统预计算，review/analysis 直接引用结论，禁止自行重算或引用缺口金额）', '', '| 成员 | 险种 | 覆盖状态 | 依据 |', '|------|------|---------|------|']
+  for (const k of Object.keys(byMember)) {
+    const m = byMember[k]
+    for (const cat of cats) {
+      const existing = (m.sums[cat] || 0) / 10000
+      let ok = false, basis = ''
+      if (cat === '重疾险') { ok = existing >= 50; basis = ok ? `已覆盖${existing}万(参考50万)` : `缺口：现有${existing}万<50万` }
+      else if (cat === '医疗险') { ok = existing > 0; basis = ok ? '已覆盖' : '无医疗险' }
+      else if (cat === '寿险') { const need = Math.round(debt + 5 * income); ok = existing >= need; basis = `需求=负债${debt}万+5×收入${income}万=${need}万，现有${existing}万` }
+      else { const need = Math.round(Math.max(5 * income, debt)); ok = existing >= need; basis = `需求=max(5×收入${income}万,负债${debt}万)=${need}万，现有${existing}万` }
+      lines.push(`| ${m.name} | ${cat} | ${ok ? '✅ 已覆盖' : '❌ 有缺口'} | ${basis} |`)
+    }
+  }
+  for (const m of noPolicyMembers) {
+    lines.push(`| ${m.name || '成员'} | - | ❌ 无任何保障 | 该成员名下无任何有效保单 |`)
+  }
+  return lines.join('\n')
+}
+
+/**
  * 上一版报告参考 Markdown（禁止照抄，以当前数据为准重新生成）
  * @param {object} familyMeta - 家庭元数据（含 last_conclusion / last_summary）
  * @returns {string}
@@ -68,15 +117,18 @@ function buildReportContext(opts) {
 
   const { structuredMd, hintsMd } = buildStructuredCoverage(policies, facts, cashValues)
   const summaryMd = buildSummaryMd(policies, snap)
+  const members = (v2ctx && v2ctx.datasets && v2ctx.datasets.members) || []
+  const gapMd = buildGapSnapshot(policies, snap, members)
   const prevMd = buildPrevReportMd(familyMeta)
 
   return [
     v2ctx && v2ctx.markdown,
     summaryMd,
+    gapMd,
     structuredMd,
     hintsMd,
     prevMd
   ].filter(Boolean).join('\n\n')
 }
 
-module.exports = { buildSummaryMd, buildPrevReportMd, buildReportContext }
+module.exports = { buildSummaryMd, buildGapSnapshot, buildPrevReportMd, buildReportContext }

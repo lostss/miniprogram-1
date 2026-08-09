@@ -2,33 +2,51 @@ const { buildReportView } = require('../../utils/report-builder')
 const { buildEditConfig, validate: validateEdit, buildUpdateData } = require('../../utils/edit-form')
 const api = require('../../utils/apiClient')
 const session = require('../../utils/session-store')
+const errorHandler = require('../../utils/errorHandler')
+
+// 免责声明：报告底部静态合规小字（reportAI 未产出时兜底，见 _applyReportData）
+const DISCLAIMER_FALLBACK = '本报告基于OCR识别结果自动生成，数据仅供参考，不构成投保建议。请以保单原件为准。'
 
 /** 报告页 v2.0 — 基础版报告（6 章单页长图 + 保单 Sheet） */
 Page({
   data: {
     familyId: '', family: null, chapters: [],
-    loading: true, loadingText: '小秘正在认真看保单...',
-    showEdit: false, reportUpdated: false, refreshing: false, editSaving: false,
+    loading: true, loadError: false, loadingText: '小秘正在认真看保单...',
+    // UI 审计 状态 S3：深度分析自定义弹层（可取消，替代 60s 锁死 showLoading）
+    analysisShow: false, analysisSec: 0,
+    showEdit: false, refreshing: false, editSaving: false,
     editTitle: '编辑', editFields: [], _editMode: '',
-    gaps: [], hints: [], focusAnchor: '',
+    hints: [],
+    // 全链路审计 UC4：无保单空状态（隐藏 hero/summary/chapters，显示引导卡）
+    hasPolicy: true,
     reportMeta: { date: '', no: '' },
+    disclaimer: '',
     hero: { alerts: [], summary: '', topAdvice: '', conclusion: '' },
     summaryCards: { premium: '', coverage: '', count: 0 },
     showPolicySheet: false, currentPolicy: null, policyRows: [], policyCat: '',
     showMemberManage: false, memberManageList: [],
-    fabCollapsed: true, fabText: ''
+    fabText: ''
   },
-  onLoad(o) { const cid = o.familyId || o.customerId || ''; if (!cid) { this.setData({ loading: false }); wx.showModal({ title: '缺少客户信息', content: '请从首页选择客户打开报告', showCancel: false, confirmText: '返回首页', success: () => wx.reLaunch({ url: '/pages/index/index' }) }); return }; session.setActiveFamily(cid); this.setData({ familyId: cid }); this._loadReport(cid) },
-  onUnload() { this._disposed = true; clearInterval(this._loaderTimer); clearInterval(this._ocrTick) },
+  // 真机 404 修复兜底：familyId 为 'undefined'/'null' 字面量（跳转传参异常时）→ 走"缺少客户信息"而非 getFamily 404 误报"客户不存在"
+  onLoad(o) { const cid = o.familyId || o.customerId || ''; if (!cid || cid === 'undefined' || cid === 'null') { this.setData({ loading: false }); wx.showModal({ title: '缺少客户信息', content: '请从首页选择客户打开报告', showCancel: false, confirmText: '返回首页', success: () => wx.reLaunch({ url: '/pages/index/index' }) }); return }; session.setActiveFamily(cid); this.setData({ familyId: cid }); this._loadReport(cid) },
+  onUnload() { this._disposed = true; clearInterval(this._loaderTimer); clearInterval(this._ocrTick); clearInterval(this._analysisTick) },
   // 返回键拦截：若 edit-sheet / 保单 Sheet / 成员管理 / chat-panel 展开，先关闭它们而非退出页面
+  // 返回键：顶层优先关闭（edit-sheet 顶层 → policy-sheet → member-manage；审计 Bug 3 顺序修正）
   onBackPress() {
-    if (this.data.showMemberManage) { this.closeMemberManage(); return true }
+    // UI 审计 交互 S1：OCR 弹窗优先拦截（编辑 sheet → 确认放弃），防 OCR 中按返回退页丢进度
+    const ocr = this.selectComponent('#ocrFlow')
+    if (ocr && ocr.onBackPressed && ocr.onBackPressed()) return true
+    if (this.data.showEdit) { this.onCloseEdit(); return true }
     if (this.data.showPolicySheet) { this.onPolicySheetClose(); return true }
-    if (this.data.showEdit) { this.setData({ showEdit: false }); return true }
+    if (this.data.showMemberManage) { this.closeMemberManage(); return true }
     const panel = this.selectComponent('#chatpanel')
     if (panel && panel.tryCollapse && panel.tryCollapse()) return true
     return false
   },
+  // UI 审计 交互 M3：chat-panel 收起时同步清空 FAB 输入
+  onChatCollapse() { this.setData({ fabText: '' }) },
+  // AI 回复期间 FAB 发送按钮置灰（chat-panel busy 事件）
+  onChatBusy(e) { this.setData({ chatBusy: !!e.detail.busy }) },
 
   // ===== 章节内编辑入口（设计稿：家庭结构/财务 [编辑]） =====
   onChapterEdit(e) {
@@ -59,12 +77,69 @@ Page({
       this._openMemberEdit(memberId)
     }
   },
+  // 风险提示 [核对]：打开对应保单编辑 Sheet（低置信字段带底色，设计稿 v4）
+  onRiskCheck(e) {
+    const detail = e.detail || {}
+    const pid = detail.policyId || ''
+    if (!pid || this._disposed) return
+    const list = (this.data.family && this.data.family.policies) || []
+    const p = list.find(x => (x._id || x.id) === pid)
+    if (!p) return
+    const cfg = buildEditConfig({ mode: 'policy', family: this.data.family, member: p })
+    this.setData(Object.assign({ showEdit: true, editTitle: cfg.title }, cfg))
+  },
+  // 深度分析（手工触发）：调 reportAI（30s 节流），完成刷新报告（hero 结论更新）
+  onDeepAnalysis() {
+    if (this._analysisBusy || this._disposed) return
+    const cid = this.data.familyId
+    if (!cid) return
+    this._analysisBusy = true
+    this._analysisAborted = false
+    const t0 = Date.now()
+    // UI 审计 状态 S3：自定义弹层替代 showLoading（60s 长任务可取消，不锁死用户）；R-M1 阶段反馈由 analysisSec 承担
+    this.setData({ analysisShow: true, analysisSec: 0 })
+    this._analysisTick = setInterval(() => {
+      if (this._disposed) { clearInterval(this._analysisTick); return }
+      this.setData({ analysisSec: Math.round((Date.now() - t0) / 1000) })
+    }, 1000)
+    // R3v2 审计 #7：原 action 'reportAI' 未在 apiClient DIRECT_FN 注册（只有 generateReport）→ 功能永远失败
+    // 改走 generateReport + 显式 60s 超时（reportAI 函数 timeout=60s，默认 30s 会先断+重试双份计费）
+    api('generateReport', { familyId: cid }, { timeout: 60000, retries: 0 }).then(q => {
+      clearInterval(this._analysisTick)
+      this.setData({ analysisShow: false })
+      this._analysisBusy = false
+      // 用户已取消：云函数仍会完成，但结果标记忽略
+      if (this._disposed || this._analysisAborted) return
+      if (q && q.ok) {
+        wx.showToast({ title: '分析完成', icon: 'success' })
+        this._refreshReportSequence(cid, { waitMs: 0 })
+      } else if (q && q.throttled) {
+        wx.showToast({ title: '已是最新分析', icon: 'none' })
+      } else {
+        wx.showToast({ title: (q && q.msg) || '分析失败，请重试', icon: 'none' })
+      }
+    }).catch(() => {
+      clearInterval(this._analysisTick)
+      this.setData({ analysisShow: false })
+      this._analysisBusy = false
+      if (!this._disposed) wx.showToast({ title: '分析失败，请重试', icon: 'none' })
+    })
+  },
+  // UI 审计 状态 S3：取消深度分析（UI 立即释放；请求结果回来时由 _analysisAborted 忽略）
+  onAnalysisCancel() {
+    this._analysisAborted = true
+    this._analysisBusy = false
+    clearInterval(this._analysisTick)
+    this.setData({ analysisShow: false })
+    wx.showToast({ title: '已取消分析', icon: 'none' })
+  },
   _openMemberEdit(memberId) {
     const list = (this.data.family && this.data.family.members) || []
     const m = list.find(x => x.member_id === memberId)
     if (!m) return
     const cfg = buildEditConfig({ mode: 'member', family: this.data.family, member: m })
-    this.setData(Object.assign({ showEdit: true, editTitle: cfg.title }, cfg))
+    // 弹窗互斥：edit-sheet 为独占顶层，打开时清掉底层 member-manage（审计 Bug 1）
+    this.setData(Object.assign({ showEdit: true, editTitle: cfg.title, showMemberManage: false, memberManageList: [] }, cfg))
   },
   closeMemberManage() {
     if (this.data.editSaving) return
@@ -77,7 +152,42 @@ Page({
   },
   onMemberManageAdd() {
     const cfg = buildEditConfig({ mode: 'addMember', family: this.data.family })
-    this.setData(Object.assign({ showEdit: true, editTitle: cfg.title }, cfg))
+    // 弹窗互斥：打开 edit-sheet 同时清掉底层 member-manage（审计 Bug 1）
+    this.setData(Object.assign({ showEdit: true, editTitle: cfg.title, showMemberManage: false, memberManageList: [] }, cfg))
+  },
+  // 家庭结构可编辑性：删除成员（确认后从全量 members 移除 → updateFamily → _syncMembers 软删，保留审计轨迹）
+  onMemberManageDelete(e) {
+    const mid = (e.currentTarget.dataset && e.currentTarget.dataset.mid) || ''
+    if (!mid || this.data.editSaving) return
+    const list = (this.data.family && this.data.family.members) || []
+    const target = list.find(x => x.member_id === mid)
+    if (!target) return
+    wx.showModal({
+      title: '删除成员',
+      content: '确定删除成员「' + (target.name || '未命名') + '」？删除后不再出现在保障报告。',
+      confirmText: '删除',
+      confirmColor: '#B85450',
+      success: (res) => {
+        if (!res.confirm) return
+        const remaining = list.filter(x => x.member_id !== mid)
+        api('updateFamily', { familyId: this.data.familyId, updateData: { members: remaining } })
+          .then(r => {
+            if (this._disposed) return
+            if (r.ok) {
+              wx.showToast({ title: '已删除', icon: 'success' })
+              // UI 审计 F-M3：成员删除后清首页缓存
+              try { wx.removeStorageSync('homeRecentClients') } catch (e) {}
+              this.setData({ showMemberManage: false, memberManageList: [] })
+              this._loadReport(this.data.familyId)
+            } else {
+              wx.showToast({ title: r.msg || '删除失败', icon: 'none' })
+            }
+          })
+          .catch(() => {
+            if (!this._disposed) wx.showToast({ title: '网络异常，删除失败', icon: 'none' })
+          })
+      }
+    })
   },
 
   _loadingTexts: ['小秘正在认真看保单...', '小秘正在整理报告...', '小秘正在加载报告...'],
@@ -93,8 +203,11 @@ Page({
       chapters: view.chapters,
       hero: view.hero,
       summaryCards: view.summaryCards,
-      gaps: view.gaps,
-      hints: view.hints
+      hints: view.hints,
+      // 免责声明：页面底部小字承载（不进入章节），reportAI 未产出时兜底
+      disclaimer: String(rp.disclaimer || '') || DISCLAIMER_FALLBACK,
+      // 全链路审计 UC4：无保单时走空状态（buildReportView 对空 policies 产生零值+红色告警，需引导而非报错）
+      hasPolicy: !!(c.policies && c.policies.length > 0)
     }, extra || {}))
   },
 
@@ -109,23 +222,22 @@ Page({
         // 未登录 → 等初始化完成后重试；其他错误 → 短暂重试 2 次
         if (code === 401 && retry < 3) { await new Promise(r => setTimeout(r, 1200)); if (this._disposed) return; return this._loadReport(cid, retry + 1) }
         if (code !== 401 && retry < 2) { await new Promise(r => setTimeout(r, 800)); if (this._disposed) return; return this._loadReport(cid, retry + 1) }
-        this._stopLoading(); this.setData({ loading: false })
+        // UI 审计 R-S1：失败即标记错误态（WXML 渲染错误分支 + 重试入口，不再空白死胡同）
+        this._stopLoading(); this.setData({ loading: false, loadError: true })
         const msg404 = '该客户档案已被删除或不存在，可能从其他设备操作了删除'
         const msg401 = '登录状态异常，请退出小程序重新进入'
         const msg = code === 404 ? msg404 : (code === 401 ? msg401 : '加载失败（' + code + '），请下拉刷新重试')
-        wx.showModal({ title: '客户不存在', content: msg, showCancel: true, cancelText: '留在本页', confirmText: '返回首页', success: (r) => { if (r.confirm) wx.reLaunch({ url: '/pages/index/index' }) } })
+        // 错误提示审计 #1：title 按 code 分流，消除"标题客户不存在/正文登录异常"语义冲突
+        const modalTitle = code === 404 ? '客户不存在' : (code === 401 ? '登录异常' : '加载失败')
+        // UI 审计 R-S2：404 家庭已删除，"留在本页"是死胡同（空白无内容可看），移除取消项强制回首页
+        const is404 = code === 404
+        wx.showModal({ title: modalTitle, content: msg, showCancel: !is404, cancelText: is404 ? '' : '留在本页', confirmText: '返回首页', success: (r) => { if (r.confirm) wx.reLaunch({ url: '/pages/index/index' }) } })
         return
       }
       const c = q.data
-      const rp = c.report || {}
       this._stopLoading()
-      this._applyReportData(c, null, { loading: false })
-      // 数据有更新（OCR/对话写入）但 AI 内容未刷新 → 提示用户
-      // 基础版报告为纯数据驱动；AI 深度分析将改为手工触发（待设计），此处保留状态供未来使用
-      if (c.insight_stale && rp.portrait) {
-        this.setData({ reportUpdated: true })
-      }
-    } catch (e) { console.error(e); this._stopLoading(); if (!this._disposed) this.setData({ loading: false }) }
+      this._applyReportData(c, null, { loading: false, loadError: false })
+    } catch (e) { console.error(e); this._stopLoading(); if (!this._disposed) this.setData({ loading: false, loadError: true }) }
   },
 
 
@@ -164,27 +276,59 @@ Page({
     const conc = hero.conclusion ? '｜' + hero.conclusion.slice(0, 14) : ''
     return { title: ((c.name || '家庭') + '保障检视' + conc).slice(0, 35), query: 'familyId=' + this.data.familyId }
   },
+  // 报告封面元数据：日期与编号基于"报告更新日期"（family.updated_at 数据更新时间优先，last_analysis_at 兜底）
+  // 原用 new Date()（当前时间）导致每次刷新编号日期都变化，且与报告内容更新时间不符
   _buildReportMeta() {
-    const d = new Date()
+    const f = this.data.family || {}
+    const ts = f.updated_at || f.last_analysis_at
+    let d = ts ? new Date(ts) : new Date()
+    if (isNaN(d.getTime())) d = new Date()
     const pad = function(n) { return String(n).padStart(2, '0') }
-    const date = d.getFullYear() + '.' + pad(d.getMonth() + 1) + '.' + pad(d.getDate())
-    const cid = this.data.familyId || ''
-    const tail = cid.length >= 6 ? cid.slice(-6).toUpperCase() : cid.toUpperCase()
-    const no = String(d.getFullYear()).slice(-2) + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + tail
-    return { date: date, no: no }
+    // 年月日 + 时:分，正规显示（如 2026年08月08日 14:30）
+    const dateTime = d.getFullYear() + '年' + pad(d.getMonth() + 1) + '月' + pad(d.getDate()) + '日 ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
+    return { dateTime: dateTime }
+  },
+
+  // 上下文审计：数据变更后失效对话 prompt-cache（chat-panel 实例存活时直接调其 invalidate）
+  _invalidateChatPrompt() {
+    try {
+      const panel = this.selectComponent('#chatpanel')
+      if (panel && panel._promptCache) panel._promptCache.invalidate()
+    } catch (e) { /* 组件未就绪/异常：静默跳过，依赖 5min TTL 自然过期 */ }
   },
 
   // 页面级下拉刷新委托给 onRefreshReport
-  onPullDownRefresh() { this.onRefreshReport() },
+  // 弹窗锁屏兜底：ocr-flow（识别结果/编辑 sheet）或页面自身 sheet 任一打开时，下拉刷新空转。
+  // 真机上页面原生下拉手势可能绕过 JS catchtouchmove，此处拦截是第二道防线（配合各遮罩 catchtouchmove）。
+  // catchtouchmove 拦截（member/policy sheet 遮罩拖动不穿透到页面 scroll-view）
+  onNoop() {},
+  onPullDownRefresh() {
+    const ocr = this.selectComponent('#ocrFlow')
+    // UI 审计 F-M1：chat-panel 展开时同样拦截（否则 wx.showLoading 盖在对话面板上方）
+    const panel = this.selectComponent('#chatpanel')
+    const overlayOpen = !!(
+      (ocr && (ocr.data.ocrMask.visible || ocr.data.ocrSheet.visible)) ||
+      this.data.showEdit || this.data.showPolicySheet || this.data.showMemberManage
+    )
+    if (overlayOpen || (panel && !panel.data.collapsed)) { wx.stopPullDownRefresh(); return }
+    this.onRefreshReport()
+  },
+  // UI 审计 R-S1：错误态重试 / 返回首页
+  onRetryReport() {
+    if (this._disposed) return
+    this.setData({ loading: true, loadError: false })
+    this._loadReport(this.data.familyId)
+  },
+  onGoHome() { wx.reLaunch({ url: '/pages/index/index' }) },
   async onRefreshReport() {
     if (this._refreshingReport) return
     this._refreshingReport = true
     const cid = this.data.familyId
     if (!cid) { wx.stopPullDownRefresh(); this._refreshingReport = false; return }
-    this.setData({ refreshing: true, reportUpdated: false })
+    this.setData({ refreshing: true })
     wx.showLoading({ title: '正在刷新报告...', mask: true })
     try {
-      const ok = await this._refreshReportSequence(cid, { applyOpts: { reportUpdated: false } })
+      const ok = await this._refreshReportSequence(cid, { applyOpts: {} })
       wx.hideLoading()
       wx.stopPullDownRefresh()
       if (ok) {
@@ -228,16 +372,18 @@ Page({
         const localFamily = this._applyLocalUpdate(updateData)
         if (localFamily) this._applyReportData(localFamily, null, {})
       }
+      // UI 审计 F-M3：编辑已持久化 → 清首页 60s 缓存，返回首页不再显示过期成员数/完整度
+      try { wx.removeStorageSync('homeRecentClients') } catch (e) {}
+      // 上下文审计：数据已变更 → 失效对话 prompt-cache（否则对话画像停留 5min 旧值）
+      this._invalidateChatPrompt()
       wx.showToast({ title: '小秘记下了', icon: 'none' }); this.setData({ showEdit: false, editSaving: false, showMemberManage: false, memberManageList: [] })
       // 后台静默校验：DB 已写入完成（无需缓冲），读回规范化数据（member_id/fact 同步等）
-      this._refreshReportSequence(this.data.familyId, { waitMs: 0, applyOpts: {} }).then(() => {
-        if (this._disposed) return
-        this.setData({ reportUpdated: false })
-      }).catch(e => { console.error('[report] 刷新失败:', e.message) })
+      this._refreshReportSequence(this.data.familyId, { waitMs: 0, applyOpts: {} }).catch(e => { console.error('[report] 刷新失败:', e.message) })
     } catch (e) {
       console.error(e)
       this.setData({ editSaving: false })
-      wx.showToast({ title: '保存失败，请重试', icon: 'none', duration: 2500 })
+      // 错误提示审计 #3+#4：写操作错误统一走 errorHandler（文案收敛 + 云端上报）
+      errorHandler.handle(e, { context: 'saveEdit' })
     }
   },
 
@@ -271,7 +417,9 @@ Page({
     return changed ? f : null
   },
 
-  onCloseEdit() { this.setData({ showEdit: false }) },
+  // 弹窗互斥：取消编辑时清理全部底层 sheet（审计 Bug 1/2：仅保存路径有关闭，取消路径全漏）
+  // UI 审计 交互 M5：关闭同时清空编辑字段状态，防下次打开残留旧配置
+  onCloseEdit() { this.setData({ showEdit: false, showMemberManage: false, memberManageList: [], showPolicySheet: false, editFields: [], editTitle: '编辑', _editMode: '' }) },
   // OCR 入口：FAB 保单按钮/首页共用 ocr-flow 组件
   _startFlow(paths) {
     const ocrFlow = this.selectComponent('#ocrFlow')
@@ -305,7 +453,8 @@ Page({
     if (!p) return
     const rows = this._policyRows(p)
     const catShort = String(p.insurance_category || '').replace(/险$/, '')
-    this.setData({ showPolicySheet: true, currentPolicy: p, policyRows: rows, policyCat: catShort })
+    // 弹层叠加审计：与 onMemberManageEdit/onMemberManageAdd 互斥模式对齐——打开 policy sheet 同时清底层 member sheet
+    this.setData({ showPolicySheet: true, currentPolicy: p, policyRows: rows, policyCat: catShort, showMemberManage: false, memberManageList: [] })
   },
   onPolicySheetClose() {
     if (this.data.editSaving) return
@@ -316,28 +465,46 @@ Page({
     const p = this.data.currentPolicy
     if (!p) return
     const cfg = buildEditConfig({ mode: 'policy', family: this.data.family, member: p })
-    this.setData(Object.assign({ showEdit: true, editTitle: cfg.title }, cfg))
+    // 弹窗互斥：打开 edit-sheet 同时清掉底层 policy-sheet（审计 Bug 2）
+    this.setData(Object.assign({ showEdit: true, editTitle: cfg.title, showPolicySheet: false }, cfg))
   },
   // 只读明细行（WXML 无法拼接，预处理）
+  // 字段顺序与 edit-form._policyFields 对齐（产品名称/险种已在标题显示，不重复）
   _policyRows(p) {
     p = p || {}
     const rows = []
-    rows.push({ label: '保单号', value: p.policy_number || '--' })
-    rows.push({ label: '保险公司', value: p.insurer || '--' })
-    rows.push({ label: '投保人', value: p.policyholder_name || '--' })
     rows.push({ label: '被保险人', value: p.insured_name || '--' })
+    rows.push({ label: '投保人', value: p.policyholder_name || '--' })
+    rows.push({ label: '受益人', value: p.beneficiary_name || '--' })
     const sum = p.sum_assured || 0
     rows.push({ label: '保额', value: sum >= 10000 ? (Math.round(sum / 10000 * 100) / 100) + '万' : sum + '元' })
+    const premium = p.annual_premium || 0
+    rows.push({ label: '年缴保费', value: premium >= 10000 ? (Math.round(premium / 10000 * 100) / 100) + '万' : premium + '元' })
+    rows.push({ label: '缴费期限', value: p.premium_term ? p.premium_term + '年' : '--' })
     const eff = (p.effective_date || p.contract_effective_date || '--').substring(0, 10)
     const period = p.insurance_period || p.coverage_term || ''
     rows.push({ label: '保障期限', value: eff + '起' + (period ? '（' + period + '）' : '') })
-    const premium = p.annual_premium || 0
-    rows.push({ label: '年缴保费', value: premium >= 10000 ? (Math.round(premium / 10000 * 100) / 100) + '万' : premium + '元' })
+    rows.push({ label: '保单号', value: p.policy_number || '--' })
+    rows.push({ label: '保险公司', value: p.insurer || '--' })
     return rows
   },
   onFabTap() { const cp = this._cp(); if (cp) cp.onFabTap() },
   onUploadFab() { this._startFlow() },
   onFabInput(e) { this.setData({ fabText: e.detail.value }); const cp = this._cp(); if (cp) cp.onInput(e) },
   onFabFocus() { const cp = this._cp(); if (cp) cp.onFocus() },
-  onFabSend() { const cp = this._cp(); if (cp) { cp.onSend(); this.setData({ fabText: '' }) } },
+  onFabSend() {
+    const cp = this._cp()
+    if (cp) {
+      // FAB 输入清空时机修复：发送即清（onSend 是 async，resolve(true) 要等流式+B 通道完成，
+      // 原等 then 才清导致文本遗留到 AI 回复输出后）；onSend 返回 false（守卫/注入/异常拦截）时微任务内恢复文本
+      const prev = this.data.fabText
+      this.setData({ fabText: '' })
+      const ok = cp.onSend()
+      if (ok && ok.then) {
+        ok.then(sent => { if (!sent) this.setData({ fabText: prev }) })
+      } else if (!ok) {
+        this.setData({ fabText: prev })
+      }
+    }
+  },
 })

@@ -29,7 +29,9 @@
 
 ## 分析引擎
 
-**由 LLM 驱动**，运用大语言模型的保险领域知识，从保障画像四维度数据生成缺口清单和优先级推荐。规则引擎不参与分析判断，仅负责前端的数据校验和格式转换。
+**基础版（已实现）**：纯规则引擎驱动。`gap-engine` 计算保障缺口/覆盖矩阵，`timeline-builder` 构建缴费时间轴，`buildReportView` 统一聚合 7 章（含家庭财务独立章），无 AI 参与。
+
+**深度分析（已实现，手动触发）**：report 页「深度分析」按钮 → `api('generateReport')`（60s 超时）→ reportAI AI 生成画像/点评/规划/建议，写 `families.last_*` 并由前端渲染。缺口矩阵由系统预计算注入 AI（`report-context.buildGapSnapshot`）。PDF 导出待设计。
 
 ## 信息采集模式
 
@@ -38,78 +40,85 @@
 拍照 → 系统发现信息缺口 → 引导业务员补充 → 业务员找客户确认（可能数小时/数天后）→ 回来录入 → 系统再评估 → 可能还有缺口 → 继续引导...
 ```
 
-因此 LLM 承担双重角色：
-- **引导者**：信息不足时，告诉业务员"还需要问客户什么"，给出具体的问题清单
-- **分析者**：信息足够时，生成缺口清单和优先级推荐
+因此 LLM 承担双重角色（当前仅引导者已实现）：
+- **引导者**（已实现，对话侧）：信息不足时，告诉业务员"还需要问客户什么"，给出具体的问题清单
+- **分析者**（已实现，深度分析）：信息足够时，生成缺口清单和优先级推荐（reportAI）
 
 系统需追踪每个家庭的**信息完备度**，允许随时断点恢复。
 
 ## 分析触发
 
-- **LLM 自动评估**（主导）：每次新信息录入后，LLM 以资深保险顾问角色评估当前数据完备度，建议"可以分析了"或"还缺 X，缺它会影响 Y 结论"
-- **手动触发**（辅助）：业务员随时可以点击"开始分析"，但 LLM 必须在结果中标注"因缺少 X 信息，Y 结论仅供参考"
-- **置信度标注**：每项推荐必须附带置信度说明，明确指出哪些缺失信息影响了该结论
+- **基础版报告：纯数据驱动**。OCR/编辑入库后仅触发前端「缓冲（默认 500ms）→ 重读 → 应用」重算 7 章，不调用 AI；编辑保存走本地增量更新（`_applyLocalUpdate` 立即渲染 + `waitMs:0` 后台校验）
+- **深度分析：手工触发（已实现）**。曾自动触发 reportAI，用户明确决策删除自动触发（2026-08），改为 report 页「深度分析」按钮手动触发（`generateReport`）
+- **置信度标注**（OCR 侧）：`assessPolicy`（0.9 阈值单一真相源）+ `assessCoreCompleteness`（核心字段 ≥80% 非空才自动确认），低置信度走确认卡
 
-## PDF 报告结构
+## 报告结构（基础版 · 7 章单页长图）
 
-专业排版，严谨易懂。12 个章节：
+由 `buildReportView` 统一聚合（规则引擎，无 AI），手机端已实现，PDF 导出待设计：
 
-| # | 章节 | 内容 |
-|---|------|------|
-| 1 | 家庭摘要 | 一句话概览 |
-| 2 | 家庭结构 | 成员表（姓名/年龄/角色） |
-| 3 | 保障汇总 | 已有保单总览 |
-| 4 | 保障分布 | 按险种/被保人分布的图表 |
-| 5 | 缴费月历 | 每月保费支出明细 |
-| 6 | 缴费年历和关键节点 | 年度支出 + 续保/到期提醒 |
-| 7 | 客户保障分析 | 缺口矩阵 |
-| 8 | 保障规划建议及理由 | 优先级推荐 + 每项理由 |
-| 9 | 行动建议 | 下一步动作清单 |
-| 10 | 风险提示 | 置信度告警 + 免责 |
-| 11 | 附录：保单明细 | 全部保单原始数据表 |
-| 12 | 附录：保障规划常用原理 | 静态科普知识 |
+| # | 章节 | key | 内容 |
+|---|------|-----|------|
+| 1 | 家庭结构 | `family_structure` | 成员树（角色分组），可编辑 |
+| 2 | 家庭财务 | `family_finance` | 收入/负债/支出（R2 从家庭结构拆出独立章），可编辑 |
+| 3 | 保障汇总 | `coverage_summary` | 成员×险种保障矩阵 + 缺失提示 + 缺口警示 |
+| 4 | 缴费月历 | `premium_calendar` | 12 格月度保费 + 峰值高亮 + 年总保费/占收入比 |
+| 5 | 缴费年历和关键节点 | `premium_timeline` | 续保/到期/缴费期满时间轴 |
+| 6 | 风险提示 | `risk_alerts` | 置信度告警 + 免责声明 |
+| 7 | 附录：保单明细 | `appendix_policies` | 按被保人分组的保单卡片，点击弹明细 Sheet |
+
+> 深度分析章节（保障规划/行动建议等）由扩展版承载，已实现（reportAI + 手动触发）。
 
 ## 输出结构
 
-LLM 生成的结构化分析结果，手机和 PDF 共用同一数据源：
+前端一次调用 `buildReportView(family, report)` 拿到全部视图数据：
 ```
-{ 客户画像, 缺口清单: [...], 优先级推荐: [...], 信息提示: [...] }
+{ chapters: [7章卡片], hero: { alerts, summary, topAdvice, conclusion },
+  summaryCards: { premium, coverage, count }, gaps, hints }
 ```
+- `hero` 为规则版覆盖检查（结论先行警示列表），AI conclusion 仅供分享标题
+- 报告产物字段（families `last_*`）由 `report-fields.js` 单一契约：portrait / review / plan / suggestions / disclaimer / analysis / conclusion / summary + core_insights
 
 ## 交互模式
 
-**报告为中心，对话为辅助**。每个客户的核心界面是一份动态保障报告（12 章骨架），保单 OCR 后自动填入已知字段，缺失项标红待补。
+**报告为中心，对话为辅助**。每个客户的核心界面是一份动态保障报告（7 章单页长图），保单 OCR 后自动填入已知字段，缺失项提示待补。
 
 ```
 ┌─────────────────────────────────┐
-│  📄 张三保障报告 · 完成度 60%    │
+│  📄 张三保障报告 · 7 章          │
 ├─────────────────────────────────┤
-│  1. 家庭摘要 ✅                  │
-│  2. 家庭结构 ✅                  │
+│  1. 家庭结构 ✅                  │
+│  2. 家庭财务 ✅                  │
 │  3. 保障汇总 ✅ (2份保单)        │
-│  4. 保障分布 ⚠️ (数据不足)       │
-│  ...                             │
-│  8. 保障规划建议 ❌ (需补充收入)  │
-│  ...                             │
+│  4. 缴费月历 ✅                  │
+│  5. 缴费年历和关键节点 ⚠️        │
+│  6. 风险提示 ⚠️ (置信度告警)     │
+│  7. 附录：保单明细 ✅             │
 ├─────────────────────────────────┤
-│  👤 输入框：[_____] [📎] [📷]    │  ← 底部对话交互区
+│   [📷 保单]      [💬 对话]       │  ← 底部 FAB
 └─────────────────────────────────┘
 ```
 
-- 报告是主界面，实时刷新
-- 底部输入区：补充信息、提问、触发分析
-- 确认操作：弹出式卡片（不打断报告浏览）
-- 客户切换：侧边抽屉
-- **实时联动**：轻量化更新自动生效；重要更新弹卡片确认后，LLM 提示"数据已变更，正在重新分析"并自动刷新报告 7-10 章
+- 报告是主界面，实时刷新；编辑保存本地增量更新（立即重算）+ 后台静默校验
+- 底部 FAB：保单上传（ocr-flow 组件，选图 → OCR → 确认入库）/ 对话面板（chat-panel，三步流程）
+- 对话内上传已移除（2026-08 核实无 upload 代码）
+- 确认操作：弹出式卡片（确认/修改，不打断报告浏览）
+- 客户切换：首页最近客户列表 / 客户列表页搜索
+- **实时联动**：OCR/编辑入库 → `savedhome`/`onOcrFlowSaved` 事件触发报告页重读重算（不触发 AI）
 
-**进入逻辑**：打开小程序 → 上次活跃客户的报告 → 静止展示。切换客户时，新客户的报告加载并显示摘要引导。
+**进入逻辑**：打开小程序 → 首页最近客户列表 → 点击进入报告 → 静止展示。
 
 ## 系统架构
 
-- **前端**：微信小程序（原生），报告为主 + 底部对话 + 侧边抽屉，3 页（index/report/clients）
-- **后端**：CloudBase 云函数（dataWrite / dataQuery / reportAI / conversationAI / ocrService / login），共享模块经 `scripts/sync-shared.js` 同步至各函数 `_shared/` 副本
+- **前端**：微信小程序（原生），报告为主 + 底部 FAB，3 页（index/report/clients）
+- **后端**：CloudBase 云函数，共享模块经 `scripts/sync-shared.js` 同步至各函数 `_shared/` 副本：
+  - `dataQuery`：查询聚合（getFamily / queryMessages / listFamilies / searchFamilies / queryPolicies / queryMembers / queryFacts）
+  - `dataWrite`：写入聚合（家庭/成员/事实/保单/消息，`ingestPolicies` 批量入库 step 化）
+  - `reportAI`：深度分析报告生成（已停止自动触发，待手工入口）
+  - `conversationAI`：对话三步流程（getPrompt / generateText / postProcess）+ 13 工具路由
+  - `ocrService`：OCR 全链路（ocrOnly / aiExtractBatch / aiExtractParallel / matchPolicies）
+  - `login`：手机号登录；`cleanup`：定时清理
 - **数据库**：CloudBase NoSQL（文档型，5 集合：families / members / finances / policies / facts，灵活适配渐进式录入）
-- **AI**：通过 CloudBase 调用混元大模型（`hunyuan-exp` 分组 + `hy3-preview` 模型）
+- **AI**：对话/单图 OCR 提取经混元 `hy3`（`hunyuan-exp` 分组，TokenHub）；批量 OCR 提取（>1 张）走 DeepSeek 直连（`deepseek-v4-flash`，key 仅配置于 ocrService）；云函数侧 AI 全链经 `ai-gateway.js` → `safeCallChat`（审查链：sanitize → PII 脱敏 → 注入检测 → 内容安全 → 限流 60/60s → 输出审计 → agent_logs）
 
 原则：**轻量化，单一服务，零分布式复杂度**。
 
@@ -121,10 +130,10 @@ LLM 生成的结构化分析结果，手机和 PDF 共用同一数据源：
 
 | 场景 | 示例 |
 |------|------|
-| 信息收集引导 | "第 8 章保障规划建议还缺收入数据，建议下次见客户时确认——这直接影响重疾保额精度" |
-| 保障检视提醒 | "张三的医疗险下个月到期，建议在第 6 章缴费年历标注续保提醒" |
-| 分析结果解读 | "第 7 章缺口矩阵显示，家庭经济支柱的重疾保障完全缺失——这是最优先要解决的" |
-| 报告完成度提示 | "目前完成度 60%，第 4/8/9 章待补——需要我帮你优先处理哪一块？" |
+| 信息收集引导 | "保障汇总还缺收入数据，建议下次见客户时确认——这直接影响重疾保额精度" |
+| 保障检视提醒 | "张三的医疗险下个月到期，建议在第 4 章缴费年历标注续保提醒" |
+| 分析结果解读 | "保障汇总的缺口矩阵显示，家庭经济支柱的重疾保障完全缺失——这是最优先要解决的" |
+| 报告完成度提示 | "目前完成度 60%，第 2/4 章待补——需要我帮你优先处理哪一块？" |
 
 ## 数据模型
 
@@ -138,7 +147,7 @@ LLM 生成的结构化分析结果，手机和 PDF 共用同一数据源：
 | `policies` | 保单事实表（推理输入） | 高频追加 | 5-30/家庭 |
 | `facts` | 三元组关系+推理结论 | 高频追加 | 20-80/家庭 |
 
-> **去冗余（Plan A）**：`members` / `finances` 为独立集合，成员与财务的**唯一真相源**；`families.members` / `families.financial_snapshot` 内嵌字段已废弃（迁移脚本清空）。关联键统一为 `members.member_id`（形如 `mem_xxx`）：`policies.member_id` 与 `facts.subject_id` 均指向它。读写经 `_shared/member-store.js`（`loadFamilyView` / `getMembers` / `upsertMember` 等）。
+> **去冗余（Plan A）**：`members` / `finances` 为独立集合，成员与财务的**唯一真相源**；`families.members` 内嵌字段已废弃。`families.financial_snapshot` **仍活跃**：由 `memberRepo.getFinance` 聚合 finances 集合（元键 annual_income/total_debt/fixed_annual_expense ÷10000 转万；旧万键 income/debt/fixed_expense fallback），供表单回显与报告上下文使用。关联键统一为 `members.member_id`（形如 `mem_xxx`）：`policies.member_id` 与 `facts.subject_id` 均指向它。读写经 `_shared/memberRepo.js`（`loadFamilyView` / `getMembers` / `upsertMember` / `getFinance` 等）。
 
 ### families — 家庭容器
 | 字段 | 类型 | 说明 |
@@ -149,8 +158,9 @@ LLM 生成的结构化分析结果，手机和 PDF 共用同一数据源：
 | `engagement_stage` | string | onboarding/...（stageMachine 推导） |
 | `completeness_score` | 0-100 | 完备度（每次分析后评估） |
 | `insight_stale` | bool | 洞察是否过期（写入即置 true） |
-| `last_analysis_at` | timestamp | 上次分析时间（60s 节流） |
-| `last_portrait` / `last_review` / `last_plan` / `last_suggestions` / `last_milestones` / `last_disclaimer` / `last_conclusion` | string | 报告产物（AI 生成） |
+| `last_analysis_at` | timestamp | 上次分析成功时间（供归档 version_at 使用） |
+| `analysis_lock_at` | timestamp | 分析进行中 CAS 锁（30s 节流，成功生成后释放；旧数据无此字段时回退 last_analysis_at） |
+| `last_portrait` / `last_review` / `last_plan` / `last_suggestions` / `last_disclaimer` / `last_analysis` / `last_conclusion` / `last_summary` / `last_core_insights` | string/array | 报告产物（AI 生成，契约见 `report-fields.js`；基础版不消费，待深度分析） |
 | `profile_state` | string | collecting/... |
 | `status` | string | active/deleted |
 
@@ -179,7 +189,7 @@ LLM 生成的结构化分析结果，手机和 PDF 共用同一数据源：
 | `insured_name` / `policyholder_name` / `beneficiary_name` | string | OCR·AI |
 | `insurer` / `policy_number` / `effective_date` / `insurance_period` / `payment_method` / `payment_period` | string | OCR |
 | `confidence` / `field_confidence` | 0-1/object | 综合/逐字段 |
-| `auto_confirmed` | bool | ≥95% |
+| `auto_confirmed` | bool | ≥0.9（`CONF_THRESHOLD`，且核心字段 ≥80% 非空，见 `ocr-confidence.js`） |
 | `special_agreement` | string | OCR（入库前脱敏） |
 | `source` | 'ocr'\|'manual'\|'dialog' | |
 

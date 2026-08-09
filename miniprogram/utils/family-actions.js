@@ -38,6 +38,10 @@ function confirmDeleteFamily(opts) {
             const r2 = await api('deleteFamily', { familyId })
             if (r2.ok) {
               wx.showToast({ title: '已删除', icon: 'success' })
+              // 存储审计 P1：删除家庭后清理本地残留——last_family_id 指向已删 ID（现价表 404）、
+              // match_cache 5min 内把同名新家庭路由到旧 ID（写错家庭）、homeRecentClients 陈旧
+              if (session.getActiveFamily() === familyId) session.clear()
+              try { wx.removeStorageSync('match_cache'); wx.removeStorageSync('homeRecentClients') } catch (e) {}
               if (typeof onSuccess === 'function') onSuccess()
             } else {
               wx.showToast({ title: r2.msg || '删除失败', icon: 'none' })

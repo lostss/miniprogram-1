@@ -2,12 +2,12 @@
  * family-write — 家庭 CRUD + 阶段设置领域
  *
  * 导出：createFamily / updateFamilyHandler / deleteFamilyHandler / setStage
- * 私有（同模块内使用）：_updateFamilyHandleUpdateData / _syncMembers / _updateCompletenessAsync / _updateFamilyDelete / _updateFamilyUpdateSummary
+ * 私有（同模块内使用）：_updateFamilyHandleUpdateData / _syncMembers / _updateCompletenessAsync / _updateFamilyDelete
  *
  * 依赖关系：
  *   - createFamily 调用 memberRepo.createMembersForFamily（成员批量创建）
  *   - _syncMembers 调用 memberRepo.createMembersForFamily（diff 同步新增成员）
- *   - _updateFamilyDelete 调用 memberRepo.deleteMembersForFamily（级联删除成员）
+ *   - _updateFamilyDelete 用 writeSeam.batchRemove 级联删除（members 亦纳入 batchTx，strict 失败可感知）
  *   - 不依赖 fact-write / member-write / policy-write / message-write
  */
 const _ = require('wx-server-sdk').database().command
@@ -16,7 +16,7 @@ const { writeSeam, advanceStage, markFamilyMutated } = require('./_shared/writeS
 const { calcCompletenessScore } = require('./_shared/completeness')
 const { ALLOWED_FIELDS, isSafeKey } = require('./constants')
 const { STAGES } = require('./_shared/domain/stageMachine')
-const { upsertFinances, createMembersForFamily, deleteMembersForFamily } = require('./_shared/memberRepo')
+const { upsertFinances, createMembersForFamily } = require('./_shared/memberRepo')
 const { loadFamilyView } = require('./_shared/familyView')
 const { wrapError } = require('./_shared/errorHandler')
 
@@ -44,7 +44,6 @@ async function createFamily(db, openid, event) {
 async function updateFamilyHandler(db, openid, event) {
   const { familyId, field, value, operator = 'set', updateData: updateDataInput, subAction } = event
   if (!familyId) return { code: 400, msg: '缺少参数 familyId' }
-  if (subAction === 'updateSummary') return _updateFamilyUpdateSummary(db, familyId)
   if (updateDataInput && typeof updateDataInput === 'object') return _updateFamilyHandleUpdateData(db, familyId, openid, updateDataInput)
   if (!field) return { code: 400, msg: '缺少参数 field' }
   if (!ALLOWED_FIELDS.includes(field)) return { code: 400, msg: '不允许更新字段：' + field }
@@ -70,13 +69,13 @@ async function _updateFamilyHandleUpdateData(db, familyId, openid, updateDataInp
   for (const key of Object.keys(updateDataInput)) {
     if (key === 'updated_at') { updateData[key] = new Date(); continue }
     if (key === 'financial_snapshot') {
-      // 家庭财务 → finances 集合（唯一真相源）
+      // 家庭财务 → finances 集合（唯一真相源，数值审计 #2：统一存元键——表单输入为万，×10000 转元）
       const snap = updateDataInput[key] || {}
       const patch = {}
-      if (snap.income !== undefined) patch.income = snap.income
-      if (snap.debt !== undefined) patch.debt = typeof snap.debt === 'object' ? (snap.debt.amount != null ? snap.debt.amount : 0) : snap.debt
+      if (snap.income !== undefined) patch.annual_income = Number(snap.income) * 10000
+      if (snap.debt !== undefined) patch.total_debt = Number(typeof snap.debt === 'object' ? (snap.debt.amount != null ? snap.debt.amount : 0) : snap.debt) * 10000
       if (snap.debt && snap.debt.type !== undefined) patch.debt_type = snap.debt.type
-      if (snap.fixed_expense !== undefined) patch.fixed_expense = snap.fixed_expense
+      if (snap.fixed_expense !== undefined) patch.fixed_annual_expense = Number(snap.fixed_expense) * 10000
       if (snap.annual_premium_budget !== undefined) patch.annual_premium_budget = snap.annual_premium_budget
       if (Object.keys(patch).length > 0) await upsertFinances(db, familyId, openid, patch)
       needCompletenessCalc = true
@@ -178,47 +177,37 @@ async function _updateFamilyDelete(db, familyId, openid) {
   try {
     const family = await getFamily(db, familyId, openid)
     if (!family) return { code: 404, msg: '记录不存在或无权操作' }
-    await deleteMembersForFamily(db, familyId, openid).catch(e => console.error('[dataWrite] deleteFamily 成员删除失败:', e.message))
-    await deleteFamily(db, familyId, openid)
-    // 架构审计第 6 轮候选 5：用 batchTx 替代 Promise.all + .catch(() => 0)，让部分失败显式化
+    // 级联删除审计 #1 修复：成员删除纳入 batchTx（strict 失败可感知 → 触发 207 保留 family 可重试），
+    // 原 deleteMembersForFamily 事务外静默吞错 → 家庭已删但成员孤儿残留
+    // 全链路审计 PM5：先 batchTx 删关联数据，再删 family 文档——原顺序先删 family，
+    // batchTx 失败时残留 policies/facts 等孤儿（family 已不存在，无入口再清理）
     const ws = writeSeam(db, openid, familyId, { markMutated: false, advanceStageHook: false })
     const txResult = await ws.batchTx([
-      { name: 'messages', exec: () => ws.batchRemove('messages', { family_id: familyId }) },
-      { name: 'facts', exec: () => ws.batchRemove('facts', { family_id: familyId }) },
-      { name: 'insights', exec: () => ws.batchRemove('insights', { family_id: familyId }) },
-      { name: 'policies', exec: () => ws.batchRemove('policies', { family_id: familyId }) },
-      { name: 'policy_cash_values', exec: () => ws.batchRemove('policy_cash_values', { family_id: familyId }) },
-      { name: 'finances', exec: () => ws.batchRemove('finances', { family_id: familyId }) },
-      { name: 'reports', exec: () => ws.batchRemove('reports', { family_id: familyId }) },
-      { name: 'operation_logs', exec: () => ws.batchRemove('operation_logs', { family_id: familyId }) },
-      { name: 'agent_logs', exec: () => ws.batchRemove('agent_logs', { family_id: familyId }) },
+      { name: 'members', exec: () => ws.batchRemove('members', { family_id: familyId }, 100, true) },
+      { name: 'messages', exec: () => ws.batchRemove('messages', { family_id: familyId }, 100, true) },
+      { name: 'facts', exec: () => ws.batchRemove('facts', { family_id: familyId }, 100, true) },
+      { name: 'insights', exec: () => ws.batchRemove('insights', { family_id: familyId }, 100, true) },
+      { name: 'policies', exec: () => ws.batchRemove('policies', { family_id: familyId }, 100, true) },
+      { name: 'policy_cash_values', exec: () => ws.batchRemove('policy_cash_values', { family_id: familyId }, 100, true) },
+      { name: 'finances', exec: () => ws.batchRemove('finances', { family_id: familyId }, 100, true) },
+      { name: 'reports', exec: () => ws.batchRemove('reports', { family_id: familyId }, 100, true) },
+      { name: 'operation_logs', exec: () => ws.batchRemove('operation_logs', { family_id: familyId }, 100, true) },
+      { name: 'agent_logs', exec: () => ws.batchRemove('agent_logs', { family_id: familyId }, 100, true) },
       // 清理 OCR 阶段未关联 familyId 的孤儿日志（匹配前调用，family_id 为空字符串）
-      { name: 'orphan_logs', exec: () => ws.batchRemove('operation_logs', { family_id: '' }) }
+      // 级联删除审计 #4：agent_logs 的 '' 孤儿与 operation_logs 对齐一并清理
+      { name: 'orphan_logs', exec: () => ws.batchRemove('operation_logs', { family_id: '' }, 100, true) },
+      { name: 'orphan_agent_logs', exec: () => ws.batchRemove('agent_logs', { family_id: '' }, 100, true) }
     ])
     const total = (txResult.results || []).reduce((a, b) => a + (b || 0), 0)
-    // 部分失败时返回 partial 标记，调用方可决策重试或上报
+    // 部分失败时返回 partial 标记：保留 family 文档（可重试清理），避免孤儿数据
     if (txResult.failed > 0) {
       console.error('[dataWrite] deleteFamily 部分级联失败:', JSON.stringify(txResult.errors))
-      return { code: 207, msg: '家庭已删除，部分级联数据清理失败', partial: true, cascadeCleaned: total, errors: txResult.errors }
+      return { code: 207, msg: '部分级联数据清理失败，家庭未删除，可重试', partial: true, cascadeCleaned: total, errors: txResult.errors }
     }
+    // 全链路审计 PM5：关联数据全部清理成功后，最后删 family 文档
+    await deleteFamily(db, familyId, openid)
     return { code: 200, msg: '删除成功', cascadeCleaned: total }
   } catch (e) { return wrapError('删除', e) }
-}
-
-async function _updateFamilyUpdateSummary(db, familyId) {
-  const { UPDATE } = require('./_shared/config')
-  try {
-    const wxContext = require('wx-server-sdk').getWXContext()
-    const openid = wxContext && (wxContext.OPENID || wxContext.openId)
-    const family = await getFamily(db, familyId, openid)
-    if (!family) return { code: 404, msg: '家庭记录不存在' }
-    if (family.updated_at) {
-      const lastTime = typeof family.updated_at === 'object' && family.updated_at.$date ? new Date(family.updated_at.$date).getTime() : new Date(family.updated_at).getTime()
-      if (!isNaN(lastTime) && (Date.now() - lastTime < UPDATE.DEBOUNCE_MS)) return { code: 200, msg: '防抖跳过', data: { skipped: true } }
-    }
-    await updateFamily(db, familyId, openid, { summary_pending: true, updated_at: new Date() })
-    return { code: 200, data: { triggered: true } }
-  } catch (err) { return wrapError('更新', err) }
 }
 
 // ---------- deleteFamily ----------

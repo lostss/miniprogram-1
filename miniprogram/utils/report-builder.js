@@ -28,10 +28,16 @@ function buildReportView(family, report) {
   const heroView = buildHero(family, gaps)
   const hero = Object.assign(heroView, { conclusion: String(report.conclusion || '') })
   const norm = normalizeFamilyData(family)
+  // 保障人数：有至少一份有效保单的去重成员数（按 member_id 优先、insured_name 兜底；无归属保单不计入）
+  const coveredIds = new Set()
+  for (const p of norm.active) {
+    const key = p.member_id || p.insured_name || ''
+    if (key) coveredIds.add(key)
+  }
   const summaryCards = {
     premium: String(norm.annualPremiumW),
     coverage: String(norm.totalCoverage),
-    count: norm.policyCount
+    count: coveredIds.size
   }
   return { chapters: chapters, hero: hero, summaryCards: summaryCards, gaps: gaps, hints: hints }
 }

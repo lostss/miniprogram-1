@@ -12,24 +12,19 @@
  *   3. 在 report-builder.js 调用 create('xxx', {...})
  *
  * 类型契约（字段说明）：
- *  - overview:     { rate, totalGap, annualPremium, debt, totalCoverage }
  *  - panorama:     { heads, cats, rows: [{name, cells: [{v, s}]}] }
  *  - timeline:     { items: [{y, label, type, soon?, date?, premium?, note?}] }
  *  - calendar:     { items: [{m, v, h}] }   h: 1=有缴费 2=峰值月
- *  - urgent_list:  { items: [{action, reason}] }
- *  - insight_cards:{ items: [string] }
- *  - dashboard:    { familyPlan: {}, matrix: { heads, rows } }
- *  - family_tree:  { nodes: [{name, role, age}], finance: {income, debt, expense} }
- *  - risk_alerts:  { items: [{name, issue}], disclaimer }
+ *  - family_tree:  { nodes: [{name, role, display, member_id}] }
+ *  - finance:      { income, debt, expense }
+ *  - risk_alerts:  { items: [{name, issue}] }
  *  - policy_cards: { groups: [{name, policies: [{product_name, category, sum_assured, annual_premium, effective_date, policy_id}]}] }
+ *
+ * 已下线类型（清理审计）：overview / urgent_list / insight_cards / dashboard（无生成端）
  */
 
 // 字段契约：必填字段（缺失则 normalize 时 console.warn 并补默认值）
 const BLOCK_REGISTRY = {
-  overview: {
-    required: ['rate', 'totalGap', 'annualPremium', 'debt', 'totalCoverage'],
-    defaults: { rate: 0, totalGap: 0, annualPremium: 0, debt: 0, totalCoverage: 0 }
-  },
   panorama: {
     required: ['heads', 'cats', 'rows'],
     defaults: { heads: [], cats: [], rows: [] }
@@ -42,25 +37,17 @@ const BLOCK_REGISTRY = {
     required: ['items'],
     defaults: { items: [] }
   },
-  urgent_list: {
-    required: ['items'],
-    defaults: { items: [] }
-  },
-  insight_cards: {
-    required: ['items'],
-    defaults: { items: [] }
-  },
-  dashboard: {
-    required: ['familyPlan', 'matrix'],
-    defaults: { familyPlan: {}, matrix: { heads: [], rows: [] } }
-  },
   family_tree: {
     required: ['nodes'],
-    defaults: { nodes: [], finance: { income: 0, debt: 0, expense: 0 } }
+    defaults: { nodes: [] }
+  },
+  finance: {
+    required: ['income', 'debt', 'expense'],
+    defaults: { income: 0, debt: 0, expense: 0 }
   },
   risk_alerts: {
     required: ['items'],
-    defaults: { items: [], disclaimer: '' }
+    defaults: { items: [] }
   },
   policy_cards: {
     required: ['groups'],

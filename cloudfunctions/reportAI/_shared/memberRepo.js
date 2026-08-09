@@ -15,8 +15,9 @@ const { detectInjection } = require('./guard')
 
 // members 集合允许的字段白名单（防 AI 误写 financial/policy 字段）
 // age 直接允许（对话"X岁"场景），birth_date 由 age 推导或用户明确给出
-const _MEMBER_FIELDS = ['name', 'birth_date', 'age', 'role', 'gender', 'occupation', 'health']
-const _MEMBER_FIELD_ZH = { name: '姓名', birth_date: '出生日期', role: '角色', gender: '性别', occupation: '职业', health: '健康状况', age: '年龄' }
+// income：成员级个人年收入，单位万（与 v2-context 画像 m.income+'万' 一致）；对话"收入25万"场景走 upsertMember 落库
+const _MEMBER_FIELDS = ['name', 'birth_date', 'age', 'role', 'gender', 'occupation', 'health', 'income']
+const _MEMBER_FIELD_ZH = { name: '姓名', birth_date: '出生日期', role: '角色', gender: '性别', occupation: '职业', health: '健康状况', age: '年龄', income: '个人年收入' }
 
 function _shapeMember(m) {
   if (!m) return null
@@ -59,13 +60,20 @@ async function getFinance(db, familyId, openid) {
   }
 }
 
-/** 元 → 万：数值型除以10000，字符串提取数字后返回（已为万的不变） */
+/** 元 → 万（数值审计 #1）：newVal 为元键（annual_income/total_debt/fixed_annual_expense）÷10000 转万；
+ *  fallbackVal 为旧万键（income/debt/fixed_expense，表单路径曾存万）原样返回。
+ *  原实现对 fallback 也 ÷10000 导致 80 万 → 0.01 万（10000× 塌缩）。 */
 function _toWan(newVal, fallbackVal) {
-  const v = newVal != null ? newVal : (fallbackVal != null ? fallbackVal : null)
-  if (v == null) return null
-  if (typeof v === 'string') { const m = String(v).match(/([\d.]+)/); return m ? parseFloat(m[1]) : null }
-  const n = Number(v)
-  return isNaN(n) ? null : Math.round(n / 100) / 100
+  if (newVal != null) {
+    const n = Number(newVal)
+    return isNaN(n) ? null : Math.round(n / 100) / 100
+  }
+  if (fallbackVal != null) {
+    if (typeof fallbackVal === 'string') { const m = String(fallbackVal).match(/([\d.]+)/); return m ? parseFloat(m[1]) : null }
+    const n = Number(fallbackVal)
+    return isNaN(n) ? null : n
+  }
+  return null
 }
 
 /** 按 member_id / _id / name 定位成员文档 */
@@ -218,17 +226,42 @@ async function updateMemberFields(db, familyId, openid, memberId, fields) {
 }
 
 // ---------- finances: upsert by family_id (singleton) ----------
+// 字段白名单 + 别名归一化：对话 AI 手写 args 字段名不可控（曾产出 liability/monthly_expense_ex_premium
+// 等别名），透传落库会导致读取端（total_debt/fixed_annual_expense）读不到。此处只接受标准字段并映射别名，
+// 非白名单字段一律丢弃，防止静默写入脏字段。
+const FINANCE_FIELD_MAP = {
+  annual_income: 'annual_income',
+  income: 'annual_income',
+  total_debt: 'total_debt',
+  debt: 'total_debt',
+  liability: 'total_debt',
+  fixed_annual_expense: 'fixed_annual_expense',
+  fixed_expense: 'fixed_annual_expense',
+  monthly_expense_ex_premium: 'fixed_annual_expense',
+  monthly_expense: 'fixed_annual_expense',
+  debt_type: 'debt_type',
+  annual_premium_budget: 'annual_premium_budget'
+}
+function _normalizeFinancePatch(patch) {
+  const out = {}
+  for (const key of Object.keys(patch || {})) {
+    const std = FINANCE_FIELD_MAP[key]
+    if (std) out[std] = patch[key]
+  }
+  return out
+}
 async function upsertFinances(db, familyId, openid, patch) {
-  if (!patch || Object.keys(patch).length === 0) return { code: 400, msg: '缺少更新数据' }
+  const norm = _normalizeFinancePatch(patch)
+  if (Object.keys(norm).length === 0) return { code: 400, msg: '缺少有效财务字段' }
   const now = new Date()
   const existing = await safeQuery(db, 'finances', { family_id: familyId }, openid)
   const ws = writeSeam(db, openid, familyId)
   if (existing.data && existing.data.length > 0) {
-    await ws.silentUpdateDoc('finances', existing.data[0]._id, { ...patch, updated_at: now })
+    await ws.silentUpdateDoc('finances', existing.data[0]._id, { ...norm, updated_at: now })
     await ws.triggerHooks()
     return { code: 200, data: { action: 'updated' } }
   }
-  await ws.silentAdd('finances', { family_id: familyId, ...patch, updated_at: now })
+  await ws.silentAdd('finances', { family_id: familyId, ...norm, updated_at: now })
   await ws.triggerHooks()
   return { code: 200, data: { action: 'created' } }
 }
@@ -272,5 +305,5 @@ module.exports = {
   getMembers, getFinance, findMember,
   upsertMember, setMemberField, updateMemberFields,
   upsertFinances, createMembersForFamily, deleteMembersForFamily,
-  _MEMBER_FIELDS, _MEMBER_FIELD_ZH, calcAgeYears, _shapeMember
+  _MEMBER_FIELDS, _MEMBER_FIELD_ZH, FINANCE_FIELD_MAP, calcAgeYears, _shapeMember
 }

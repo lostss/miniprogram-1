@@ -22,6 +22,11 @@
 .empty-hint { text-align:center; padding-top:100rpx }
 .empty-hint text { font-size:var(--fs-tiny); color:var(--text-disabled); letter-spacing:2rpx }
 
+/* UI 审计 R-M5：首页加载错误态 */
+.load-error { display:flex; flex-direction:column; align-items:center; gap:var(--sp-3); margin-top:var(--sp-6) }
+.load-error-text { font-size:var(--fs-caption); color:var(--text-tertiary) }
+.load-error-retry { font-size:var(--fs-caption); color:var(--accent-deep); padding:var(--sp-2) var(--sp-5); border:1rpx solid var(--border-accent); border-radius:var(--r-full) }
+
 /* ========== FAB ========== */
 .fab { position:fixed; right:var(--sp-6); bottom:calc(var(--sp-8) + env(safe-area-inset-bottom)); width:96rpx; height:96rpx; border-radius:50%; background:linear-gradient(135deg, var(--accent) 0%, var(--accent-deep) 100%); box-shadow:0 8rpx 24rpx rgba(201,169,110,0.3); display:flex; align-items:center; justify-content:center; z-index:var(--z-panel); transform:scale(0); opacity:0; transition:transform 0.35s var(--ease-spring), opacity 0.25s var(--ease-out) }
 .fab--show { transform:scale(1); opacity:1 }

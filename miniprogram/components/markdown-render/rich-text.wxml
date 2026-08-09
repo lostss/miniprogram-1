@@ -1,8 +1,0 @@
-<!-- 通用富文本渲染模板 -->
-<block wx:if="{{ hasInlineStyles }}">
-  <block wx:for="{{ content }}" wx:for-item="part" wx:key="index">
-    <text wx:if="{{ part.type === 'strong' }}" class="md-strong">{{ part.content }}</text>
-    <text wx:else>{{ part.content }}</text>
-  </block>
-</block>
-<text wx:else>{{ content }}</text>

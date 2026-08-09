@@ -9,7 +9,7 @@ const HOME_CACHE_TTL = 60 * 1000
 
 Page({
   data: {
-    recentClients: [], loadingClients: false, removingId: '', ocrBusy: false
+    recentClients: [], loadingClients: false, removingId: '', ocrBusy: false, loadError: false
   },
 
   onUnload() { this._disposed = true },
@@ -33,12 +33,12 @@ Page({
     const cache = this._readCache()
     // TTL 内命中：直接渲染，不发请求
     if (!force && cache && (Date.now() - cache.ts) < HOME_CACHE_TTL) {
-      if (cache.data && cache.data.length) this.setData({ recentClients: cache.data, loadingClients: false })
+      if (cache.data && cache.data.length) this.setData({ recentClients: cache.data, loadingClients: false, loadError: false })
       return
     }
     // 静默刷新：有旧缓存先渲染，避免骨架屏闪白；无缓存才显示骨架
     if (!force && cache && cache.data && cache.data.length) {
-      this.setData({ recentClients: cache.data, loadingClients: false })
+      this.setData({ recentClients: cache.data, loadingClients: false, loadError: false })
     } else {
       this.setData({ loadingClients: true })
     }
@@ -48,13 +48,22 @@ Page({
       if (res.ok) {
         const families = res.data.families || []
         this._writeCache(families)
-        this.setData({ recentClients: families, loadingClients: false })
+        this.setData({ recentClients: families, loadingClients: false, loadError: false })
       } else {
-        this.setData({ loadingClients: false })
+        // UI 审计 R-M5：加载失败标记错误态（首页不显示 onboarding 引导伪装空数据）
+        this.setData({ loadingClients: false, loadError: true })
       }
-    } catch (e) { this.setData({ loadingClients: false }); console.error('获取客户列表失败:', e) }
+    } catch (e) { this.setData({ loadingClients: false, loadError: true }); console.error('获取客户列表失败:', e) }
   },
+  // UI 审计 R-M5：首页错误态重试（force 绕过 60s TTL 缓存）
+  onRetryLoad() { this._fetchClients(true) },
 
+  // UI 审计 交互 S1：OCR 弹窗/进行中拦截返回键，防误按退页丢进度
+  onBackPress() {
+    const ocr = this.selectComponent('#ocrFlow')
+    if (ocr && ocr.onBackPressed && ocr.onBackPressed()) return true
+    return false
+  },
   // 上传入口：委托 ocr-flow 组件（chooseMedia + 全流程）
   onUploadTap() {
     const ocrFlow = this.selectComponent('#ocrFlow')
@@ -79,9 +88,13 @@ Page({
     this._fetchClients(true)
   },
 
+  // 真机 404 修复：detail（组件 triggerEvent）优先，dataset 兜底；_id 为空时拦截提示而非跳 'familyId=undefined'
   onClientTap(e) {
-    const { _id } = (e.detail && e.detail._id !== undefined) ? e.detail : e.currentTarget.dataset
-    navigateToFamily(_id)
+    const detail = e.detail || {}
+    const ds = e.currentTarget.dataset || {}
+    const id = (detail._id !== undefined && detail._id !== '') ? detail._id : (ds.id || ds._id || '')
+    if (!id) { wx.showToast({ title: '客户数据异常，请下拉刷新', icon: 'none' }); return }
+    navigateToFamily(id)
   },
   onClientLongPress(e) {
     const idx = e.currentTarget.dataset.idx

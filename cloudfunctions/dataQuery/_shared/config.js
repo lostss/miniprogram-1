@@ -15,17 +15,14 @@ module.exports = {
   AI: {
     // GROUP: 小程序成长计划免费额度走 'hunyuan-exp'；'cloudbase' 为付费 TokenHub
     GROUP: 'hunyuan-exp',
-    THINK_MODEL: 'hy3',
     CHAT_MODEL: 'hy3',
     OCR_MODEL: 'hy3',
     SDK_TIMEOUT: 60000,
-    THINK_TIMEOUT: 55000,
     OCR_MAX_TOKENS: 2000,
     OCR_TEMPERATURE: 0,
-    // 批量拼接提取（aiExtractBatch）
-    OCR_BATCH_MAX_CHARS: 84000,       // 拼接上限字符数（约 56K input token）
-    OCR_BATCH_MAX_TOKENS: 16000,      // 批量模式输出 token 上限（实测3张图4800 token，按1600/张，10张图足够）
-    OCR_BATCH_TIMEOUT: 90000,         // 批量模式 AI 超时（3张图7s，10张图约25-30s）
+    // 批量提取（aiExtractBatch，R2 后仅服务单图）
+    OCR_BATCH_MAX_TOKENS: 4000,       // 单图提取输出 token 上限（实际需求 ~2-4K；R2 单图化后不再需要 16000）
+    OCR_BATCH_TIMEOUT: 55000,         // 单图 AI 超时（实际 7-30s；必须 < SDK_TIMEOUT 60s，否则 SDK 先断）
     OCR_BATCH_TEMPERATURE: 0,
     // DeepSeek 直连（绕过 TokenHub 限流，并发 2500）
     USE_DIRECT: true,
@@ -61,8 +58,10 @@ module.exports = {
   REPORT_THROTTLE_MS: 30 * 1000,
   REPORT_KEEP_VERSIONS: 3,
 
-  // -- 更新 --
-  UPDATE: { DEBOUNCE_MS: 5 * 60 * 1000 },
+  // -- 工具上下文缓存（R3v2 #5：参数外移，原硬编码在 conversationAI/index.js） --
+  // TTL 30s（原 5s）：postProcess 每轮全量查 5 集合，5s 仅覆盖连击消息；写工具成功已 invalidate，TTL 长不引入脏数据
+  TOOL_CTX_TTL: 30000,
+  TOOL_CTX_MAX: 20,
 
   // -- 费用 --
   // hy3-preview 定价: $0.004/1K tokens

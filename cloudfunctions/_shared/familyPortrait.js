@@ -128,7 +128,10 @@ function buildPortrait(members, facts) {
     const healthFacts = mf.filter(f => f.predicate === '健康异常')
     const debt = get('负债')
     const asset = get('持有资产')
-    const extraInfo = mf.filter(f => f.predicate === '未来计划' || f.predicate === '有特征' || f.predicate === '有偏好').map(f => `${f.predicate}：${f.object_value}`)
+    // P1：extraInfo 白名单对齐 L1 财富型谓词（传承/教育/退休/资产隔离/婚嫁规划），
+    // 否则新谓词写入 facts 但不进画像（等于没采）。未知谓词兜底"有特征"。
+    const EXTRA_PREDICATES = ['未来计划', '有特征', '有偏好', '传承意图', '教育规划', '退休规划', '资产隔离需求', '婚嫁规划']
+    const extraInfo = mf.filter(f => EXTRA_PREDICATES.indexOf(f.predicate) !== -1).map(f => `${f.predicate}：${f.object_value}`)
 
     // 覆盖矩阵
     const coverage = {}
@@ -207,6 +210,15 @@ function renderPortraitMarkdown(portrait, { compact = false } = {}) {
         return `${dim}:${t}`
       }).join(' ')
       lines.push(`- 保障覆盖：${cov}`)
+      // P0：compact 补保单明细摘要（AI 流式阶段需能回答"家里有什么保单"；按成员截断 4 条防 token 膨胀）
+      if (mp.policies.length) {
+        const polSum = mp.policies.slice(0, 4).map(p => {
+          const st = p.status === 'active' ? '有效' : p.status === 'expired' ? '已失效' : '待确认'
+          const amt = p.amount ? (typeof p.amount === 'number' ? p.amount + '万' : p.amount) : '待确认'
+          return `${p.name || '待确认'}(${p.category || '待确认'},${amt},${st})`
+        }).join(' ')
+        lines.push(`- 已有保障：${polSum}${mp.policies.length > 4 ? ` 等${mp.policies.length}份` : ''}`)
+      }
       continue
     }
 

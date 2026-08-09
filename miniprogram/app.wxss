@@ -10,7 +10,8 @@ page {
   /* 背景 — 暖奶油白，与 window 栏 #F5F0EB 一致 */
   --bg-root: #F5F0EB;
   --bg-surface: #FBF8F3;
-  --bg-card: #FFFFFF;
+  /* 纯白→极淡暖白（审计 P2：暖米白底上纯白偏冷，暖白统一折纸质感） */
+  --bg-card: #FFFDF9;
   --bg-input: #F5F0EB;
 
   /* 边框 */
@@ -35,6 +36,16 @@ page {
   --amber-dim: #F5ECCE;
   --red-dim: #EBD8D2;
 
+  /* UI 审计：置信度底色 token（ocr-flow/edit-sheet 原两处硬编码 #FFF8E1 等，收敛复用） */
+  --tone-mid: #FFF8E1;
+  --tone-low: #FFF0E0;
+  --tone-modified: #E3F2FD;
+
+  /* UI 审计 #③：报告/OCR 绿色收敛（原 --green-report/--green-deep 分散定义，统一为 --ok 系） */
+  --ok: #4A9C6D;
+  --ok-deep: #1a7f4f;
+  --ok-dim: #e6f4ec;
+
   /* 文字 */
   --text-primary: #1A1A2E;
   --text-secondary: #6E5A3E;
@@ -42,20 +53,20 @@ page {
   --text-disabled: #9A8B7C;
 
   /* 字体 */
-  --font: 'PingFang SC', 'Noto Sans CJK SC', -apple-system, 'Microsoft YaHei', sans-serif;
+  --font: 'PingFang SC', 'HarmonyOS Sans SC', 'Noto Sans CJK SC', -apple-system, 'Microsoft YaHei', sans-serif;
   --font-serif: 'Songti SC', 'STSong', 'Source Han Serif SC', 'Noto Serif SC', serif;
   --font-mono: 'SF Mono', Monaco, 'Cascadia Code', monospace;
 
-  /* 字号阶梯（1.25 模数：20→25→31→39→48，UI 正文档位细化） */
+  /* 字号阶梯（UI 打磨：消除 26/30 两档 2rpx 重复，层级 20→24→28→32→36→40→44→52 每档 ≥4rpx） */
   --fs-tiny: 20rpx;
   --fs-caption: 24rpx;
-  --fs-base: 26rpx;
+  --fs-base: 28rpx;
   --fs-body: 28rpx;
-  --fs-lg: 30rpx;
-  --fs-xl: 32rpx;
-  --fs-2xl: 36rpx;
-  --fs-display: 40rpx;
-  --fs-3xl: 48rpx;
+  --fs-lg: 32rpx;
+  --fs-xl: 36rpx;
+  --fs-2xl: 40rpx;
+  --fs-display: 44rpx;
+  --fs-3xl: 52rpx;
   --fs-hero: 52rpx;
 
   --fw-normal: 400;
@@ -76,6 +87,8 @@ page {
 
   /* 间距 */
   --sp-1: 4rpx; --sp-1-5: 6rpx; --sp-2: 8rpx; --sp-3: 12rpx;
+  /* 全链路审计 UC1：--sp-3-5 原缺失导致 ocr-flow padding shorthand 整体失效回退 0 */
+  --sp-3-5: 14rpx;
   --sp-4: 16rpx; --sp-4-5: 20rpx; --sp-5: 24rpx;
   --sp-6: 32rpx; --sp-7: 40rpx; --sp-8: 48rpx; --sp-9: 52rpx; --sp-10: 56rpx;
 
@@ -97,10 +110,14 @@ page {
   --shadow-sheet: 0 -4rpx 24rpx rgba(60,50,30,0.08);
 
   --z-base: 1; --z-overlay: 90; --z-panel: 100;
-  --z-sheet: 200; --z-modal: 300; --z-toast: 400;
+  --z-sheet: 200; --z-modal: 300; --z-sheet-inner: 310; --z-sheet-inner-top: 311; --z-toast: 400;
+  /* 弹层叠加审计：表格全屏（原组件内硬编码 1000）纳入 token 体系，防未来全局层被意外盖住 */
+  --z-fullscreen: 1000;
 
   --overlay-dim: rgba(26,26,46,0.35);
   --overlay-strong: rgba(26,26,46,0.6);
+  /* 弹层叠加审计：ocr-sheet-mask 原硬编码 rgba(0,0,0,0.4)（层中层遮罩），收敛为 token（0.4 介于 dim/strong 之间，语义=次顶层遮罩） */
+  --overlay-inner: rgba(26,26,46,0.4);
 
   background: var(--bg-root);
   font-family: var(--font);
@@ -180,6 +197,13 @@ page ::selection { background: rgba(201,169,110,0.25); color: var(--text-primary
   box-shadow: var(--shadow-sm);
 }
 
+/* 数字块共享类（审计 P3：report 页 .sc-cell 与 report-markdown .fin-item 同构合并）：
+   衬线大字 + 全宽小标，bg-root 内嵌于卡片 */
+.num-cell { flex:1; min-width:0; display:flex; flex-wrap:wrap; align-items:baseline; justify-content:center; gap:var(--sp-1); background:var(--bg-root); border-radius:var(--r-lg); padding:var(--sp-4) var(--sp-3); }
+.num-val { font-size:var(--fs-2xl); font-weight:var(--fw-bold); color:var(--text-primary); font-family:var(--font-serif); line-height:var(--lh-none); font-variant-numeric:tabular-nums; }
+.num-unit { font-size:var(--fs-tiny); color:var(--text-secondary); }
+.num-lbl { width:100%; text-align:center; font-size:var(--fs-tiny); color:var(--text-tertiary); margin-top:var(--sp-2); letter-spacing:var(--ls-wide); }
+
 /* 工具 */
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .safe-bottom { padding-bottom: 0px; padding-bottom: env(safe-area-inset-bottom); }
@@ -210,12 +234,14 @@ page ::selection { background: rgba(201,169,110,0.25); color: var(--text-primary
 /* 动画点：金/绿双色区分阶段，呼吸感替代脉冲 */
 
 
-.ocr-done-title { font-size:var(--fs-2xl); font-weight:var(--fw-semi); color:var(--text-primary); margin-bottom:var(--sp-2); animation:popIn 0.4s var(--ease-spring) }
+/* UI 打磨：状态动画不用回弹缓动（过冲在 popIn keyframe 内已含），改 ease-out-expo */
+.ocr-done-title { font-size:var(--fs-2xl); font-weight:var(--fw-semi); color:var(--text-primary); margin-bottom:var(--sp-2); animation:popIn 0.4s var(--ease-out-expo) }
 .ocr-done-sub { font-size:var(--fs-caption); color:var(--text-tertiary); margin-bottom:var(--sp-5); text-align:center }
 .ocr-fail-tip { color:var(--amber); font-size:var(--fs-tiny); margin-top:var(--sp-1) }
 .ocr-summary-list { width:100%; max-height:300rpx; margin-bottom:var(--sp-6) }
 .ocr-actions-row { width:100%; display:flex; gap:var(--sp-3) }
-.ocr-confirm-btn { flex:1; height:88rpx; background:var(--accent); color:var(--color-on-accent); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none }
+/* UI 审计 #②：accent 白字 2.24:1 不达标，改深色主文字色（7.62:1） */
+.ocr-confirm-btn { flex:1; height:88rpx; background:var(--accent); color:var(--text-primary); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none }
 .ocr-confirm-btn::after { border:none }
 .ocr-confirm-btn.is-loading { background:var(--accent-dim); }
 .ocr-confirm-btn[disabled] { opacity:0.7; }
@@ -225,7 +251,6 @@ page ::selection { background: rgba(201,169,110,0.25); color: var(--text-primary
 
 /* 尊重减少动效偏好 */
 @media (prefers-reduced-motion: reduce) {
-  .anim-fade-up,
   .anim-fade-in,
   .thinking-dot,
   .thinking-dots,

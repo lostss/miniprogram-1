@@ -41,13 +41,17 @@ async function callSibling(cloud, fnName, payload, openid, opts = {}) {
     throttleMs = 0,
     throttleState = null,
     onSuccess = null,
-    extraPayload = {}
+    extraPayload = {},
+    // R3v2 #2：fire-and-forget 模式——节流检查后不 await 调用，立即返回 triggered（后台异步执行）
+    fireAndForget = false,
+    // R3v2 审计 #9：traceId 透传（跨函数日志串联，与 ocrService 读 event._reqId 一致）
+    traceId = ''
   } = opts
 
-  // 节流检查（需配合 throttleState 回调查询上次成功时间）
+  // 节流检查（需配合 throttleState 回调查询上次成功时间；支持 async 回调，R3v2 #2）
   if (throttleMs > 0 && typeof throttleState === 'function') {
     const familyId = payload.familyId
-    const lastAt = throttleState(familyId)
+    const lastAt = await throttleState(familyId)
     const now = Date.now()
     if (lastAt && (now - lastAt < throttleMs)) {
       return { code: 200, data: { skipped: true, reason: 'throttled' } }
@@ -55,6 +59,25 @@ async function callSibling(cloud, fnName, payload, openid, opts = {}) {
   }
 
   const data = { _authOpenid: openid, ...payload, ...extraPayload }
+  if (traceId) data._reqId = traceId
+
+  if (fireAndForget) {
+    // 不 await：命中节流已在上方返回 skipped；此处直接后台触发，错误仅记录日志
+    withRetry(
+      () => cloud.callFunction({ name: fnName, data }),
+      { maxAttempts: retry + 1, delayMs: retryDelayMs, label }
+    ).then(res => {
+      const result = (res && res.result) || { code: 500, msg: fnName + ' 返回空结果' }
+      if (typeof onSuccess === 'function') {
+        try {
+          onSuccess(result, { familyId: payload.familyId, openid, now: Date.now() })
+        } catch (e) {
+          console.error(`[cross-fn-call] ${label} onSuccess 回调失败:`, e.message)
+        }
+      }
+    }).catch(e => console.error(`[cross-fn-call] ${label} 重试${retry}次均失败:`, e && e.message))
+    return { code: 200, data: { triggered: true } }
+  }
 
   try {
     const res = await withRetry(

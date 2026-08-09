@@ -26,6 +26,7 @@ jest.mock('wx-server-sdk', function() {
         where: jest.fn(function(cond) {
           var filtered = rows.filter(function(r) { return matchWhere(r, cond) })
           return {
+            count: jest.fn(function() { return Promise.resolve({ total: filtered.length }) }),
             get: jest.fn(function() { return Promise.resolve({ data: filtered.length > 0 ? [filtered[0]] : [] }) }),
             update: jest.fn(function() { return Promise.resolve({ stats: { updated: filtered.length } }) }),
             remove: jest.fn(function() { return Promise.resolve({ stats: { removed: filtered.length } }) }),

@@ -30,6 +30,9 @@ class CtxCache {
       this._store.delete(key)
       return undefined
     }
+    // 审计 M6：命中即刷新到队尾（Map 重插，保留原 ts 不刷 TTL）——真 LRU 而非 FIFO
+    this._store.delete(key)
+    this._store.set(key, entry)
     return entry.value
   }
 

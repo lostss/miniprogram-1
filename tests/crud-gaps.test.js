@@ -6,7 +6,9 @@ jest.mock('wx-server-sdk', function() {
   return {
     init: jest.fn(),
     DYNAMIC_CURRENT_ENV: 'env-mock',
-    database: jest.fn(function() { return { collection: jest.fn() } }),
+    // H2 审计：补齐 database().command（fact-write 的 `_` 依赖它构造 neq 排除）
+    // 缺 command 时 `_`=undefined，addFact versioned 的 _id 排除守卫短路 → 刚写入的 fact 被自身 supersede 作废
+    database: jest.fn(function() { return { command: { neq: v => ({ __neq: v }), in: v => ({ __in: v }) }, collection: jest.fn() } }),
     getWXContext: jest.fn(function() { return { OPENID: 'o1' } }),
     callFunction: jest.fn(function() { return Promise.resolve({ result: { code: 200 } }) })
   }

@@ -12,7 +12,7 @@
       <image class="upload-box-icon" src="/images/upload.svg" mode="aspectFit" />
       <text class="upload-box-text">点击上传保单</text>
     </view>
-    <view class="onboard-steps" wx:if="{{recentClients.length === 0}}">
+    <view class="onboard-steps" wx:if="{{recentClients.length === 0 && !loadError}}">
       <view class="ob-step">
         <view class="ob-step-num">1</view>
         <text class="ob-step-text">拍照上传保单</text>
@@ -27,6 +27,11 @@
         <view class="ob-step-num">3</view>
         <text class="ob-step-text">生成保障报告</text>
       </view>
+    </view>
+    <!-- UI 审计 R-M5：加载失败显示错误态 + 重试，不再伪装空数据引导 -->
+    <view class="load-error" wx:if="{{recentClients.length === 0 && loadError}}">
+      <text class="load-error-text">客户列表加载失败</text>
+      <view class="load-error-retry pressable" bindtap="onRetryLoad">点击重试</view>
     </view>
   </view>
 

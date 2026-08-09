@@ -52,7 +52,15 @@ const REPORT_COLUMNS = [
     header: '现价',
     get: (p, ctx) => {
       const cash = ctx.cashMap.get(p.id)
-      return cash && cash.latest_value != null ? String(cash.latest_value) : '-'
+      if (!cash) return '-'
+      // 数值审计 #5：按已缴年数取当前对应行（原 latest_value 是末行=满期现价，误导"当前现价"）
+      // 兼容旧数据：无 cash_values 表但仅有 latest_value（满期值）时兜底展示
+      if (!cash.cash_values || !cash.cash_values.length) {
+        return cash.latest_value != null ? String(cash.latest_value) : '-'
+      }
+      const paidYears = p.effective_date ? Math.max(0, ctx.thisYear - new Date(p.effective_date).getFullYear()) : 0
+      const row = _cashAtYear(cash.cash_values, paidYears)
+      return row ? String(row.v) : '-'
     }
   },
   {
@@ -60,13 +68,25 @@ const REPORT_COLUMNS = [
     get: (p, ctx) => {
       const cash = ctx.cashMap.get(p.id)
       if (!cash || !p.annual_premium || !cash.cash_values) return '-'
+      // 数值审计 #5：现金价值表按每万元保额列示，回本判定需按保额比例换算表值（50万保单表值×50）
+      const scale = Math.max(1, Math.round((p.sum_assured || 0) / 10000))
       for (const row of cash.cash_values) {
-        if (row.v >= p.annual_premium * row.y) return `第${row.y}年`
+        if (row.v * scale >= p.annual_premium * row.y) return `第${row.y}年`
       }
       return '-'
     }
   }
 ]
+
+/** 现金价值表 {y,v}[] 中取 <= paidYears 的最近一行（无则取首行） */
+function _cashAtYear(rows, paidYears) {
+  let best = null
+  for (const row of rows) {
+    if (row.y <= paidYears) best = row
+    else break
+  }
+  return best || (rows.length ? rows[0] : null)
+}
 
 /**
  * 以结构化保单（policies 集合）为覆盖权威源，生成给 AI 的清单表，
@@ -132,4 +152,4 @@ function buildCoverageHints(policies, facts) {
   return hints.length ? '## 数据一致性提示\n' + hints.join('\n') : ''
 }
 
-module.exports = { buildStructuredCoverage, buildCoverageHints }
+module.exports = { buildStructuredCoverage }

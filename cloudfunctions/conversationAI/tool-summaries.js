@@ -63,4 +63,4 @@ const TOOL_SUMMARIES = {
   deleteFact: () => null
 }
 
-module.exports = { TOOL_SUMMARIES, _ok }
+module.exports = { TOOL_SUMMARIES }

@@ -5,9 +5,13 @@
 /* ========== 处理中 ========== */
 .proc-head { width:100%; text-align:center }
 .proc-phase { font-size:var(--fs-caption); color:var(--text-tertiary); margin-top:var(--sp-2); text-align:center }
+/* UI 审计 状态 S1：进行中取消按钮 */
+.proc-cancel { display:inline-block; margin-top:var(--sp-5); padding:var(--sp-2) var(--sp-7); border:1rpx solid var(--border-accent); border-radius:var(--r-full); color:var(--accent-deep); font-size:var(--fs-caption); background:transparent }
+.proc-cancel:active { background:var(--bg-input) }
 .proc-progress-bar { width:100%; height:6rpx; background:var(--bg-input); border-radius:3rpx; overflow:hidden; margin-top:var(--sp-5) }
 .proc-progress-fill { height:100%; background:var(--accent); border-radius:3rpx; transition:width 0.3s var(--ease-out) }
-.proc-progress-fill--indef { width:40%; animation:indefLoad 1.2s var(--ease-in-out) infinite }
+/* UI 审计 V-S3：--ease-in-out 未定义，改 --ease-out */
+.proc-progress-fill--indef { width:40%; animation:indefLoad 1.2s var(--ease-out) infinite }
 @keyframes indefLoad { 0% { transform:translateX(-120%) } 100% { transform:translateX(320%) } }
 .proc-pending-cards { width:100%; margin-top:var(--sp-4); display:flex; flex-wrap:wrap; gap:var(--sp-3) }
 .proc-pending-card { position:relative; width:100%; display:flex; align-items:center; padding:var(--sp-3) var(--sp-3-5); background:var(--bg-input); border-radius:var(--r-md); box-sizing:border-box }
@@ -16,6 +20,8 @@
 .stream-pulse-bar::after { content:''; position:absolute; top:0; left:0; right:0; bottom:0; background:linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent); transform:translateX(-100%); animation:skeleton-shimmer 1.4s infinite }
 .stream-pulse-bar.is-error { background:var(--red-dim, #ebd8d2) }
 .stream-pulse-bar.is-ok { background:var(--green-dim, #e8eddf) }
+/* UI 审计 交互 L3：识别结果空态兜底 */
+.proc-empty { padding:var(--sp-10) 0; text-align:center; font-size:var(--fs-caption); color:var(--text-tertiary) }
 @keyframes skeleton-shimmer { 100% { transform:translateX(100%) } }
 
 /* ========== 三组列表 ========== */
@@ -34,17 +40,20 @@
 .proc-date { font-size:var(--fs-tiny); color:var(--text-tertiary) }
 .proc-err { font-size:var(--fs-caption); color:var(--red); overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
 .proc-side { flex-shrink:0; display:flex; align-items:center; gap:var(--sp-2) }
-.proc-retry-btn { font-size:var(--fs-caption); color:var(--color-on-accent); background:var(--accent); padding:var(--sp-1-5) var(--sp-4); border-radius:var(--r-full) }
+.proc-manual-btn { font-size:var(--fs-caption); color:var(--accent-deep); border:1rpx solid var(--accent-muted); padding:var(--sp-1-5) var(--sp-4); border-radius:var(--r-full) }
+/* UI 审计 #②：#③：accent 背景改深色文字达标；badge-ok 收敛为全局 --ok 系 */
+.proc-retry-btn { font-size:var(--fs-caption); color:var(--text-primary); background:var(--accent); padding:var(--sp-1-5) var(--sp-4); border-radius:var(--r-full) }
 .proc-retry-btn.is-busy { opacity:0.6 }
 .ocr-badge { font-size:var(--fs-tiny); padding:var(--sp-1) var(--sp-2); border-radius:var(--r-full) }
-.ocr-badge.badge-ok { color:var(--green-deep, #1a7f4f); background:var(--green-dim, #e6f4ec) }
+.ocr-badge.badge-ok { color:var(--ok-deep, #1a7f4f); background:var(--ok-dim, #e6f4ec) }
 .ocr-badge.badge-warn { color:var(--amber-deep); background:var(--amber-dim, #f7eedb) }
 .ocr-badge.badge-cash { color:var(--accent-deep); background:var(--accent-dim) }
 
 /* ========== 匹配弹窗 ========== */
 .match-card { display:flex; align-items:center; padding:var(--sp-4) var(--sp-3-5); background:var(--bg-input); border-radius:var(--r-md); margin-bottom:var(--sp-2); border:2rpx solid transparent; transition:border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out) }
 .match-card--on { border-color:var(--accent); background:var(--accent-dim) }
-.match-radio { width:36rpx; height:36rpx; border-radius:50%; border:2rpx solid #c9c2b6; flex-shrink:0; display:flex; align-items:center; justify-content:center }
+/* UI 审计 视觉 S4：#c9c2b6 硬编码 → --border */
+.match-radio { width:36rpx; height:36rpx; border-radius:50%; border:2rpx solid var(--border); flex-shrink:0; display:flex; align-items:center; justify-content:center }
 .match-card--on .match-radio { border-color:var(--accent); background:var(--accent) }
 .match-card--on .match-radio::after { content:''; width:14rpx; height:14rpx; border-radius:50%; background:var(--color-on-accent) }
 .match-body { flex:1; min-width:0; display:flex; flex-direction:column; gap:var(--sp-1); margin-left:var(--sp-3) }
@@ -55,7 +64,8 @@
 .ocr-actions-row { width:100%; display:flex; gap:var(--sp-3) }
 .ocr-modify-btn { flex:1; height:88rpx; background:var(--bg-surface); color:var(--text-tertiary); font-size:var(--fs-body); font-weight:var(--fw-medium); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:1rpx solid var(--border) }
 .ocr-modify-btn::after { border:none }
-.ocr-confirm-btn { flex:1; height:88rpx; background:var(--accent); color:var(--color-on-accent); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none }
+/* UI 审计 #②：组件内定义覆盖 app.wxss 全局（app.wxss 改动对此不生效），一并改深色文字 */
+.ocr-confirm-btn { flex:1; height:88rpx; background:var(--accent); color:var(--text-primary); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none }
 .ocr-confirm-btn::after { border:none }
 .ocr-confirm-btn.is-loading { background:var(--accent-dim) }
 .ocr-confirm-btn[disabled] { opacity:0.7 }
@@ -86,27 +96,41 @@
 .role-tip { margin-top:var(--sp-4); text-align:center }
 
 /* ========== 编辑 sheet ========== */
-.ocr-sheet-mask { position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(0,0,0,0.4); z-index:310 }
-.ocr-sheet { position:fixed; left:0; right:0; bottom:0; z-index:311; background:var(--bg-surface); border-radius:var(--r-lg) var(--r-lg) 0 0; padding:var(--sp-5) var(--sp-5) calc(var(--sp-6) + env(safe-area-inset-bottom)); transform:translateY(105%); transition:transform 0.3s var(--ease-out), box-shadow 0.3s var(--ease-out); box-shadow:0 -4rpx 24rpx rgba(0,0,0,0) }
+/* 弹层叠加审计：遮罩透明度收敛为 --overlay-inner token（原硬编码 rgba(0,0,0,0.4)） */
+.ocr-sheet-mask { position:fixed; left:0; top:0; right:0; bottom:0; background:var(--overlay-inner, rgba(26,26,46,0.4)); z-index:var(--z-sheet-inner) }
+.ocr-sheet { position:fixed; left:0; right:0; bottom:0; z-index:var(--z-sheet-inner-top); background:var(--bg-surface); border-radius:var(--r-lg) var(--r-lg) 0 0; padding:var(--sp-5) var(--sp-5) calc(var(--sp-6) + env(safe-area-inset-bottom)); transform:translateY(105%); transition:transform 0.3s var(--ease-out), box-shadow 0.3s var(--ease-out); box-shadow:0 -4rpx 24rpx rgba(0,0,0,0); max-height:85vh; display:flex; flex-direction:column }
 .ocr-sheet--show { transform:translateY(0); box-shadow:0 -4rpx 24rpx rgba(0,0,0,0.12) }
-.ocr-sheet-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-4) }
+.ocr-sheet-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-4); flex-shrink:0 }
 .ocr-sheet-title { font-size:var(--fs-lg); font-weight:var(--fw-semi); color:var(--text-primary) }
-.ocr-sheet-close { width:56rpx; height:56rpx; display:flex; align-items:center; justify-content:center; font-size:28rpx; color:var(--text-tertiary) }
-.ocr-sheet-body { max-height:50vh }
+/* UI 审计 视觉 S2：关闭按钮 padding 扩点击区（56+32=88rpx），icon 居中不受影响 */
+.ocr-sheet-close { width:56rpx; height:56rpx; padding:16rpx; display:flex; align-items:center; justify-content:center; font-size:28rpx; color:var(--text-tertiary) }
+/* UI 审计 #⑤：关闭按钮统一 close.svg（原文本 ✕） */
+.ocr-sheet-close-icon { width:36rpx; height:36rpx; opacity:0.5; }
+.ocr-sheet-body { flex:1; height:0; min-height:0 }
 .ocr-sheet-hint { font-size:var(--fs-caption); color:var(--text-tertiary); margin-bottom:var(--sp-3); line-height:var(--lh-base) }
 .ocr-sheet-field { margin-bottom:var(--sp-3) }
 .ocr-sheet-label-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-1-5) }
 .ocr-sheet-label { font-size:var(--fs-caption); color:var(--text-tertiary) }
+/* UI 审计 交互 M2：必填星号（与 edit-sheet 一致） */
+.ocr-sheet-label .req { color:var(--red); margin-left:var(--sp-1); font-weight:var(--fw-semi) }
 .ocr-sheet-warn { font-size:var(--fs-caption); line-height:var(--lh-none) }
+/* UI 审计 交互 M1：日期 picker 显示容器（与 input 同规格，左右分布） */
+.ocr-sheet-picker { display:flex; align-items:center; justify-content:space-between }
+.ocr-sheet-picker-text { font-size:var(--fs-base); color:var(--text-primary) }
+.ocr-sheet-picker-placeholder { font-size:var(--fs-base); color:var(--text-disabled) }
+.ocr-sheet-picker-arrow { font-size:var(--fs-caption); color:var(--text-tertiary); margin-left:var(--sp-2) }
 /* 置信度底色：高白 / 中淡黄 / 低淡橙 / 已修改浅蓝（设计稿） */
-.ocr-sheet-input { height:80rpx; padding:0 var(--sp-4); background:#FFFFFF; border-radius:var(--r-md); font-size:var(--fs-base); color:var(--text-primary); width:100%; box-sizing:border-box }
-.bg-mid { background:#FFF8E1 }
-.bg-low { background:#FFF0E0 }
-.bg-modified { background:#E3F2FD }
-.ocr-sheet-actions { display:flex; gap:var(--sp-3); margin-top:var(--sp-5) }
+/* UI 审计 视觉 S3：#FFFFFF 硬编码 → --bg-card（随主题切换） */
+.ocr-sheet-input { height:80rpx; padding:0 var(--sp-4); background:var(--bg-card); border-radius:var(--r-md); font-size:var(--fs-base); color:var(--text-primary); width:100%; box-sizing:border-box }
+/* UI 审计 V-M1：置信度底色收敛为全局 token（app.wxss --tone-*） */
+.bg-mid { background:var(--tone-mid) }
+.bg-low { background:var(--tone-low) }
+.bg-modified { background:var(--tone-modified) }
+.ocr-sheet-actions { display:flex; gap:var(--sp-3); margin-top:var(--sp-5); flex-shrink:0 }
 .ocr-sheet-cancel { flex:1; height:88rpx; display:flex; align-items:center; justify-content:center; font-size:var(--fs-base); color:var(--text-secondary); background:var(--bg-input); border-radius:var(--r-md); border:none }
 .ocr-sheet-cancel::after { border:none }
-.ocr-sheet-save { flex:1; height:88rpx; display:flex; align-items:center; justify-content:center; font-size:var(--fs-base); font-weight:var(--fw-semi); color:var(--color-on-accent); background:var(--accent); border-radius:var(--r-md); border:none }
+/* UI 审计 #②：保存按钮 accent 白字不达标，改深色文字 */
+.ocr-sheet-save { flex:1; height:88rpx; display:flex; align-items:center; justify-content:center; font-size:var(--fs-base); font-weight:var(--fw-semi); color:var(--text-primary); background:var(--accent); border-radius:var(--r-md); border:none }
 .ocr-sheet-save::after { border:none }
 .ocr-sheet-group-title { font-size:var(--fs-caption); color:var(--accent-deep); font-weight:var(--fw-semi); margin-top:var(--sp-4); margin-bottom:var(--sp-2); padding-bottom:var(--sp-1); border-bottom:1rpx solid var(--border-accent) }
 .ocr-sheet-group-title:first-child { margin-top:0 }

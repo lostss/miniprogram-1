@@ -1,4 +1,7 @@
-<view class="card stage-{{client.engagement_stage || 'new'}}" bindtap="onTap" bindlongpress="onLongPress" data-id="{{client._id}}">
+<!-- catchtap/catchlongpress：阻止原生 tap 冒泡到页面 bindtap（原 bindtap 导致页面 onClientTap 被调用两次：
+     ① triggerEvent('tap',{_id}) 跳转 ✅ ② 原生冒泡 detail 为空 → dataset 无 id → 误弹"客户数据异常"toast。
+     triggerEvent 主动派发不受 catch 影响） -->
+<view class="card stage-{{client.engagement_stage || 'new'}}" catchtap="onTap" catchlongpress="onLongPress" data-id="{{client._id}}">
   <view class="card-body">
     <view class="card-row">
       <text class="card-name">{{client.name}}</text>

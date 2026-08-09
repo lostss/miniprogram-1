@@ -9,6 +9,7 @@
     "test:coverage": "jest --coverage",
     "sync:shared": "node scripts/sync-shared.js",
     "check:shared": "node scripts/sync-shared.js --check",
+    "check": "node scripts/sync-shared.js --check && jest --silent --coverage",
     "lint": "eslint cloudfunctions miniprogram tests",
     "format": "prettier --write ."
   },

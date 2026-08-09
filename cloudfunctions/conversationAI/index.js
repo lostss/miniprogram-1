@@ -1,4 +1,4 @@
-﻿/**
+/**
  * conversationAI v5.0 — 三模式架构（PRD v1.4 对齐）
  *
  * 模式划分：
@@ -11,18 +11,19 @@ cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
 const db = cloud.database()
 
 const { sanitize, checkRateLimit, auditOutput } = require('./_shared/guard')
+const { desensitize } = require('./_shared/pii-rules')
 // ponytail: ai-client/ai-gateway 按需加载（generateText 才用），避免 getPrompt 启动时因 @cloudbase/node-sdk 依赖炸裂
-const { buildAdvisorSystemPrompt, buildStreamingPrompt, stripToolCardMarkers } = require('./prompts')
+const { buildStreamingPrompt, buildToolSystemPrompt, stripToolCardMarkers } = require('./prompts')
 const { upsertMember, upsertFinances } = require('./_shared/memberRepo')
 const { buildFamilyContext: buildV2Context } = require('./_shared/v2-context')
 const { getFamily } = require('./_shared/db-helpers')
 // 工具 schema 单一事实源（架构审计 A1：从编排文件外移）
-const { TOOL_DEFINITIONS } = require('./tools')
+const { TOOL_DEFINITIONS, toToolList } = require('./tools')
 // 架构审计第 15 轮候选 #1：UI 文案契约外移到 tool-summaries.js，编排文件聚焦"调谁"
 const { TOOL_SUMMARIES } = require('./tool-summaries')
 
 // ponytail: 成员/财务走 memberRepo（进程内）；保单/事实经 dataWrite 网关（Fork A 统一写入缝）
-const { REPORT_THROTTLE_MS: _REPORT_THROTTLE_MS, AI: _AI_CONFIG } = require('./_shared/config')
+const { REPORT_THROTTLE_MS: _REPORT_THROTTLE_MS, TOOL_CTX_TTL, TOOL_CTX_MAX, AI: _AI_CONFIG } = require('./_shared/config')
 // 架构审计第 10 轮：跨函数调用统一委托 cross-fn-call seam（消除 _callWrite/_callQuery/_runReport 三处重复模板）
 const { callSibling } = require('./_shared/cross-fn-call')
 // 架构审计第 12 轮：补 logAI 导入（原 postProcess 引用未导入，回归 bug）
@@ -30,33 +31,39 @@ const { logAI } = require('./_shared/logSeam')
 // 架构审计第 14 轮候选 #2：错误格式化统一委托 errorHandler
 const { wrapError } = require('./_shared/errorHandler')
 
+// R3v2 审计 #9：会话级 traceId（来自前端 _reqId），透传跨函数调用实现日志串联
+let _traceId = ''
+
 // dataWrite 网关薄包装（label 区分 action 便于排障）
 async function _callWrite(action, payload, openid) {
-  return callSibling(cloud, 'dataWrite', { action, ...payload }, openid, { label: 'dataWrite.' + action })
+  return callSibling(cloud, 'dataWrite', { action, ...payload }, openid, { label: 'dataWrite.' + action, traceId: _traceId })
 }
 
 // dataQuery 网关薄包装（与 _callWrite 对称）
 async function _callQuery(action, payload, openid) {
-  return callSibling(cloud, 'dataQuery', { action, ...payload }, openid, { label: 'dataQuery.' + action })
+  return callSibling(cloud, 'dataQuery', { action, ...payload }, openid, { label: 'dataQuery.' + action, traceId: _traceId })
 }
 
 // 报告再生：节流 + fire-and-forget（不阻塞对话返回）
+// R3v2 #2：节流委托 callSibling（throttleMs+throttleState 复用 seam 语义，消除编排文件重复实现）
 // S1-2/S2-1 修复：reportAI timeout=60s，await 必然导致 conversationAI(30s) 超时
-// 改为 fire-and-forget：节流校验后立即返回 triggered:true，reportAI 后台异步执行
+// fireAndForget 选项：节流命中返回 skipped，未命中立即返回 triggered，reportAI 后台异步执行
 // S2-1 修复：retry:0 遵守 maxAttempts=1 硬约束，避免双倍 AI 调用
+// 注：reportAI 内部节流保留（report 页手动触发直调 reportAI 不经本入口，二次判断是必要防御层）
 async function _runReport(familyId, openid) {
-  const fam = await getFamily(db, familyId, openid)
-  const lastAt = (fam && fam.last_analysis_at) ? new Date(fam.last_analysis_at).getTime() : 0
-  const now = Date.now()
-  if (now - lastAt < _REPORT_THROTTLE_MS) return { code: 200, skipped: true }
-
-  // fire-and-forget：不 await，错误仅记录日志，不影响对话返回
-  callSibling(cloud, 'reportAI', { familyId }, openid, {
+  return callSibling(cloud, 'reportAI', { familyId }, openid, {
     label: 'reportAI',
-    retry: 0
-  }).catch(e => console.error('[conversationAI] reportAI 后台失败:', e.message))
-
-  return { code: 200, triggered: true }
+    retry: 0,
+    throttleMs: _REPORT_THROTTLE_MS,
+    throttleState: async () => {
+      const fam = await getFamily(db, familyId, openid)
+      // 全链路审计 RM1：节流时间源与 reportAI 一致——analysis_lock_at（CAS 占用）优先，last_analysis_at 兜底旧数据
+      const lockAt = (fam && (fam.analysis_lock_at || fam.last_analysis_at)) ? new Date(fam.analysis_lock_at || fam.last_analysis_at).getTime() : 0
+      return lockAt
+    },
+    fireAndForget: true,
+    traceId: _traceId
+  })
 }
 
 // 策略表：tool → { exec, needsConfirm?, pending? }
@@ -94,6 +101,9 @@ const TOOL_DISPATCHERS = {
   },
   queryFacts: {
     exec: ({ familyId, args, openid }) => _callQuery('queryFacts', { familyId, ...args }, openid)
+  },
+  queryMemberProfile: {
+    exec: ({ familyId, args, openid }) => _callQuery('queryMemberProfile', { familyId, ...args }, openid)
   },
   createFamily: {
     // 新建客户家庭档案（底层要求至少一个成员），返回新建家庭 ID
@@ -134,7 +144,7 @@ async function _dispatch(tool, params, openid) {
   }
   return dispatcher.exec({ familyId, args, params, openid })
 }
-const PROMPT_VERSION = 'v6.0'
+const PROMPT_VERSION = 'v9.6'
 
 // ponytail: v2 上下文直接查 5 集合
 async function _buildContext(familyId, openid) {
@@ -152,9 +162,11 @@ const { buildPolicyTable, AI_LOCATOR_COLUMNS } = require('./_shared/policy-table
 const { loadActivePolicies } = require('./_shared/policy-read')
 // 架构审计第 17 轮候选 #2：sug 拦截所需"最近 assistant 消息"读取经 _shared/message-read 接缝
 const { getLatestAssistantMsg } = require('./_shared/message-read')
-const _ctxCache = new CtxCache({ ttlMs: 5000, maxSize: 20 })
+const _ctxCache = new CtxCache({ ttlMs: TOOL_CTX_TTL, maxSize: TOOL_CTX_MAX })
 async function _buildToolContext(familyId, openid) {
-  const cached = _ctxCache.get(familyId)
+  // R3v2 审计 #3：缓存键带 openid，防 warm 实例多租户共享（非 owner 空结果污染/反向泄漏）
+  const key = familyId + ':' + openid
+  const cached = _ctxCache.get(key)
   if (cached) return cached
 
   // 架构审计第 16 轮候选 #1：policies 读取走 loadActivePolicies 接缝
@@ -170,7 +182,7 @@ async function _buildToolContext(familyId, openid) {
   const parts = [ctx.markdown]
   if (pt) parts.push(pt)
   const result = parts.join('\n\n')
-  _ctxCache.set(familyId, result)
+  _ctxCache.set(key, result)
   return result
 }
 
@@ -193,11 +205,21 @@ async function _writeMessage(familyId, openid, role, content, opts = {}) {
 }
 
 // ======================== 模式 1：getPrompt ========================
+// v9 双通道：下发通道 A 的流式 prompt（含工具意图标识协议）+ 精简工具清单（A 输出标识时选工具用）
+// + 叙述画像 context。不下发完整工具 schema——streamText 无 tools 参数，前端仅参考 name/description（toolBrief）。
+function _toolBrief() {
+  // 精简工具清单 markdown：name + description（注入 systemPrompt，A 据此输出标识）
+  return toToolList().map(t => '- ' + t.name + '：' + (t.description || '')).join('\n')
+}
+function _toolBriefList() {
+  // 精简清单数组（供前端缓存校验/兜底展示；完整 schema 留在后端 function calling 专用）
+  return toToolList().map(t => ({ name: t.name, description: t.description || '' }))
+}
 async function _handleGetPrompt(event, openid) {
   const { familyId } = event
   const ctx = await _buildContext(familyId, openid)
-  const systemPrompt = buildStreamingPrompt()
-  return { code: 200, data: { systemPrompt, context: ctx, promptVersion: PROMPT_VERSION } }
+  const systemPrompt = buildStreamingPrompt() + '\n\n【可用工具】\n' + _toolBrief()
+  return { code: 200, data: { systemPrompt, context: ctx, toolBrief: _toolBriefList(), promptVersion: PROMPT_VERSION } }
 }
 
 // ======================== 模式 2：generateText（降级路径）========================
@@ -240,15 +262,77 @@ async function _handleGenerateText(event, openid) {
   return { code: 200, data: { content: result.text, logId: result.logId } }
 }
 
-// ======================== 模式 3：postProcess（关键）========================
-// 流式/降级后调用：审计 + 工具执行 + 卡片解析 + 持久化
-async function _handlePostProcess(event, openid) {
-  const { familyId, userText, text, sessionId } = event
+// ======================== 模式 2.5：record（前端 agentic 单通道收尾）========================
+// 前端 streamText(tools) 已完成后端不再做 function calling，仅落库 + 审计 + 报告联动。
+// 写操作安全由前端 tools fn 路由到的 dataWrite 网关保证（openid 隔离 + 业务校验）。
+async function _handleRecord(event, openid) {
+  const { familyId, userText, text, sessionId, suggestions, pending_confirms } = event
   if (!familyId) return { code: 400, msg: '缺少 familyId' }
 
   const sid = sessionId || ('s_' + Date.now().toString(36))
   const t0 = Date.now()
-  const cleanedUserText = userText ? sanitize(userText) : ''
+  // 安全审计 P1-3：输入纵深——sanitize 后补 desensitize（前端已脱敏，后端不信任前端）
+  const cleanedUserText = userText ? desensitize(sanitize(userText)) : ''
+
+  // 输出审计（禁止承诺 + PII 脱敏）
+  const audit = text ? auditOutput(text) : { text: text || '', pass: true }
+
+  // 输出内容安全（流式直调不经 ai-gateway 审查链，此处事后复核）
+  let outputUnsafe = false
+  let cleanText = audit.text
+  if (cleanText) {
+    const { checkContentSafe } = require('./_shared/ai-gateway')
+    const safe = await checkContentSafe(cloud, cleanText)
+    if (!safe.pass) {
+      cleanText = '回复内容安全审核未通过，已移除'
+      outputUnsafe = true
+    }
+  }
+
+  // 持久化消息
+  let userWritten = false
+  if (cleanedUserText) userWritten = await _writeMessage(familyId, openid, 'user', cleanedUserText, { sessionId: sid })
+  const assistantWritten = await _writeMessage(familyId, openid, 'assistant', cleanText, {
+    suggestions: suggestions && suggestions.length > 0 ? suggestions : undefined,
+    pending_confirms: pending_confirms && pending_confirms.length > 0 ? pending_confirms : undefined,
+    sessionId: sid
+  })
+
+  // 审计日志
+  await logAI(db, {
+    openid, familyId, sessionId: sid,
+    action: 'conversation_record',
+    model: _AI_CONFIG.CHAT_MODEL,
+    status: outputUnsafe ? 'blocked' : 'success',
+    error: outputUnsafe ? { code: 'OUTPUT_UNSAFE', message: '回复内容安全审核未通过', step: 'content_safety' } : undefined,
+    userText: (cleanedUserText || '').substring(0, 200),
+    replyText: cleanText.substring(0, 800),
+    metrics: { total: Date.now() - t0, toolCount: 0 },
+    promptVersion: PROMPT_VERSION
+  })
+
+  return {
+    code: 200,
+    data: {
+      cleanText,
+      auditBlocked: !audit.pass,
+      userWritten,
+      assistantWritten
+    }
+  }
+}
+
+// ======================== 模式 3：postProcess（关键）========================
+// 流式/降级后调用：审计 + 工具执行 + 卡片解析 + 持久化
+async function _handlePostProcess(event, openid) {
+  // v9.1 双通道：text=通道 A 的整理后回复；aText 同义显式参数；history=最近对话；intent=A 已决策的工具意图 [{name,args}]
+  const { familyId, userText, text, sessionId, aText, history, intent } = event
+  if (!familyId) return { code: 400, msg: '缺少 familyId' }
+
+  const sid = sessionId || ('s_' + Date.now().toString(36))
+  const t0 = Date.now()
+  // 安全审计 P1-3：输入纵深——sanitize 后补 desensitize（前端已脱敏，后端不信任前端）
+  const cleanedUserText = userText ? desensitize(sanitize(userText)) : ''
 
   // 0. CONFIRM 拦截：用户点击确认卡片，不走 AI，直接执行工具（text 可为空）
   const confirmMatch = cleanedUserText && cleanedUserText.match(/^\{CONFIRM:([\w-]+)\}$/)
@@ -289,7 +373,11 @@ async function _handlePostProcess(event, openid) {
     return { code: 200, data: { cleanText: limitText, toolResults: [], auditBlocked: false, userWritten: !!cleanedUserText, assistantWritten: true } }
   }
 
-  if (!text) return { code: 400, msg: '缺少 text（AI 输出）' }
+  if (!text) {
+    // 消息链路审计 P1：空 AI 输出也先落 user 消息——否则用户已发送但历史只有半条
+    if (cleanedUserText) await _writeMessage(familyId, openid, 'user', cleanedUserText, { sessionId: sid })
+    return { code: 400, msg: '缺少 text（AI 输出）' }
+  }
 
   // 1. 输出审计（禁止承诺 + PII 脱敏）
   const audit = auditOutput(text)
@@ -304,11 +392,14 @@ async function _handlePostProcess(event, openid) {
     familyId, openid, sid,
     userText: cleanedUserText,
     auditText: audit.text,
+    aText: aText || text || '',
+    history: history || [],
+    intent: intent || [],
     dispatch: _dispatch,
     ctxCache: _ctxCache,
     toolDefs: TOOL_DEFINITIONS,
     toolSummaries: TOOL_SUMMARIES,
-    buildAdvisorSystemPrompt
+    buildToolSystemPrompt
   })
   let cleanText = orchResult.cleanText
   const suggestions = orchResult.suggestions
@@ -317,6 +408,18 @@ async function _handlePostProcess(event, openid) {
 
   // 3. 清理标记（架构审计第 12 轮：删除 legacy cards 死变量）
   cleanText = stripToolCardMarkers(cleanText).trim()
+
+  // 3b. 输出内容安全（R3v2 #1：流式直调不经 ai-gateway 审查链，postProcess 事后审计）
+  // 违规内容可能已短暂展示（残余风险已接受），此处覆写 + agent_logs 留痕 OUTPUT_UNSAFE
+  let outputUnsafe = false
+  if (cleanText) {
+    const { checkContentSafe } = require('./_shared/ai-gateway')
+    const safe = await checkContentSafe(cloud, cleanText)
+    if (!safe.pass) {
+      cleanText = '回复内容安全审核未通过，已移除'
+      outputUnsafe = true
+    }
+  }
 
   // 4. 持久化消息
   let userWritten = false
@@ -334,7 +437,8 @@ async function _handlePostProcess(event, openid) {
     openid, familyId, sessionId: sid,
     action: 'conversation_postprocess',
     model: _AI_CONFIG.CHAT_MODEL,
-    status: 'success',
+    status: outputUnsafe ? 'blocked' : 'success',
+    error: outputUnsafe ? { code: 'OUTPUT_UNSAFE', message: '回复内容安全审核未通过', step: 'content_safety' } : undefined,
     userText: (cleanedUserText || '').substring(0, 200),
     replyText: cleanText.substring(0, 800),
     tools: toolResults.map(tr => ({ tool: tr.toolName, success: tr.success, error: tr.error || null, result: tr.result })),
@@ -386,6 +490,8 @@ async function _handleKeep(familyId, openid, pendingId, sid, userText) {
 // ======================== 主入口 ========================
 exports.main = async (event, context) => {
   const { familyId, mode } = event
+  // R3v2 审计 #9：透传前端 _reqId（会话 traceId）
+  _traceId = event._reqId || ''
   const wxContext = cloud.getWXContext()
   const openid = wxContext?.OPENID || wxContext?.openId
   if (!familyId) return { code: 400, msg: '缺少参数 familyId' }
@@ -398,6 +504,8 @@ exports.main = async (event, context) => {
         return await _handleGenerateText(event, openid)
       case 'postProcess':
         return await _handlePostProcess(event, openid)
+      case 'record':
+        return await _handleRecord(event, openid)
       default:
         return { code: 400, msg: '不支持的 mode：' + mode }
     }

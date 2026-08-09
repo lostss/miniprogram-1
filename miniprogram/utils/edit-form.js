@@ -14,12 +14,14 @@ const ROLE_OPTIONS = ['本人', '配偶', '子女', '父母', '其他']
 const CATEGORY_OPTIONS = ['重疾险', '医疗险', '意外险', '寿险', '年金', '其他']
 
 // 成员字段（编辑/新增共用，差异仅在 value 初值）
+// UI 审计 A-S4：激活 edit-sheet 闲置的校验能力（required 必填星号 + pattern 失焦实时校验）
 function _memberFields(member) {
   return [
-    { key: 'name', label: '姓名', value: member.name || '', placeholder: '姓名' },
-    { key: 'age', label: '年龄', value: String(member.age || ''), placeholder: '如35', type: 'number' },
-    { key: 'income', label: '年收入(万)', value: String(member.income || ''), placeholder: '如30', type: 'number' },
-    { key: 'role', label: '关系', value: member.role || '', placeholder: '本人/配偶/子女' }
+    { key: 'name', label: '姓名', value: member.name || '', placeholder: '姓名', required: true, maxLen: 20 },
+    { key: 'birth_date', label: '出生日期', value: member.birth_date || '', placeholder: 'YYYY-MM-DD', type: 'date' },
+    { key: 'age', label: '年龄', value: String(member.age || ''), placeholder: '如35', type: 'number', pattern: '^\\d{1,3}$', patternMsg: '年龄需为数字' },
+    { key: 'income', label: '年收入(万)', value: String(member.income || ''), placeholder: '如30', type: 'number', pattern: '^\\d+(\\.\\d+)?$', patternMsg: '请输入数字' },
+    { key: 'role', label: '关系', value: member.role || '', placeholder: '请选择', type: 'selector', options: ROLE_OPTIONS }
   ]
 }
 
@@ -27,31 +29,42 @@ function _memberFields(member) {
 function _financialFields(family) {
   const cu = family || {}
   const da = (cu.debt && cu.debt.amount) || 0
-  const dt = (cu.debt && cu.debt.type) || ''
   const ms = cu.members || []
   const ic = ms.reduce((s, m) => s + (m.income || 0), 0)
   const fs = cu.financial_snapshot || {}
   const ex = fs.fixed_expense || 0
   return [
-    { key: 'income', label: '家庭年收入(万)', value: String(ic), placeholder: '如80', type: 'number' },
-    { key: 'debt', label: '负债(万)', value: String(da), placeholder: '如200', type: 'number' },
-    { key: 'debtType', label: '负债类型', value: dt, placeholder: '如房贷/车贷' },
-    { key: 'expense', label: '年支出(万)', value: String(ex), placeholder: '如15', type: 'number' }
+    { key: 'income', label: '家庭年收入(万)', value: String(ic), placeholder: '如80', type: 'number', pattern: '^\\d+(\\.\\d+)?$', patternMsg: '请输入数字' },
+    { key: 'debt', label: '负债(万)', value: String(da), placeholder: '如200', type: 'number', pattern: '^\\d+(\\.\\d+)?$', patternMsg: '请输入数字' },
+    { key: 'expense', label: '年支出(万)', value: String(ex), placeholder: '如15', type: 'number', pattern: '^\\d+(\\.\\d+)?$', patternMsg: '请输入数字' }
   ]
 }
 
 // 保单字段（Sheet 编辑入口，走 updatePolicy）
+// 设计稿 v4：编辑 Sheet 字段按置信度区分底色（高白 / 中 #FFF8E1 / 低 #FFF0E0 / 已修改 #E3F2FD）
 function _policyFields(p) {
   p = p || {}
+  const fc = p.field_confidence || {}
+  const overall = typeof p.confidence === 'number' ? p.confidence : 0.95
+  function toneOf(c) {
+    if (c == null || c >= 0.95) return ''
+    return c >= 0.8 ? 'mid' : 'low'
+  }
+  function tone(key) { return toneOf(fc[key] != null ? fc[key] : overall) }
+  // UI 审计 A-S4：激活 edit-sheet 校验能力（产品名称必填 + 数值字段 pattern）
   return [
-    { key: 'product_name', label: '产品名称', value: p.product_name || '', placeholder: '如平安e生保' },
-    { key: 'insurance_category', label: '险种', value: p.insurance_category || '', placeholder: '重疾险/医疗险/意外险/寿险' },
-    { key: 'insured_name', label: '被保险人', value: p.insured_name || '', placeholder: '姓名' },
-    { key: 'sum_assured', label: '保额(万)', value: p.sum_assured ? String(Math.round(p.sum_assured / 10000)) : '', placeholder: '如200', type: 'number' },
-    { key: 'annual_premium', label: '年缴保费(元)', value: p.annual_premium ? String(p.annual_premium) : '', placeholder: '如8000', type: 'number' },
-    { key: 'policy_number', label: '保单号', value: p.policy_number || '', placeholder: '保单号' },
-    { key: 'insurer', label: '保险公司', value: p.insurer || '', placeholder: '如平安健康保险' },
-    { key: 'effective_date', label: '生效日期', value: p.effective_date || p.contract_effective_date || '', placeholder: 'YYYY-MM-DD' }
+    { key: 'product_name', label: '产品名称', value: p.product_name || '', placeholder: '如平安e生保', tone: tone('product_name'), required: true, maxLen: 40 },
+    { key: 'insurance_category', label: '险种', value: p.insurance_category || '', placeholder: '请选择', type: 'selector', options: CATEGORY_OPTIONS, tone: tone('insurance_category') },
+    { key: 'insured_name', label: '被保险人', value: p.insured_name || '', placeholder: '姓名', tone: tone('insured_name') },
+    { key: 'policyholder_name', label: '投保人', value: p.policyholder_name || '', placeholder: '姓名', tone: tone('policyholder_name') },
+    { key: 'beneficiary_name', label: '受益人', value: p.beneficiary_name || '', placeholder: '姓名', tone: tone('beneficiary_name') },
+    { key: 'sum_assured', label: '保额(万)', value: p.sum_assured ? String(Math.round(p.sum_assured / 10000)) : '', placeholder: '如200', type: 'number', tone: tone('sum_assured'), pattern: '^\\d+(\\.\\d+)?$', patternMsg: '请输入数字' },
+    { key: 'annual_premium', label: '年缴保费(元)', value: p.annual_premium ? String(p.annual_premium) : '', placeholder: '如8000', type: 'number', tone: tone('annual_premium'), pattern: '^\\d+(\\.\\d+)?$', patternMsg: '请输入数字' },
+    { key: 'premium_term', label: '缴费期限(年)', value: p.premium_term ? String(p.premium_term) : '', placeholder: '如20', type: 'number', tone: tone('premium_term'), pattern: '^\\d+(\\.\\d+)?$', patternMsg: '请输入数字' },
+    { key: 'coverage_term', label: '保障期限(年)', value: p.coverage_term ? String(p.coverage_term) : '', placeholder: '如终身填99', type: 'number', tone: tone('coverage_term'), pattern: '^\\d+(\\.\\d+)?$', patternMsg: '请输入数字' },
+    { key: 'policy_number', label: '保单号', value: p.policy_number || '', placeholder: '保单号', tone: tone('policy_number') },
+    { key: 'insurer', label: '保险公司', value: p.insurer || '', placeholder: '如平安健康保险', tone: tone('insurer') },
+    { key: 'effective_date', label: '生效日期', value: p.effective_date || p.contract_effective_date || '', placeholder: 'YYYY-MM-DD', type: 'date', tone: tone('effective_date') }
   ]
 }
 
@@ -159,7 +172,8 @@ function buildUpdateData(mode, vals, family, editMemberIdx) {
     const d = {
       financial_snapshot: {
         income: Number(vals.income) || 0,
-        debt: { amount: Number(vals.debt) || 0, type: vals.debtType || '房贷' }
+        // 负债类型已移除（负债可同时存在多项，单一类型不准确）；debt 存 { amount } 兼容旧结构
+        debt: { amount: Number(vals.debt) || 0 }
       }
     }
     if (vals.expense !== undefined && vals.expense !== '') d.financial_snapshot.fixed_expense = Number(vals.expense) || 0
@@ -171,8 +185,12 @@ function buildUpdateData(mode, vals, family, editMemberIdx) {
     if (vals.product_name !== undefined && vals.product_name !== '') data.product_name = vals.product_name
     if (vals.insurance_category !== undefined && vals.insurance_category !== '') data.insurance_category = vals.insurance_category
     if (vals.insured_name !== undefined && vals.insured_name !== '') data.insured_name = vals.insured_name
+    if (vals.policyholder_name !== undefined && vals.policyholder_name !== '') data.policyholder_name = vals.policyholder_name
+    if (vals.beneficiary_name !== undefined && vals.beneficiary_name !== '') data.beneficiary_name = vals.beneficiary_name
     if (vals.sum_assured !== undefined && vals.sum_assured !== '') data.sum_assured = Number(vals.sum_assured) * 10000
     if (vals.annual_premium !== undefined && vals.annual_premium !== '') data.annual_premium = Number(vals.annual_premium)
+    if (vals.premium_term !== undefined && vals.premium_term !== '') data.premium_term = Number(vals.premium_term)
+    if (vals.coverage_term !== undefined && vals.coverage_term !== '') data.coverage_term = Number(vals.coverage_term)
     if (vals.policy_number !== undefined && vals.policy_number !== '') data.policy_number = vals.policy_number
     if (vals.insurer !== undefined && vals.insurer !== '') data.insurer = vals.insurer
     if (vals.effective_date) data.effective_date = vals.effective_date
@@ -185,6 +203,7 @@ function buildUpdateData(mode, vals, family, editMemberIdx) {
       ms[idx] = {
         ...ms[idx],
         name: vals.name || ms[idx].name,
+        birth_date: vals.birth_date || ms[idx].birth_date || '',
         age: Number(vals.age) || 0,
         income: Number(vals.income) || 0,
         role: vals.role || ms[idx].role
@@ -195,6 +214,7 @@ function buildUpdateData(mode, vals, family, editMemberIdx) {
   if (mode === 'addMember') {
     const ms = [...((family && family.members) || []), {
       name: vals.name,
+      birth_date: vals.birth_date || '',
       age: Number(vals.age) || 0,
       income: Number(vals.income) || 0,
       role: vals.role,

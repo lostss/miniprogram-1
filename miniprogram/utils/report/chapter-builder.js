@@ -1,13 +1,17 @@
 /**
- * chapter-builder.js — 报告章节编排（基础版报告 · 6 章单页长图）
+ * chapter-builder.js — 报告章节编排（基础版报告 · 7 章单页长图）
  *
  * 设计稿验收（docs 基础版报告）：
- *   1. 家庭结构（成员树 + 家庭财务）
- *   2. 保障汇总（成员×险种矩阵 + 缺失提示）
- *   3. 缴费月历（12 格 + 峰值高亮）
- *   4. 缴费年历和关键节点（时间轴）
- *   5. 风险提示（置信度告警 + 免责声明）
- *   6. 附录：保单明细（按成员分组卡片）
+ *   1. 家庭结构（成员树）
+ *   2. 家庭财务（独立章，R2 从家庭结构拆出）
+ *   3. 保障汇总（成员×险种矩阵 + 缺失提示）
+ *   4. 缴费月历（12 格 + 峰值高亮）
+ *   5. 缴费年历和关键节点（时间轴）
+ *   6. 特别提醒（置信度告警，无告警时整章跳过）
+ *   7. 附录：保单明细（按成员分组卡片）
+ *
+ * 免责声明为静态合规文案，不在此处渲染，由报告页底部小字承载
+ * （见 pages/report/index.wxml .report-disclaimer）。
  *
  * 依赖 gap-engine / timeline-builder / data-normalizer，
  * 将家庭数据组装为章节卡片数组。AI 分析章节（规划/建议等）由扩展版承载。
@@ -56,24 +60,26 @@ function buildConfidenceAlerts(policies) {
   var alerts = []
   for (var i = 0; i < (policies || []).length; i++) {
     var p = policies[i]
+    var pid = p.id || p._id || ''
     var name = p.product_name || '未知名保单'
-    if (p.need_review) { alerts.push({ name: name, issue: '保额需人工确认' }); continue }
+    // 告警携带保单引用（policy_id + 低置信字段），供 [核对] 定位编辑 Sheet
+    if (p.need_review) { alerts.push({ name: name, issue: '保额需人工确认', policy_id: pid, field: 'sum_assured' }); continue }
     var conf = typeof p.confidence === 'number' ? p.confidence : 1
-    if (conf < 0.95) { alerts.push({ name: name, issue: '识别置信度较低' }); continue }
+    if (conf < 0.95) { alerts.push({ name: name, issue: '识别置信度较低', policy_id: pid }); continue }
     var fc = p.field_confidence
     if (fc && typeof fc === 'object') {
       var lowField = null
       for (var k in fc) {
         if (typeof fc[k] === 'number' && fc[k] < 0.95 && !/^name$/i.test(k)) { lowField = k; break }
       }
-      if (lowField) alerts.push({ name: name, issue: '部分字段置信度较低' })
+      if (lowField) alerts.push({ name: name, issue: '部分字段置信度较低', policy_id: pid, field: lowField })
     }
   }
   return alerts
 }
 
 /**
- * 构建所有报告章节（基础版 6 章）
+ * 构建所有报告章节（基础版 7 章）
  */
 function buildChapters(family, report) {
   var norm = normalizeFamilyData(family)
@@ -101,19 +107,24 @@ function buildChapters(family, report) {
     var role = m.role || ''
     return { name: m.name, role: role, age: m.age || '', member_id: m.member_id || '', display: m.age ? (role + '(' + m.age + ')') : role }
   })
+  // 去代际分层：成员卡片平铺流动布局（排序仍按角色分组序+中文名）
   ch.push({
     key: 'family_structure', title: '家庭结构', num: '1', edit: 'family',
-    customBlocks: [createBlock('family_tree', {
-      nodes: nodes,
-      finance: {
-        income: totalIncome,
-        debt: Math.round(debt * 100) / 100,
-        expense: Math.round(expense * 100) / 100
-      }
+    customBlocks: [createBlock('family_tree', { nodes: nodes })]
+  })
+
+  // ======== ② 家庭财务（独立章，R2 从家庭结构拆出） ========
+  // edit:'financials' → 章标题行渲染 [编辑]（onChapterEdit mode='financials'）
+  ch.push({
+    key: 'family_finance', title: '家庭财务', num: '2', edit: 'financials',
+    customBlocks: [createBlock('finance', {
+      income: totalIncome,
+      debt: Math.round(debt * 100) / 100,
+      expense: Math.round(expense * 100) / 100
     })]
   })
 
-  // ======== ② 保障汇总 ========
+  // ======== ③ 保障汇总 ========
   var missingLines = (function() {
     var lines = []
     var gapList = require('./gap-engine').buildGaps(family)
@@ -125,7 +136,8 @@ function buildChapters(family, report) {
     return lines
   })()
   ch.push({
-    key: 'coverage_summary', title: '保障汇总', num: '2',
+    key: 'coverage_summary', title: '保障汇总', num: '3',
+    unit: '单位：万元',
     pre: missingLines.length > 0 ? ('⚠️ ' + missingLines.join('\n⚠️ ')) : '',
     customBlocks: [createBlock('panorama', { heads: matrix.heads, cats: matrix.cats, rows: matrix.rows })]
   })
@@ -152,22 +164,20 @@ function buildChapters(family, report) {
   })()
   var peakMonth = months.filter(function(x) { return x.h === 2 }).map(function(x) { return x.m + '月' }).join('、')
   ch.push({
-    key: 'premium_calendar', title: '缴费月历', num: '3',
-    pre: '单位：元 · 年总保费 ' + annualPremiumW + '万（占收入 ' + premiumRatio + '%）',
+    key: 'premium_calendar', title: '缴费月历', num: '4',
+    unit: '单位：元',
     customBlocks: [createBlock('calendar', { items: months })],
-    content: peakMonth ? '💡 ' + peakMonth + '缴费压力最大，请提前安排资金' : ''
+    // 下方提示：无列表垂直排列（年保费 → 峰值月），markdown-render 以 <br> 换行
+    content: '年总保费 ' + annualPremiumW + '万（占收入 ' + premiumRatio + '%）' + (peakMonth ? '<br>💡 ' + peakMonth + '缴费压力最大，请提前安排资金' : '')
   })
 
   // ======== ④ 缴费年历和关键节点 ========
-  var timeline = buildTimeline(policies, members)
+  // 设计稿决策：仅展示缴费期满/保障期满（排除每年缴费提醒 payment）
+  // 现价回本节点依赖 family.cashValues（getFamily 并行返回，见 dataQuery/family-detail.js）
+  var timeline = buildTimeline(policies, members, family.cashValues).filter(function(e) { return e.type !== 'payment' })
   var timelineItems = timeline.map(function(e) {
     var item = { y: e.y, type: e.type, soon: e.soon, label: e.label }
-    if (e.type === 'payment') {
-      item.date = e.y + '-' + String((e.m || 0) + 1).padStart(2, '0') + '-' + String(e.day || 1).padStart(2, '0')
-      item.name = (e.label || '').replace(/（.+?）缴费.*$/, '')
-      item.premium = e.premium
-      item.note = '续保'
-    } else if (e.type === 'expiry') {
+    if (e.type === 'expiry') {
       item.date = e.y + '年'
       item.name = (e.label || '').replace(/（.+?）到期.*$/, '')
       item.note = '需关注续保或替换'
@@ -179,22 +189,21 @@ function buildChapters(family, report) {
     return item
   })
   ch.push({
-    key: 'premium_timeline', title: '缴费年历和关键节点', num: '4',
-    pre: '年总保费：' + (annualPremium > 0 ? annualPremium.toLocaleString() + '元' : '--'),
+    key: 'premium_timeline', title: '保障节点', num: '5',
     customBlocks: [createBlock('timeline', { items: timelineItems })]
   })
 
-  // ======== ⑤ 风险提示 ========
+  // ======== ⑥ 特别提醒（置信度告警） ========
+  // 免责声明已移至页面底部（index.wxml .report-disclaimer），无告警时整章跳过
   var alerts = buildConfidenceAlerts(active)
-  ch.push({
-    key: 'risk_alerts', title: '风险提示', num: '5',
-    customBlocks: [createBlock('risk_alerts', {
-      items: alerts,
-      disclaimer: String((report && report.disclaimer) || '') || '本报告基于OCR识别结果自动生成，数据仅供参考，不构成投保建议。请以保单原件为准。'
-    })]
-  })
+  if (alerts.length > 0) {
+    ch.push({
+      key: 'risk_alerts', title: '特别提醒', num: '6',
+      customBlocks: [createBlock('risk_alerts', { items: alerts })]
+    })
+  }
 
-  // ======== ⑥ 附录：保单明细 ========
+  // ======== ⑦ 附录：保单明细 ========
   var groups = []
   var byMember = {}
   var sorted = [].concat(active).sort(function(a, b) {
@@ -216,10 +225,12 @@ function buildChapters(family, report) {
     })
   }
   Object.keys(byMember).forEach(function(n) { groups.push({ name: n, policies: byMember[n] }) })
+  // 附录不作为编号章节（无 num），仅保留标题 + 保单卡片
   ch.push({
-    key: 'appendix_policies', title: '附录：保单明细', num: '6',
+    key: 'appendix_policies', title: '附录：保单明细',
     customBlocks: [createBlock('policy_cards', { groups: groups })],
-    note: '共 ' + policyCount + ' 份有效保单'
+    // 有效保单数提升至标题右侧（unit 字段渲染于标题旁，原 note 在章底部）
+    unit: '有效保单 ' + policyCount + ' 份'
   })
 
   return ch

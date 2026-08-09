@@ -27,6 +27,8 @@ Component({
   },
 
   methods: {
+    // catchtouchmove 拦截（全屏表格拖动不穿透宿主页面）
+    onNoop() {},
     parseContent(content) {
       if (!content) {
         this.setData({ nodes: [] });
@@ -38,8 +40,14 @@ Component({
       if (this._parseTimer) return
       this._parseTimer = setTimeout(() => {
         this._parseTimer = null
-        const nodes = this.parseMarkdown(this._pendingContent)
-        this.setData({ nodes })
+        // UI 审计 状态 M3：畸形 markdown（不闭合代码块/残缺表格）解析抛错时降级纯文本，防整组件崩溃
+        try {
+          const nodes = this.parseMarkdown(this._pendingContent)
+          this.setData({ nodes })
+        } catch (e) {
+          console.error('[markdown-render] 解析失败，降级纯文本:', e)
+          this.setData({ nodes: [{ type: 'paragraph', content: [{ type: 'text', content: this._pendingContent }], hasInlineStyles: false }] })
+        }
       }, 80)
     },
 

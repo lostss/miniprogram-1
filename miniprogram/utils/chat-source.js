@@ -1,14 +1,14 @@
 /**
- * chat-source.js — 聊天 AI 双 adapter 接缝
+ * chat-source.js — 聊天 AI 双 adapter 接缝（v9 双通道：A 流式 + 意图标识）
  *
- * 解决问题：chat-panel/index.js 的 _streamChat 和 _fallbackGenerate 是两个 adapter
- * 满足同一接缝 (Promise<string>)，但 retry / PII / throttle / timeout 全混在组件里。
- * 架构审计 C：两个 adapter = 真接缝，应抽深模块。
+ * 架构（v9）：
+ * - 通道 A（本模块）：前端 streamText 纯流式。模型输出 = 回复文本 + （有工具意图时）独立行 JSON 标识
+ *   {TOOL_INTENT:{"tools":[{"name":"工具名","args":{...}}]}}。前端渲染时过滤标识，流式完成剥离解析。
+ * - 通道 B（conversationAI postProcess）：工具执行。前端解析到标识后调 postProcess（见 chat-panel）。
  *
  * 设计：工厂函数 + 注入组件实例引用（component）
- *   - send(opts) → Promise<string>  // 自动选 stream/fallback
+ *   - send(opts) → Promise<{ text, toolIntent }>
  *   - opts: { sp, streamHist, genHist, userText, ms2, lastIdx }
- *   - stream/sp/fallback 内部复用 PII 脱敏 + retry + 节流逻辑
  *
  * component 需提供：
  *   - data.familyId / _sessionId / _timers
@@ -20,8 +20,66 @@ const { _toFullwidth: _fullWidthPunct } = require('./md-inline')
 const api = require('./apiClient')
 const errorHandler = require('./errorHandler')
 
+// 工具意图标识：独立一行 {TOOL_INTENT:{"tools":[...]}}；JSON 尽量单行，多行按块吸收（与 prompts.js 协议一致）
+const TOOL_INTENT_RE = /^\{TOOL_INTENT:(\{[\s\S]*\})\}\s*$/
+
+// 流式渲染时屏蔽标识块（partial 阶段标识可能未完整；协议规定标识在末尾独立成块，
+// 从 {TOOL_INTENT: 起截断屏蔽，防多行 JSON 残片泄漏给用户）
+function _maskToolIntent(text) {
+  if (!text) return text
+  const idx = text.indexOf('{TOOL_INTENT:')
+  if (idx === -1) return text
+  return text.substring(0, idx)
+}
+
+// 计算字符串中未闭合括号数（{ 为 +1，} 为 -1），用于判定标识块是否闭合
+function _braceBalance(s) {
+  let bal = 0
+  for (const ch of String(s)) {
+    if (ch === '{') bal++
+    else if (ch === '}') bal--
+  }
+  return bal
+}
+
+// 流式完成后剥离标识块并解析 JSON。
+// - 单行/多行 JSON 均可：以 {TOOL_INTENT: 开头进入标识块，按括号平衡吸收后续行，整体剥离
+// - 解析成功 → toolIntent；失败（畸形/JSON 不合法）→ malformed=true，供前端补偿（走 postProcess function calling 兜底）
+// - 以 {TOOL_INTENT: 开头的块一律剥离（含畸形/未闭合），防模型输出泄漏给用户
+function _extractToolIntent(fullText) {
+  const lines = String(fullText || '').split('\n')
+  const kept = []
+  let intent = null
+  let malformed = false
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+    if (/^\{TOOL_INTENT:/.test(line)) {
+      // 吸收标识块：直到括号平衡或空行/末尾（协议规定标识独立成块，其后无正常内容）
+      let block = line
+      let bal = _braceBalance(line)
+      i++
+      while (i < lines.length && bal > 0 && lines[i].trim() !== '') {
+        block += '\n' + lines[i]
+        bal += _braceBalance(lines[i])
+        i++
+      }
+      const m = block.match(TOOL_INTENT_RE)
+      if (m) {
+        try { intent = JSON.parse(m[1]) } catch (e) { intent = null; malformed = true }
+      } else {
+        malformed = true // 畸形标识块：剥离 + 标记（补偿路径在 chat-panel）
+      }
+    } else {
+      kept.push(line)
+      i++
+    }
+  }
+  return { text: kept.join('\n').trim(), toolIntent: intent, malformed }
+}
+
 function createChatSource(component) {
-  // 降级 adapter：走 conversationAI generateText 模式（不写消息，不执行工具）
+  // 降级 adapter：走 conversationAI generateText 模式（无工具，不写消息；落库由 record 统一）
   async function fallback(sp, hist, text) {
     try {
       const r = await api('conversationAI', {
@@ -33,19 +91,19 @@ function createChatSource(component) {
         sessionId: component._sessionId
       })
       if (r.ok && r.data) {
-        return r.data.content || ''
+        return { text: r.data.content || '', toolIntent: null, malformed: false }
       }
-      return errorHandler.getErrorInfo({
-        code: r.code || 500,
-        msg: r.msg || '生成失败'
-      }).tip + '，请重试。'
+      return {
+        text: errorHandler.getErrorInfo({ code: r.code || 500, msg: r.msg || '生成失败' }).tip + '，请重试。',
+        toolIntent: null, malformed: false
+      }
     } catch (e) {
       console.error('[chat-source] generateText 失败:', e)
-      return errorHandler.getErrorInfo(e).tip + '，请重试。'
+      return { text: errorHandler.getErrorInfo(e).tip + '，请重试。', toolIntent: null, malformed: false }
     }
   }
 
-  // 流式 adapter：前端直连混元；429 自动重试（最多 2 次）；其他失败降级
+  // 流式 adapter（通道 A）：前端直连混元，输出回复文本 + 工具意图标识；429 重试（最多 2 次）；其他失败降级
   function stream({ sp, streamHist, ms2, lastIdx, userText, genHist, retryCount, sessionId }) {
     if (retryCount === undefined) retryCount = 0
 
@@ -63,6 +121,8 @@ function createChatSource(component) {
         component.scrollToBottom()
         _pendingFlush = null
       }
+      // 官方文档：wx.cloud.extend.AI streamText 无 onError 参数（仅有 onText/onEvent/onFinish），
+      // 错误处理须 try/catch 包裹调用（此处捕获 Promise 拒绝路径）
       const model = wx.cloud.extend.AI.createModel('cloudbase') // 成长计划免费资源包（hy3）
       // 错误处理：提取为具名函数，便于首字超时定时器调用
       let _settled = false // 防止 resolve/reject 重复触发（onError 被 timeout 主动调用时）
@@ -99,17 +159,29 @@ function createChatSource(component) {
         }
       }, 30000)
       component._timers.push(timeoutTimer)
+      // token 成本审计 P1：限制单次输出长度
       model.streamText({
-        data: { model: 'hy3', messages: [{ role: 'system', content: safeSp }, ...safeHist] },
+        data: { model: 'hy3', messages: [{ role: 'system', content: safeSp }, ...safeHist], max_tokens: 1500 },
         onText: c => {
           if (component._disposed) return
+          // UI 审计 状态 S2：用户停止生成 → 保留已生成文本提前收尾，不再追加新内容
+          if (component._streamAborted) {
+            if (!_settled) {
+              _settled = true
+              clearTimeout(timeoutTimer)
+              const { text: cleanText, toolIntent, malformed } = _extractToolIntent(fullText)
+              resolve({ text: cleanText, toolIntent, malformed })
+            }
+            return
+          }
           if (timedOut) { timedOut = false; clearTimeout(timeoutTimer) }
           if (firstChunk) {
             firstChunk = false; clearTimeout(timeoutTimer)
             component.setData({ thinking: false })
           }
           fullText += c
-          const displayText = cleanMarkers(fullText, { partial: true })
+          // v9：渲染时屏蔽工具意图标识行（partial 阶段不完整，行首匹配即整行隐藏）
+          const displayText = _maskToolIntent(cleanMarkers(fullText, { partial: true }))
           // 节流：每 100ms 最多更新一次 UI
           const now = Date.now()
           if (now - _lastFlush >= 100) {
@@ -119,7 +191,7 @@ function createChatSource(component) {
             _doFlush()
           } else if (!_pendingFlush) {
             _pendingFlush = setTimeout(() => {
-              if (component._disposed) return
+              if (component._disposed || component._streamAborted) return
               if (component._streamSession !== sessionId) return
               _lastFlush = Date.now()
               component.setData({ ['messages[' + lastIdx + '].content']: _fullWidthPunct(displayText) })
@@ -133,7 +205,9 @@ function createChatSource(component) {
           _settled = true
           clearTimeout(timeoutTimer)
           if (!component._disposed && firstChunk) component.setData({ thinking: false })
-          resolve(fullText)
+          // v9：剥离标识块 + 解析工具意图（多行容错 + malformed 标记）
+          const { text: cleanText, toolIntent, malformed } = _extractToolIntent(fullText)
+          resolve({ text: cleanText, toolIntent, malformed })
         },
         onError: handleError
       })
@@ -154,4 +228,4 @@ function createChatSource(component) {
   return { send, stream, fallback }
 }
 
-module.exports = { createChatSource }
+module.exports = { createChatSource, _extractToolIntent }

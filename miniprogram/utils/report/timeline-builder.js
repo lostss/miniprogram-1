@@ -23,12 +23,31 @@ function parseExpiryYear(period, startY) {
 }
 
 /**
+ * 现价=已缴保费的"回本"年份（保单年度 y），无现价表/永不回本返回 null
+ * 公式与 report-coverage 回本判定一致：row.v(每万元保额表值) × scale >= annual_premium × row.y
+ * @param {object} p - 保单
+ * @param {object} cv - 现价表项 { cash_values: [{y,v}] }
+ */
+function findBreakEvenYear(p, cv) {
+  if (!p || !cv || !cv.cash_values || !cv.cash_values.length) return null
+  var scale = Math.max(1, Math.round((p.sum_assured || 0) / 10000))
+  var premium = p.annual_premium || 0
+  if (scale <= 0 || premium <= 0) return null
+  for (var i = 0; i < cv.cash_values.length; i++) {
+    var row = cv.cash_values[i]
+    if (row.v * scale >= premium * row.y) return row.y
+  }
+  return null
+}
+
+/**
  * 构建保障关键时点时间轴数据
  * @param {array} policies
  * @param {array} members
+ * @param {array} [cashValues] - 现价表 [{policy_id, cash_values:[{y,v}]}]（可选，用于回本节点）
  * @returns {array} [{ y, label, type, m?, soon? }]
  */
-function buildTimeline(policies, members) {
+function buildTimeline(policies, members, cashValues) {
   var now = new Date()
   var thisYear = now.getFullYear()
   var thisMonth = now.getMonth()
@@ -57,6 +76,23 @@ function buildTimeline(policies, members) {
       var payEnd = parseExpiryYear(p.payment_period, startY)
       if (payEnd && payEnd > thisYear) {
         events.push({ y: payEnd, label: p.product_name + '（' + name + '）缴完', type: 'paydone' })
+      }
+    }
+
+    // 现价回本节点：现价表关联保单且回本在未来的自然年 → 注入 breakeven 节点
+    // 自然年 = 生效年 + (保单年度-1)；仅展示未来节点（已回本/永不回本不显示）
+    if (Array.isArray(cashValues) && cashValues.length) {
+      var pid = p.id || p._id || ''
+      var cv = null
+      for (var ci = 0; ci < cashValues.length; ci++) {
+        if (cashValues[ci] && cashValues[ci].policy_id === pid) { cv = cashValues[ci]; break }
+      }
+      var beY = cv ? findBreakEvenYear(p, cv) : null
+      if (beY && beY > 0) {
+        var beNatural = startY + (beY - 1)
+        if (beNatural > thisYear) {
+          events.push({ y: beNatural, label: p.product_name + '（' + name + '）现价=已缴保费', type: 'breakeven' })
+        }
       }
     }
 
@@ -132,4 +168,4 @@ function parseMilestonesToTimeline(md) {
   return events
 }
 
-module.exports = { buildTimeline, parseMilestonesToTimeline }
+module.exports = { buildTimeline, findBreakEvenYear, parseMilestonesToTimeline }

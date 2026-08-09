@@ -1,13 +1,17 @@
 <!-- OCR 处理弹窗 -->
-<view class="ocr-mask" wx:if="{{ocrMask.visible}}">
+<!-- catchtouchmove：阻断触摸拖动穿透到页面 scroll-view（真机实测：无拦截时 mask 上下拉会触发 report 页下拉刷新重载） -->
+<view class="ocr-mask" wx:if="{{ocrMask.visible}}" catchtouchmove="onMaskTouchMove">
   <view class="ocr-card">
     <!-- 处理中 -->
     <block wx:if="{{ocrMask.phase === 'upload' || ocrMask.phase === 'recognize' || ocrMask.phase === 'recognize-stream'}}">
       <view class="proc-head">
         <view class="ocr-done-title done-gold">正在处理 {{ocrMask.total}} 份保单</view>
         <view class="proc-phase">{{ocrMask.phaseText || '正在上传…'}}{{ocrMask.phase === 'recognize' || ocrMask.phase === 'recognize-stream' ? ' · 已进行 ' + ocrMask.elapsed + 's' : ''}}</view>
+        <!-- UI 审计 状态 S1：识别/上传进行中可取消（放弃后清理已上传临时文件） -->
+        <view class="proc-cancel pressable" catchtap="onProcDiscardAll">取消本次</view>
       </view>
-      <view class="proc-progress-bar"><view class="proc-progress-fill" style="width: {{ocrMask.phase === 'recognize-stream' ? '100%' : ((ocrMask.uploaded / ocrMask.total) * 100) + '%'}}"></view></view>
+      <!-- 全链路审计 UC3：recognize-stream 阶段改用不定式动画（AI 识别 10-40s 期间进度条满格有"卡住"误导） -->
+      <view class="proc-progress-bar"><view class="proc-progress-fill {{ocrMask.phase === 'recognize-stream' ? 'proc-progress-fill--indef' : ''}}" style="{{ocrMask.phase === 'recognize-stream' ? '' : 'width: ' + ((ocrMask.uploaded / ocrMask.total) * 100) + '%'}}"></view></view>
       <view class="proc-pending-cards">
         <view class="proc-pending-card" wx:for="{{ocrMask.streamSlots}}" wx:key="index">
           <image class="proc-thumb" wx:if="{{item.thumb}}" src="{{item.thumb}}" mode="aspectFill" />
@@ -23,6 +27,8 @@
         <view class="ocr-done-sub">识别到 {{ocrMask._policies.length}} 份保单{{ocrMask._cashValues.length > 0 ? ' + ' + ocrMask._cashValues.length + ' 份现价表' : ''}}</view>
       </view>
       <scroll-view class="proc-list" scroll-y>
+        <!-- UI 审计 交互 L3：三组全空时兜底（正常业务不易触发，防御性） -->
+        <view class="proc-empty" wx:if="{{ocrMask.procSuccess.length === 0 && ocrMask.procReview.length === 0 && ocrMask.procError.length === 0}}">暂无识别结果</view>
         <block wx:if="{{ocrMask.procSuccess.length > 0}}">
           <view class="proc-group-head"><text>识别成功 · {{ocrMask.procSuccess.length}}份</text></view>
           <view class="proc-card" wx:for="{{ocrMask.procSuccess}}" wx:key="index" data-policyindex="{{item.policyIndex}}" bindtap="onEditCard">
@@ -55,12 +61,13 @@
             <text>识别异常 · {{ocrMask.procError.length}}份</text>
             <text class="proc-retry-all pressable" bindtap="onProcRetryAll">{{ocrMask.procBusy ? '重试中...' : '全部重试'}}</text>
           </view>
-          <view class="proc-card proc-card--err" wx:for="{{ocrMask.procError}}" wx:key="fileId" data-fileid="{{item.fileId}}" bindtap="onProcManualAdd">
+          <view class="proc-card proc-card--err" wx:for="{{ocrMask.procError}}" wx:key="fileId" data-fileid="{{item.fileId}}" data-src="{{item.thumb}}" catchtap="onProcPreview">
             <image class="proc-thumb" wx:if="{{item.thumb}}" src="{{item.thumb}}" mode="aspectFill" data-src="{{item.thumb}}" catchtap="onProcPreview" />
             <view class="proc-info">
               <text class="proc-err">{{item.error}}</text>
             </view>
             <view class="proc-side">
+              <text class="proc-manual-btn pressable" data-fileid="{{item.fileId}}" catchtap="onProcManualAdd">手动录入</text>
               <text class="proc-retry-btn pressable {{item.retrying ? 'is-busy' : ''}}" data-fileid="{{item.fileId}}" catchtap="onProcRetryOne">{{item.retrying ? '重试中' : '重试'}}</text>
             </view>
           </view>
@@ -94,7 +101,7 @@
     <block wx:elif="{{ocrMask.phase === 'saved'}}">
       <view class="ocr-saved-head">
         <view class="ocr-done-title done-green">✓ 保存成功</view>
-        <view class="ocr-sheet-close pressable" catchtap="onSavedEnter" aria-label="{{skipMatch ? '查看报告' : '立即进入保障报告'}}">✕</view>
+        <view class="ocr-sheet-close pressable" catchtap="onSavedEnter" aria-label="{{skipMatch ? '查看报告' : '立即进入保障报告'}}"><image class="ocr-sheet-close-icon" src="/images/close.svg" mode="aspectFit" /></view>
       </view>
       <view class="ocr-done-sub">已保存 {{ocrMask.savedPolicies}} 份保单{{ocrMask.savedCash > 0 ? ' + ' + ocrMask.savedCash + ' 份现价表' : ''}}</view>
       <view class="ocr-phase-sub">{{skipMatch ? '报告即将刷新' : '2s 后进入保障报告'}}</view>
@@ -159,18 +166,29 @@
 </view>
 
 <!-- 编辑 sheet -->
-<view class="ocr-sheet-mask" wx:if="{{ocrSheet.visible}}" bindtap="onSheetClose"></view>
-<view class="ocr-sheet {{ocrSheet.visible ? 'ocr-sheet--show' : ''}}">
+<view class="ocr-sheet-mask" wx:if="{{ocrSheet.visible}}" bindtap="onSheetClose" catchtouchmove="onMaskTouchMove"></view>
+<view class="ocr-sheet {{ocrSheet.visible ? 'ocr-sheet--show' : ''}}" catchtouchmove="onMaskTouchMove">
   <view class="ocr-sheet-head">
     <text class="ocr-sheet-title">{{ocrSheet.title || '编辑保单信息'}}</text>
-    <text class="ocr-sheet-close pressable" bindtap="onSheetClose">✕</text>
+    <view class="ocr-sheet-close pressable" bindtap="onSheetClose"><image class="ocr-sheet-close-icon" src="/images/close.svg" mode="aspectFit" /></view>
   </view>
   <scroll-view class="ocr-sheet-body" scroll-y>
     <block wx:for="{{ocrSheet.fields}}" wx:key="key">
       <view class="ocr-sheet-group-title" wx:if="{{item.isGroup}}">{{item.label}}</view>
       <view class="ocr-sheet-field" wx:else>
-<view class="ocr-sheet-label-row"><text class="ocr-sheet-label">{{item.label}}</text><text class="ocr-sheet-warn" wx:if="{{item.tone === 'low' || item.tone === 'mid'}}">⚠️</text></view>
-            <input class="ocr-sheet-input bg-{{item.tone}}" value="{{item.value}}" data-key="{{item.key}}" data-fi="{{index}}" bindinput="onSheetInput" placeholder="请输入{{item.label}}" />
+        <view class="ocr-sheet-label-row">
+          <text class="ocr-sheet-label">{{item.label}}<text wx:if="{{item.required}}" class="req">*</text></text>
+          <text class="ocr-sheet-warn" wx:if="{{item.tone === 'low' || item.tone === 'mid'}}">⚠️</text>
+        </view>
+        <!-- UI 审计 交互 M1：日期字段走原生 date picker（与 edit-sheet 一致，替代手输 YYYY-MM-DD） -->
+        <picker wx:if="{{item.type === 'date'}}" mode="date" value="{{item.value}}" start="1900-01-01" end="2099-12-31" data-fi="{{index}}" bindchange="onSheetDateChange" aria-label="{{item.label}}">
+          <view class="ocr-sheet-input bg-{{item.tone}} ocr-sheet-picker">
+            <text wx:if="{{item.value}}" class="ocr-sheet-picker-text">{{item.value}}</text>
+            <text wx:else class="ocr-sheet-picker-placeholder">请选择日期</text>
+            <text class="ocr-sheet-picker-arrow">▾</text>
+          </view>
+        </picker>
+        <input wx:else class="ocr-sheet-input bg-{{item.tone}}" value="{{item.value}}" data-key="{{item.key}}" data-fi="{{index}}" type="{{item.type || 'text'}}" bindinput="onSheetInput" placeholder="请输入{{item.label}}" />
       </view>
     </block>
   </scroll-view>

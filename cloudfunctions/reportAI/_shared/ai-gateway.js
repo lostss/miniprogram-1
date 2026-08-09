@@ -42,7 +42,14 @@ async function _checkContentSafe(cloud, text, skip) {
   try {
     const res = await cloud.openapi.security.msgSecCheck({ content: text.substring(0, SECURITY.CONTENT_AUDIT_TRUNCATE) })
     if (res && (res.result === 'block' || res.result === 'review')) return { pass: false, reason: '内容安全审核未通过' }
-  } catch (e) { console.error('[ai-gateway] 内容安全审核异常:', e.message) }
+  } catch (e) {
+    // -604101：函数未开通 TMS 内容安全 API 权限 → 降级放行（复核不可用，不阻断对话）；其余异常才报错
+    if (e && e.errCode === -604101) {
+      console.warn('[ai-gateway] 内容安全审核权限未开通（-604101），本次复核降级跳过')
+    } else {
+      console.error('[ai-gateway] 内容安全审核异常:', e.message)
+    }
+  }
   return { pass: true }
 }
 
@@ -60,6 +67,7 @@ async function _writeLog(ctx, logData) {
     openid: ctx.openid,
     familyId: ctx.familyId,
     sessionId: ctx.sessionId,
+    traceId: ctx.traceId,
     action: ctx.action || 'ai_call',
     model: ctx.model,
     ...logData
@@ -110,7 +118,15 @@ async function _runSecuredPipeline(messages, ctx, invokeAI) {
     return { text: inputSafe.reason, toolCalls: [], usage: {}, logId: null }
   }
 
-  const result = await invokeAI(guard.secured)
+  let result
+  try {
+    result = await invokeAI(guard.secured)
+  } catch (e) {
+    // 日志审计 #2：AI 调用异常（网络/超时/空响应）也落 agent_logs——失败调用已消耗输入 token，
+    // 缺失会导致成本核算系统性低估、AI 异常率无日志支撑
+    await _writeLog(ctx, { status: 'fail', error: { code: 'AI_CALL_FAIL', message: (e && e.message) || 'AI调用异常', step: 'invoke' } })
+    throw e
+  }
   // OCR/结构化提取场景：AI 返回 JSON 是业务数据，不应脱敏（保单号/身份证号需原样入库）
   // 对话场景：AI 返回自然语言给用户，需脱敏 PII
   // 通过 ctx.skipOutputAudit 跳过输出脱敏，由调用方在入库时按字段脱敏（如 writePolicy 对 special_agreement）
@@ -155,4 +171,4 @@ async function safeCallChatWithTools(messages, tools, rawCallChatWithTools, ctx 
   return _runSecuredPipeline(messages, ctx, (secured) => rawCallChatWithTools(secured, tools, mergedOpts))
 }
 
-module.exports = { safeCallChat, safeCallChatWithTools }
+module.exports = { safeCallChat, safeCallChatWithTools, checkContentSafe: _checkContentSafe }

@@ -13,6 +13,10 @@ const api = require('./apiClient')
 // 置信度判定（单一真相源，与 ocr-confidence 同步）
 const { assessPolicy } = require('./ocr-confidence')
 
+// 日志审计 #1：OCR 会话 traceId（随各 API 透传 _reqId，云函数写入日志 trace_id 串联全链路）
+var _lastReqId = ''
+function _genReqId() { return 'ocr_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8) }
+
 // ============================================================
 // 状态机：patch 工厂（返回 setData 参数对象，字段名匹配测试契约）
 // ============================================================
@@ -127,20 +131,18 @@ async function compressAndUpload(paths, setData, prefix) {
 }
 
 // ============================================================
-// 方案 B（逐张串行 aiExtract）已移除：hy3 限流后串行退避耗时过长，
-// 统一走方案 C（批量拼接，1 次 AI）或方案 D（DeepSeek 并行，N 次 AI）
-// ============================================================
-
-// ============================================================
-// 方案 C/D 共用批量提取入口 — 1 次 AI 调用完成全部提取
+// 批量提取入口（分流：1 张 → aiExtractBatch，≥2 张 → aiExtractParallel）
 //   阶段1：ocrOnly 并发 OCR（无 AI，无 429）
-//   阶段2：1 次 AI 调用（aiAction='aiExtractBatch' 走 hy3 拼接 | 'aiExtractParallel' 走 DeepSeek 并行）
+//   阶段2：AI 提取（aiExtractBatch 单图走 hy3 | aiExtractParallel 每张独立走 DeepSeek 并发）
 //           + 一次性填充所有槽位
 // 对外契约：返回 { policies, cashValues, errors }
 // ============================================================
 async function batchOCR_merged(fileIds, setData, opts, aiAction) {
   aiAction = aiAction || 'aiExtractBatch'
   opts = opts || {}
+  // 日志审计 #1：本次 OCR 会话生成 traceId（OCR→提取→保存全链串联）
+  _lastReqId = _genReqId()
+  var reqId = _lastReqId
   var all = [], cashValues = [], errors = []
   var batchIds = fileIds.filter(function(id) { return id !== null })
   if (!batchIds.length) return { policies: [], cashValues: [], errors: [] }
@@ -171,10 +173,12 @@ async function batchOCR_merged(fileIds, setData, opts, aiAction) {
   if (setData) setData(setStreamingSlots(totalSlots, opts.thumbs))
 
   // ===== 阶段 2：1 次批量 AI 调用（'aiExtractBatch' 拼接 | 'aiExtractParallel' 并行） =====
-  // AI 批量提取可能遇到 hy3 限流退避（retry-after 等待），前端默认 30s 超时不够，单独设为 90s
+  // AI 批量提取可能遇到 hy3 限流退避（retry-after 等待），前端默认 30s 超时不够，单独设为 100s（≥ 云函数超时）
   var aiRes
   try {
-    aiRes = await api(aiAction, { ocr_results: ocrResults, familyId: opts.familyId || '' }, { timeout: 90000 })
+    // 网络审计：ocrService 平台超时上限 60s，前端 70s 略大于平台（原 100s 永不触发是无效配置；
+    // 也不宜改为 60s 相等——前端 timer 与平台同时超时，race 可能先拿到 timeout 丢真实错误码）
+    aiRes = await api(aiAction, { ocr_results: ocrResults, familyId: opts.familyId || '' }, { timeout: 70000 })
   } catch (e) {
     // AI 阶段异常（超时/网络/云函数未捕获）：错误码用 ai_exception，避免误报为 OCR 异常
     return { policies: [], cashValues: [], errors: errors.concat(ocrResults.map(function(r) { return { fileId: r.fileId, error: (e && e.message) || aiAction + '异常', error_code: 'ai_exception' } })) }
@@ -274,7 +278,8 @@ async function saveCashValuesWithRetry(familyId, cashValues, setData) {
     // A5 修复：循环入库全部现价表（原仅入库 cashValues[0]，多张现价表会丢失）
     var matchedAny = false
     for (var i = 0; i < cashValues.length; i++) {
-      var res = await api('writeCashValue', { familyId: familyId, cash_value: cashValues[i] })
+      // R2 参数审计 #3：写超时对齐 dataWrite 60s + 关自动重试（该函数自带手动重试对话框）
+      var res = await api('writeCashValue', { familyId: familyId, cash_value: cashValues[i] }, { timeout: 60000, retries: 0, requestId: _lastReqId })
       var result = res.data || {}
       if (result.matched) matchedAny = true
     }
@@ -296,7 +301,7 @@ async function saveCashValuesWithRetry(familyId, cashValues, setData) {
     try {
       var matchedAny2 = false
       for (var j = 0; j < cashValues.length; j++) {
-        var r2 = await api('writeCashValue', { familyId: familyId, cash_value: cashValues[j] })
+        var r2 = await api('writeCashValue', { familyId: familyId, cash_value: cashValues[j] }, { timeout: 60000, retries: 0 })
         var result2 = r2.data || {}
         if (result2.matched) matchedAny2 = true
       }
@@ -314,7 +319,8 @@ async function saveCashValuesWithRetry(familyId, cashValues, setData) {
 async function confirmWritePolicies(familyId, policies, cashValues, setData) {
   setData(setSaving())
   try {
-    var r = await api('writePoliciesBatch', { familyId: familyId, policies: policies, cash_values: cashValues })
+    // R2 参数审计 #3：写超时对齐 dataWrite 60s + 写操作关自动重试（防超时后重复写入）
+    var r = await api('writePoliciesBatch', { familyId: familyId, policies: policies, cash_values: cashValues }, { timeout: 60000, retries: 0, requestId: _lastReqId })
     if (r.ok) {
       setData(hide())
       return { ok: true }
@@ -390,9 +396,10 @@ function errorToUI(e) {
 }
 
 // errorLabel — 错误码 → 用户可见短文案（失败槽位用，不显示 ai_format/429 等技术码）
+// UI 审计 R-M11：errorToUI 的恢复引导文案（content）不再丢弃，拼接进失败槽位
 function errorLabel(code) {
   var ui = errorToUI(code)
-  return ui.title
+  return ui.content && ui.content !== '请重试' ? ui.title + '：' + ui.content : ui.title
 }
 
 // ============================================================
@@ -425,7 +432,8 @@ function classifyBatchResults(policies, cashValues, errors, thumbMap) {
   })
   var errorCards = (errors || []).map(function(e) {
     var ec = e.error_code || 'ocr_exception'
-    return { fileId: e.fileId, thumb: e.thumb || (thumbMap && thumbMap[e.fileId]) || '', error: errorLabel(ec) || '识别失败', retrying: false }
+    // 保留 retrying 标记：重试中经 _procRefresh 重渲染时按钮应保持"重试中"状态
+    return { fileId: e.fileId, thumb: e.thumb || (thumbMap && thumbMap[e.fileId]) || '', error: errorLabel(ec) || '识别失败', retrying: !!e.retrying }
   })
   return { success: success, review: review, error: errorCards }
 }

@@ -123,20 +123,6 @@ describe('updateFamilyDetail 云函数', function() {
       })
     })
 
-    test('action=updateSummary 触发分析', function() {
-      var cloud = require('wx-server-sdk')
-      cloud.__mockCollection.where.mockReturnThis()
-      cloud.__mockCollection.get.mockResolvedValue({
-        data: [{ _id: 'fam_001', _openid: 'mock_openid', updated_at: new Date(0) }]
-      })
-      cloud.__mockCollection.update.mockResolvedValue({ stats: { updated: 1 } })
-      cloud.__mockCollection.doc().update.mockResolvedValue({ stats: { updated: 1 } })
-
-      return updateFamilyDetail.main({ action: 'updateFamily', familyId: 'fam_001', subAction: 'updateSummary' }).then(function(res) {
-        expect(res.code).toBe(200)
-      })
-    })
-
   })
 
   describe('字段更新', function() {

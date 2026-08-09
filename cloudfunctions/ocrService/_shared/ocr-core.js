@@ -70,6 +70,54 @@ function buildPolicyFromExtract(products, contractBasic, conf) {
 }
 
 /**
+ * PolicyExtractor.extractOne — AI 原始响应 → Policy 对象（深模块，R2 候选 1）
+ * 单图路径（aiPhase）与批量单图路径（aiExtractBatchPhase）共用同一转换，杜绝字段漂移。
+ * 内部：aiOverall 兜底 → calcConfidence → buildPolicyFromExtract → cashValueData
+ * @param {object} extractRes - AI 解析结果（{ result, document_type, data, cash_value_data, message }）
+ * @param {array} ocrConfInfo - OCR 字符级置信度
+ * @returns {{ success: boolean, policies?, cashValueData?, docType?, autoConfirmed?, overallConf?, error?, errorCode? }}
+ */
+function extractOne(extractRes, ocrConfInfo) {
+  if (!extractRes || extractRes.result !== 'success') {
+    return { success: false, error: (extractRes && extractRes.message) || 'AI提取失败', errorCode: 'ai_extract_failed' }
+  }
+  const data = extractRes.data || {}
+  const contractBasic = data.contract_basic || {}
+  const aiFieldConf = data.field_confidence || {}
+  const aiOverall = typeof data.overall_confidence === 'number'
+    ? data.overall_confidence
+    : (Object.keys(aiFieldConf).length > 0
+        ? Object.values(aiFieldConf).reduce((s, v) => s + v, 0) / Object.keys(aiFieldConf).length
+        : 0.7)
+
+  const { fieldConf, overallConf, ocrReliable, autoConfirmed } = calcConfidence(ocrConfInfo, aiFieldConf, aiOverall)
+  const products = data.products || []
+  const docType = extractRes.document_type || 'policy'
+  const policies = buildPolicyFromExtract(products, contractBasic, { overallConf, fieldConf, ocrReliable, autoConfirmed })
+
+  // 现价表数据提取（document_type=cash_value 或 mixed）
+  let cashValueData = null
+  if ((docType === 'cash_value' || docType === 'mixed') && extractRes.cash_value_data) {
+    const cvd = extractRes.cash_value_data
+    const hi = cvd.header_info || {}
+    const cvArr = (cvd.cash_values || []).map(cv => {
+      const row = { y: cv.y, v: _toNum(cv.v) }
+      if (cv.n) row.n = cv.n
+      return row
+    })
+    cashValueData = {
+      product_name: hi.product_name || (products.length > 0 ? products[0].product_name : '') || '',
+      insured_name: hi.insured_name || contractBasic.insured_name || '',
+      policy_number: hi.policy_number || contractBasic.policy_number || '',
+      insurance_type: hi.insurance_type || '',
+      cash_values: cvArr,
+      overall_confidence: typeof cvd.overall_confidence === 'number' ? cvd.overall_confidence : overallConf
+    }
+  }
+  return { success: true, policies: policies, cashValueData: cashValueData, docType: docType, autoConfirmed: autoConfirmed, overallConf: overallConf }
+}
+
+/**
  * @param {object} opts
  * @param opts.cloud - wx-server-sdk cloud 实例
  * @param opts.db - 数据库实例
@@ -95,7 +143,7 @@ async function ocrPhase({ cloud, fileId, openid, familyId }) {
 }
 
 // ---- 拆分接口：AI 提取 + 构建（需错峰，有 429 风险） ----
-async function aiPhase({ ocrText, ocrConfInfo, fileId, t0, t1, t2, cloud, db, buildExtractionPrompt, familyId, openid }) {
+async function aiPhase({ ocrText, ocrConfInfo, fileId, t0, t1, t2, cloud, db, buildExtractionPrompt, familyId, openid, traceId }) {
   if (!ocrText || ocrText.length === 0) {
     opLog(db, { action: 'ocr_recognize', openid, familyId, result: { status: 'fail', summary: 'OCR文字为空', errorCode: 'ocr_empty' } }).catch(() => {})
     return { success: false, fileId, policiesCount: 0, error: 'OCR识别结果为空', error_code: 'ocr_empty' }
@@ -107,7 +155,7 @@ async function aiPhase({ ocrText, ocrConfInfo, fileId, t0, t1, t2, cloud, db, bu
   const { USE_DIRECT } = require('./config').AI
   const aiClient = require('./ai-client')
   const callFn = USE_DIRECT ? aiClient.callChatDirect : aiClient.callChat
-  const aiDeps = { cloud, db, openid, familyId, buildExtractionPrompt, AI_TIMEOUT,
+  const aiDeps = { cloud, db, openid, familyId, buildExtractionPrompt, AI_TIMEOUT, traceId,
     safeCallChat: require('./ai-gateway').safeCallChat,
     callChat: callFn
   }
@@ -136,45 +184,13 @@ async function aiPhase({ ocrText, ocrConfInfo, fileId, t0, t1, t2, cloud, db, bu
   }
   const t3 = Date.now()
 
-  // ---- Step 4: 置信度计算（委托 ocr-confidence） ----
-  const data = extractRes.data || {}
-  const contractBasic = data.contract_basic || {}
-  const aiFieldConf = data.field_confidence || {}
-  const aiOverall = typeof data.overall_confidence === 'number'
-    ? data.overall_confidence
-    : (Object.keys(aiFieldConf).length > 0
-        ? Object.values(aiFieldConf).reduce((s, v) => s + v, 0) / Object.keys(aiFieldConf).length
-        : 0.7)
-
-  const { fieldConf, overallConf, ocrReliable, autoConfirmed } = calcConfidence(ocrConfInfo, aiFieldConf, aiOverall)
-
-  // ---- 构建保单对象（委托 buildPolicyFromExtract） ----
-  const products = data.products || []
-  const docType = extractRes.document_type || 'policy'
-
+  // ---- Step 4: 置信度计算 + 保单构建（委托 PolicyExtractor.extractOne，R2 候选 1） ----
   const durations = { getTempUrl: t1 - t0, ocrApi: t2 - t1, aiExtract: t3 - t2, total: t3 - t0 }
-
-  const newPolicies = buildPolicyFromExtract(products, contractBasic, { overallConf, fieldConf, ocrReliable, autoConfirmed })
-
-  // 现价表数据提取（document_type=cash_value 或 mixed）
-  let cashValueData = null
-  if ((docType === 'cash_value' || docType === 'mixed') && extractRes.cash_value_data) {
-    const cvd = extractRes.cash_value_data
-    const hi = cvd.header_info || {}
-    const cvArr = (cvd.cash_values || []).map(cv => {
-      const row = { y: cv.y, v: _toNum(cv.v) }
-      if (cv.n) row.n = cv.n
-      return row
-    })
-    cashValueData = {
-      product_name: hi.product_name || (products.length > 0 ? products[0].product_name : '') || '',
-      insured_name: hi.insured_name || contractBasic.insured_name || '',
-      policy_number: hi.policy_number || contractBasic.policy_number || '',
-      insurance_type: hi.insurance_type || '',
-      cash_values: cvArr,
-      overall_confidence: typeof cvd.overall_confidence === 'number' ? cvd.overall_confidence : overallConf
-    }
-  }
+  const ex = extractOne(extractRes, ocrConfInfo)
+  const docType = ex.docType
+  const newPolicies = ex.policies
+  const cashValueData = ex.cashValueData
+  const autoConfirmed = ex.autoConfirmed
 
   opLog(db, {
     action: 'ocr_recognize', openid, familyId,
@@ -185,7 +201,7 @@ async function aiPhase({ ocrText, ocrConfInfo, fileId, t0, t1, t2, cloud, db, bu
   return { success: true, policiesCount: newPolicies.length, policies: newPolicies, document_type: docType, cashValueData, tokens: tokens || {} }
 }
 
-// ---- 批量 AI 提取（拼接 N 张图为 1 次调用，超限对半拆分） ----
+// ---- 批量 AI 提取（aiExtractBatch：batch prompt 单次调用，前端分流后仅服务单图） ----
 const { parseAIJSON: _parseBatchJSON } = require('./parse-ai-json')
 const { is429 } = require('./ai-error')
 
@@ -210,7 +226,7 @@ async function _callBatchAI(ocrResults, deps) {
     try {
       res = await safeCallChat(
         messages, callChat,
-        { cloud, db, openid, familyId, sessionId, model: AI.OCR_MODEL, action: 'ocr_extract_batch', skipInjection: true, skipOutputAudit: true, skipContentSafety: true },
+        { cloud, db, openid, familyId, sessionId, traceId: deps.traceId, model: AI.OCR_MODEL, action: 'ocr_extract_batch', skipInjection: true, skipOutputAudit: true, skipContentSafety: true },
         // 不使用 response_format: json_object（DeepSeek JSON 模式有概率返回空 content）
         // 改用普通模式 + prompt 严格约束 JSON 输出
         // 不传 prompt_cache_key：CloudBase SDK 路径不支持客户端缓存控制，固定键+内容多变反而反复写缓存
@@ -247,17 +263,12 @@ async function _callBatchAI(ocrResults, deps) {
     }
 
     const parsed = _parseBatchJSON(res.text)
-    // 兼容 AI 返回的多种格式：
+    // 兼容 AI 返回格式（R2 候选 2：前端分流后 aiExtractBatch 仅服务单图，object 包裹数组分支已删除）：
     //   1. [{...}] — 标准数组
-    //   2. {"results":[...]} / {"data":[...]} / {"policies":[...]} — object 包裹数组
-    //   3. {"idx":1, "document_type":"policy", ...} — 单张图时 AI 直接返回单个对象
+    //   2. {"idx":1, "document_type":"policy", ...} — 单张图时 AI 直接返回单个对象，包装为单元素数组
     let arr = parsed
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      arr = parsed.results || parsed.data || parsed.policies || parsed.list || null
-      // 单对象格式：含 idx + (document_type 或 result) 字段时，包装为单元素数组
-      if (!arr && (parsed.idx != null) && (parsed.document_type || parsed.result)) {
-        arr = [parsed]
-      }
+      arr = (parsed.idx != null) && (parsed.document_type || parsed.result) ? [parsed] : null
     }
     if (!Array.isArray(arr)) {
       console.error('[ocr-core] _callBatchAI ai_format: 原始返回前800字符=', (res.text || '').substring(0, 800))
@@ -273,110 +284,48 @@ async function _callBatchAI(ocrResults, deps) {
 }
 
 /**
- * 构建单图结果对象（从 AI 返回的单个元素）
- * ocrResult._batchIdx 由调用方注入（1-based）
- */
-function _buildSingleResult(item, ocrResult) {
-  const idx = ocrResult._batchIdx
-  if (item.result !== 'success') {
-    return { idx: idx, fileId: ocrResult.fileId, success: false, error: item.message || 'AI提取失败', errorCode: 'ai_extract_failed' }
-  }
-  const docType = item.document_type || 'policy'
-  const data = item.data || {}
-  const contractBasic = data.contract_basic || {}
-  const aiFieldConf = data.field_confidence || {}
-  const aiOverall = typeof data.overall_confidence === 'number'
-    ? data.overall_confidence
-    : (Object.keys(aiFieldConf).length > 0
-        ? Object.values(aiFieldConf).reduce((s, v) => s + v, 0) / Object.keys(aiFieldConf).length
-        : 0.7)
-  const { fieldConf, overallConf, ocrReliable, autoConfirmed } = calcConfidence(ocrResult.ocrConfInfo, aiFieldConf, aiOverall)
-  const products = data.products || []
-  const newPolicies = buildPolicyFromExtract(products, contractBasic, { overallConf, fieldConf, ocrReliable, autoConfirmed })
-
-  let cashValueData = null
-  if ((docType === 'cash_value' || docType === 'mixed') && item.cash_value_data) {
-    const cvd = item.cash_value_data
-    const hi = cvd.header_info || {}
-    const cvArr = (cvd.cash_values || []).map(cv => {
-      const row = { y: cv.y, v: _toNum(cv.v) }
-      if (cv.n) row.n = cv.n
-      return row
-    })
-    cashValueData = {
-      product_name: hi.product_name || (products.length > 0 ? products[0].product_name : '') || '',
-      insured_name: hi.insured_name || contractBasic.insured_name || '',
-      policy_number: hi.policy_number || contractBasic.policy_number || '',
-      insurance_type: hi.insurance_type || '',
-      cash_values: cvArr,
-      overall_confidence: typeof cvd.overall_confidence === 'number' ? cvd.overall_confidence : overallConf
-    }
-  }
-  return { idx: idx, fileId: ocrResult.fileId, success: true, policies: newPolicies, cashValueData: cashValueData, documentType: docType }
-}
-
-/**
- * 组装结果：AI 返回数组与输入 ocrResults 对齐，校验 idx/长度
- */
-function _assembleResults(ocrResults, aiResponse) {
-  var byIdx = {}
-  for (var i = 0; i < aiResponse.length; i++) {
-    var item = aiResponse[i]
-    if (item && typeof item.idx === 'number') byIdx[item.idx] = item
-  }
-  var results = []
-  for (var j = 0; j < ocrResults.length; j++) {
-    var ocr = ocrResults[j]
-    var expectedIdx = j + 1
-    var item = byIdx[expectedIdx]
-    if (!item) {
-      results.push({ idx: expectedIdx, fileId: ocr.fileId, success: false, error: 'AI返回缺失该图', errorCode: 'ai_length_mismatch' })
-    } else {
-      results.push(_buildSingleResult(item, ocr))
-    }
-  }
-  return results
-}
-
-function _summarizeBatch(results, tokens, aiCallCount, totalDurationMs, splitUsed) {
-  var successCount = 0, failCount = 0
-  for (var i = 0; i < results.length; i++) {
-    if (results[i].success) successCount++
-    else failCount++
-  }
-  return { results: results, totalDurationMs: totalDurationMs, splitUsed: splitUsed, aiCallCount: aiCallCount, tokens: tokens, successCount: successCount, failCount: failCount }
-}
-
-/**
- * 批量 AI 提取编排：全部 OCR 文本拼接为 1 次 AI 调用
- * - hy3 并发限制=1，多组串行也会因前一组未返回导致后一组 429，故统一单次调用
- * - 9 张图 OCR 文本总量约 5-9K 字符，远低于 OCR_BATCH_MAX_CHARS=84000，无需分组
- * @param {Array} ocrResults - [{ fileId, ocrText, ocrConfInfo, ... }]
+ * 批量 AI 提取编排（单图收敛，R2 候选 2）
+ * 前端分流后 aiExtractBatch 仅服务 1 张图（>1 张走 aiExtractParallel）：
+ * 保留 batch prompt（JSON 数组契约）调用方式，结果经 PolicyExtractor.extractOne 转换。
+ * @param {Array} ocrResults - [{ fileId, ocrText, ocrConfInfo, ... }]（长度恒为 1）
  * @param {object} deps - { cloud, db, openid, familyId, buildBatchExtractionPrompt, safeCallChat, callChat, AI_TIMEOUT }
  * @returns {{ results, totalDurationMs, splitUsed, aiCallCount, tokens, successCount, failCount }}
  */
 async function aiExtractBatchPhase(ocrResults, deps) {
   const t0 = Date.now()
-
-  // 标记每项的 1-based idx（用于 _buildSingleResult 读取）
-  ocrResults = ocrResults.map((r, i) => Object.assign({}, r, { _batchIdx: i + 1 }))
-
-  // 单次调用
+  const ocr = ocrResults[0]
   try {
     const { aiResponse, tokens, aiCallCount } = await _callBatchAI(ocrResults, deps)
-    const results = _assembleResults(ocrResults, aiResponse)
+    const item = aiResponse[0]
+    if (!item) {
+      const err = new Error('ai_format')
+      err.code = 'ai_format'
+      throw err
+    }
+    const ex = extractOne(item, ocr.ocrConfInfo)
     const t1 = Date.now()
-    return _summarizeBatch(results, tokens, aiCallCount, t1 - t0, false)
+    if (ex.success) {
+      return {
+        results: [{ idx: 1, fileId: ocr.fileId, success: true, policies: ex.policies, cashValueData: ex.cashValueData, documentType: ex.docType, tokens: tokens }],
+        totalDurationMs: t1 - t0, splitUsed: false, aiCallCount: aiCallCount, tokens: tokens, successCount: 1, failCount: 0
+      }
+    }
+    return {
+      results: [{ idx: 1, fileId: ocr.fileId, success: false, error: ex.error, errorCode: ex.errorCode }],
+      totalDurationMs: t1 - t0, splitUsed: false, aiCallCount: aiCallCount, tokens: tokens, successCount: 0, failCount: 1
+    }
   } catch (e) {
     const { classifyAIError } = require('./ai-error')
     const cls = classifyAIError(e)
     // S3-1 修复：保留 CHAT_TIMEOUT / ai_empty 区分，与 aiPhase 错误码映射对称
     // 原实现把 CHAT_TIMEOUT 和 ai_empty 统统压成 ai_batch_failed，前端无法显示"AI服务超时"或"AI返回空"
     const errorCode = ['ai_format', 'ai_empty', 'CHAT_TIMEOUT', '429'].includes(cls) ? cls : 'ai_batch_failed'
-    const results = ocrResults.map(r => ({ idx: r._batchIdx, fileId: r.fileId, success: false, error: (e && e.message) || 'AI异常', errorCode: errorCode }))
     const t1 = Date.now()
-    return _summarizeBatch(results, {}, 1, t1 - t0, false)
+    return {
+      results: [{ idx: 1, fileId: ocr.fileId, success: false, error: (e && e.message) || 'AI异常', errorCode: errorCode }],
+      totalDurationMs: t1 - t0, splitUsed: false, aiCallCount: 1, tokens: {}, successCount: 0, failCount: 1
+    }
   }
 }
 
-module.exports = { ocrPhase, aiPhase, aiExtractBatchPhase, matchPoliciesToMembers, buildPolicyFromExtract, _toNum }
+module.exports = { ocrPhase, aiPhase, aiExtractBatchPhase, matchPoliciesToMembers, buildPolicyFromExtract, extractOne, _toNum }

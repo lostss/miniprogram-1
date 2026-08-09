@@ -6,10 +6,16 @@
     <view class="chat-title"><text class="chat-title-text">小秘</text><text class="chat-title-sub">AI 保障顾问</text></view>
     <scroll-view class="msg-list" scroll-y scroll-into-view="{{scrollIntoView}}" scroll-with-animation="{{false}}" show-scrollbar="{{false}}" enhanced bounces="{{false}}" refresher-enabled refresher-threshold="60" refresher-default-style="black" refresher-triggered="{{refreshingMore}}" bindrefresherrefresh="onPullRefresh">
       <view class="msg-inner">
-        <view wx:for="{{messages}}" wx:key="index" class="msg-row {{item.role}}">
+        <!-- 空态引导：无消息且未处理中时显示，引导首次使用 -->
+        <view wx:if="{{!messages.length && !thinking}}" class="msg-empty">
+          <view class="msg-empty-title">小秘可以帮你</view>
+          <view class="msg-empty-sub">试试这样问</view>
+          <view class="msg-empty-chip pressable" wx:for="{{emptyHints}}" wx:key="*this" catchtap="onEmptyHintTap" data-q="{{item}}">{{item}}</view>
+        </view>
+        <view wx:for="{{messages}}" wx:key="index" id="{{item._scrollId}}" class="msg-row {{item.role}}">
           <!-- AI 回复：平铺无气泡，充分利用横向空间 -->
-          <view wx:if="{{item.role === 'assistant'}}" class="ai-msg">
-            <markdown-render content="{{item.content || ''}}" compact="{{true}}" />
+          <view wx:if="{{item.role === 'assistant'}}" class="ai-msg {{item.isError ? 'ai-msg--err' : ''}}">
+            <markdown-render content="{{item.content || ''}}" compact="{{true}}" bind:linkTap="onLinkTap" />
             <view wx:if="{{item.suggestions && item.suggestions.length > 0}}" class="sug-bar">
               <view wx:for="{{item.suggestions}}" wx:key="*this" class="sug-chip pressable" catchtap="onSugTap" data-sug="{{item}}">{{item}}</view>
             </view>
@@ -22,9 +28,22 @@
             <text>{{item.content}}</text>
           </view>
         </view>
-        <!-- 三点提示：仅当 thinking 且最后一条 AI 消息无内容时显示，避免与流式文本同时出现 -->
-        <view wx:if="{{thinking}}" class="ai-msg thinking-row">
+        <!-- P0修复6: 三点仅在 thinking 且非 B 处理中时显示（chat-source 首字到达时已置 thinking=false，此条件覆盖"首字前"场景） -->
+        <view wx:if="{{thinking && !bProcessing}}" class="ai-msg thinking-row">
           <view class="thinking-dots"><view class="thinking-dot"></view><view class="thinking-dot"></view><view class="thinking-dot"></view></view>
+        </view>
+        <!-- 流式生成中停止入口 -->
+        <view wx:if="{{streaming && !thinking}}" class="streaming-row">
+          <text class="streaming-text">正在生成…</text>
+          <view class="stop-generate pressable" catchtap="onStopGenerate">停止</view>
+        </view>
+        <!-- P0修复1: B通道处理中（工具执行+回流），三点+进度文案，替代"文本与三点并存" -->
+        <view wx:if="{{bProcessing}}" class="streaming-row">
+          <view class="processing-left">
+            <view class="thinking-dots"><view class="thinking-dot"></view><view class="thinking-dot"></view><view class="thinking-dot"></view></view>
+            <text class="streaming-text">正在处理…</text>
+          </view>
+          <view class="stop-generate pressable" catchtap="onStopGenerate">停止</view>
         </view>
         <view id="msg-bottom-anchor"></view>
       </view>

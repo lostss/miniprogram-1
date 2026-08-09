@@ -152,7 +152,8 @@
 </view>
 
 <!-- 全屏表格弹窗 -->
-<view class="table-fullscreen-overlay {{ fullscreenTable ? 'table-fullscreen-overlay--show' : '' }}" bindtap="closeFullscreenTable">
+<!-- catchtouchmove：阻断拖动穿透到宿主滚动/下拉（report 页章节内表格全屏查看时，无拦截会穿透触发页面下拉刷新） -->
+<view class="table-fullscreen-overlay {{ fullscreenTable ? 'table-fullscreen-overlay--show' : '' }}" bindtap="closeFullscreenTable" catchtouchmove="onNoop">
   <view class="table-fullscreen-panel" catchtap="preventClose">
     <!-- 头部 -->
     <view class="table-fullscreen-header">

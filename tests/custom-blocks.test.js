@@ -44,19 +44,28 @@ describe('classifyBatchResults — 识别结果分流分组（收编 _procRefres
 })
 
 describe('custom-blocks 注册表', function () {
-  test('SUPPORTED_TYPES 声明 10 种类型', function () {
-    expect(cb.SUPPORTED_TYPES.sort()).toEqual(['calendar', 'dashboard', 'family_tree', 'insight_cards', 'overview', 'panorama', 'policy_cards', 'risk_alerts', 'timeline', 'urgent_list'])
+  test('SUPPORTED_TYPES 声明 7 种类型（overview/urgent_list/insight_cards/dashboard 已下线）', function () {
+    expect(cb.SUPPORTED_TYPES.sort()).toEqual(['calendar', 'family_tree', 'finance', 'panorama', 'policy_cards', 'risk_alerts', 'timeline'])
   })
 
-  test('family_tree 默认 finance 补齐', function () {
-    const b = cb.create('family_tree', { nodes: [{ name: '张三' }] })
+  test('finance 默认字段补齐', function () {
+    const b = cb.create('finance', {})
+    expect(b.t).toBe('finance')
+    expect(b.income).toBe(0)
+    expect(b.debt).toBe(0)
+    expect(b.expense).toBe(0)
+  })
+
+  test('family_tree 默认 nodes 补齐', function () {
+    const b = cb.create('family_tree', {})
     expect(b.t).toBe('family_tree')
-    expect(b.finance).toEqual({ income: 0, debt: 0, expense: 0 })
+    expect(b.nodes).toEqual([])
   })
 
-  test('risk_alerts 默认 disclaimer 空串', function () {
-    const b = cb.create('risk_alerts', { items: [{ name: 'x', issue: 'y' }] })
-    expect(b.disclaimer).toBe('')
+  test('risk_alerts 默认 items 空数组（disclaimer 字段已移除）', function () {
+    const b = cb.create('risk_alerts', {})
+    expect(b.items).toEqual([])
+    expect(b.disclaimer).toBeUndefined()
   })
 
   test('policy_cards 默认 groups 空数组', function () {
@@ -65,11 +74,11 @@ describe('custom-blocks 注册表', function () {
   })
 
   test('create 补齐默认字段并保留 t', function () {
-    const b = cb.create('overview', { rate: 50 })
-    expect(b.t).toBe('overview')
-    expect(b.rate).toBe(50)
-    expect(b.totalGap).toBe(0)
-    expect(b.totalCoverage).toBe(0)
+    const b = cb.create('panorama', { heads: ['成员'] })
+    expect(b.t).toBe('panorama')
+    expect(b.heads).toEqual(['成员'])
+    expect(b.cats).toEqual([])
+    expect(b.rows).toEqual([])
   })
 
   test('create 支持可选 section', function () {
@@ -92,8 +101,8 @@ describe('custom-blocks 注册表', function () {
   })
 
   test('validate 检测必填字段缺失', function () {
-    expect(cb.validate({ t: 'overview', rate: 50 }).valid).toBe(false)
-    expect(cb.validate({ t: 'overview', rate: 50, totalGap: 0, annualPremium: 0, debt: 0, totalCoverage: 0 }).valid).toBe(true)
+    expect(cb.validate({ t: 'finance', income: 1 }).valid).toBe(false)
+    expect(cb.validate({ t: 'finance', income: 1, debt: 0, expense: 0 }).valid).toBe(true)
   })
 
   test('validate 未知类型返回 invalid', function () {

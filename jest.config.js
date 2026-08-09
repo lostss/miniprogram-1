@@ -19,5 +19,14 @@ module.exports = {
     '!**/node_modules/**'
   ],
   coverageDirectory: 'coverage',
-  coverageReporters: ['text', 'text-summary']
+  coverageReporters: ['text', 'text-summary'],
+  // R3v2 审计 #10：覆盖率门禁（基线 41/29/35/38，阈值留余量防抖动，禁止覆盖率下滑）
+  coverageThreshold: {
+    global: {
+      statements: 35,
+      branches: 25,
+      functions: 30,
+      lines: 33
+    }
+  }
 };

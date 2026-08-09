@@ -10,7 +10,7 @@
  *     - fn: 异步函数，接收 attempt 索引（从 0 开始），返回值或抛错
  *     - opts.maxAttempts: 总调用次数（含首次，默认 1 = 不重试）
  *     - opts.backoff: 'fixed' | 'exponential'（默认 'fixed'）
- *     - opts.delayMs: 单次延迟基数（默认 600ms；exponential 时实际等待 = delayMs * attempt）
+ *     - opts.delayMs: 单次延迟基数（默认 600ms；exponential 时实际等待 = delayMs * (attempt + 1)，首次即等 delayMs）
  *     - opts.retryOn: (err, attempt) => bool（默认所有错误都重试）
  *     - opts.label: 日志标签（默认 'withRetry'）
  *

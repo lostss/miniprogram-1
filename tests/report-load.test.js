@@ -35,13 +35,13 @@ test('已有报告：进入不调用 generateReport', async () => {
   expect(api).not.toHaveBeenCalledWith('generateReport', expect.anything())
 })
 
-test('已有报告 + insight_stale：仍不重算，仅置 reportUpdated 提示', async () => {
+test('已有报告 + insight_stale：不重算，也不再置 reportUpdated（update-toast 死路径已删）', async () => {
   mockGetCustomer(REPORT, { insight_stale: true })
   api.mockClear()
   await ctx._loadReport('cid')
   expect(api).not.toHaveBeenCalledWith('generateReport', expect.anything())
   const flagged = ctx.setData.mock.calls.some(c => c[0] && c[0].reportUpdated === true)
-  expect(flagged).toBe(true)
+  expect(flagged).toBe(false)
 })
 
 // 新设计（2026-08）：基础版报告纯数据驱动，AI 深度分析改为手工触发（待设计），

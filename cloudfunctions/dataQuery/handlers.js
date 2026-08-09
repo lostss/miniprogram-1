@@ -31,5 +31,6 @@ module.exports = {
   // entity-query
   queryPolicies: entityQuery.queryPolicies,
   queryMembers: entityQuery.queryMembers,
-  queryFacts: entityQuery.queryFacts
+  queryFacts: entityQuery.queryFacts,
+  queryMemberProfile: entityQuery.queryMemberProfile
 }

@@ -36,7 +36,7 @@
                                                 ↓
                         reportAI（生成 portrait/review/plan/suggestions）
                                                 ↓
-                              [报告页渲染] ← dataQuery/getCustomer
+                              [报告页渲染] ← dataQuery/getFamily
                                                 ↓
                               [用户追问] → chat-panel 三步流程
                                                 ↓
@@ -65,7 +65,7 @@
 
 | 项目 | 说明 |
 |------|------|
-| 输入 | 拍照/相册，最多 9 张，`compressImage(quality:65)` 预处理 |
+| 输入 | 拍照/相册，最多 9 张，`compressImage(quality:80)` 预处理 |
 | 分批 | 每批 5 张并发 |
 | 字段 | 保单号、保险公司、生效日期、投保人、被保人、产品名、险种分类、保额、保费、缴费期、保障期、受益人、出生日期 |
 
@@ -83,7 +83,7 @@
 
 | 项目 | 说明 |
 |------|------|
-| 触发 | 首次 OCR / 编辑保存后静默后台刷新（无 loading） / 对话工具 `triggerAnalysis` 异步触发（60s 节流，失败重试 1 次间隔 2s） |
+| 触发 | 首次 OCR / 编辑保存后静默后台刷新（无 loading） / 对话工具 `triggerAnalysis` 异步触发（30s 节流，失败重试 1 次间隔 2s） |
 | AI 产出 | `conclusion`(纯文本) + `analysis`(Markdown) + `suggestions`(Markdown) + `disclaimer` |
 | 前端聚合 | 数据概览/成员保障/缴费月历/里程碑/保单列表 + 保险常识(静态) |
 | 渲染 | `report-markdown` 接收 `chapters[]`，WXML 原生元素逐类型渲染（h1n/h2/h3/table/p/ol/ul） |
@@ -96,14 +96,14 @@ triggerAnalysis (对话工具) → conversationAI/_dispatch → cloud.callFuncti
 → buildFamilyContext(mode:'report') → AI 生成 → 写 families.last_portrait/last_review/last_plan/last_suggestions
 ```
 
-**节流**：`families.last_analysis_at` 持久化，60s 内重复触发跳过，跨冷启动有效。
+**节流**：`families.analysis_lock_at` 持久化（CAS 原子占用防双跑，30s 内重复触发跳过，成功生成后释放），跨冷启动有效。`last_analysis_at` 仅表示上次成功分析时间（供归档 version_at 使用）。
 
 #### 报告 5 章（结构化缺口矩阵 + AI 叙事）
 
 | # | 标题 | key | 内容 | 来源 |
 |---|------|-----|------|------|
 | 1 | 家庭画像 | portrait | 家庭结构/经济特征/保障角色分工，千人千面 | **AI** |
-| 2 | 现有保障点评 | review | 保障覆盖矩阵（成员×险种，充足/不足/缺失）+ AI 先总后分点评（好处+问题） | 矩阵：前端聚合 / 点评：**AI** |
+| 2 | 现有保障点评 | review | 保障覆盖矩阵（成员×险种，充足/不足/缺失）+ AI 先总后分点评（好处+问题）；系统预计算「保障缺口矩阵」注入 AI（阈值：重疾50万/医疗存在性/寿险=负债+5×年收入/意外=max(5×年收入,负债)），AI 引用结论不重算 | 矩阵：系统预计算 / 点评：**AI** |
 | 3 | 保障规划 | plan | 缺口矩阵（成员×险种，缺口额+可信度：confirmed/estimated/blocked）+ AI 规划（展示分析过程：需求怎么算→现有多少→缺口多少→建议补什么） | 缺口矩阵：前端聚合 / 规划：**AI** |
 | 4 | 行动建议 | suggestions | 补数据+补保障建议（做什么→不做后果→优先级依据） | **AI** |
 | 5 | 附录 | appendix | 保障关键时点（时间轴）+ 缴费月历 + 过期保单 + 保单列表 + 引用说明 + 术语 + 免责 | 前端聚合 |
@@ -163,7 +163,7 @@ triggerAnalysis (对话工具) → conversationAI/_dispatch → cloud.callFuncti
 | `queryPolicies` | 查询全量保单（仅上下文缺失时） | 同步 |
 | `queryMembers` | 查询全量成员（仅上下文缺失时） | 同步 |
 | `queryFacts` | 查询全量事实（可按成员过滤） | 同步 |
-| `triggerAnalysis` | 重新生成保障分析报告 | 异步（DB 60s 节流，失败静默重试 1 次） |
+| `triggerAnalysis` | 重新生成保障分析报告 | 异步（DB 30s 节流，失败静默重试 1 次） |
 | `createFamily` | 新建客户家庭档案 | 同步 |
 
 **调用机制**：原生 OpenAI function calling（`callChatWithTools`），非文本 `[TOOL]` 标记解析。工具定义由 `_TOOL_DEFINITIONS` 数组注册，dispatch 按 toolName 路由到 dataWrite / dataQuery / reportAI。
@@ -244,7 +244,7 @@ confidence, source:'ocr'|'ai'|'user_form'|'agent_confirmed'|'agent_edit', status
 reasoning, created_at
 ```
 
-**写入策略**：`FACT_STRATEGIES` 26 谓词全覆盖（dedup 9 + versioned 17），5 条入口统一经 `addFact` 单点写入。`versioned` 策略自动 supersede 旧事实 → 写入新事实。**零物理删除**（包括 `deleteFamily`）——全部标记 `superseded` 保留审计轨迹。
+**写入策略**：`FACT_STRATEGIES` 26 谓词全覆盖（dedup 9 + versioned 17），5 条入口统一经 `addFact` 单点写入。`versioned` 策略自动 supersede 旧事实 → 写入新事实。**facts/policies 更新走 supersede 保留审计轨迹，不物理删除**；例外：`deleteFamily`（整家庭删除）为物理删除——先 batchTx 清空关联集合（policies/facts/messages/operation_logs 等），全部成功后才删除 family 文档（部分失败保留 family 返回 207 可重试）。
 
 **去重策略**：`dedup` 谓词（关系、备注等）按 subject+predicate+object_value 查重，已存在则跳过；`versioned` 谓词（保单字段、个人特征等）先 supersede 旧事实再写入新事实，保留版本历史。
 
@@ -257,9 +257,9 @@ reasoning, created_at
 
 | 函数 | handlers 数 | 用途 |
 |------|-----------|------|
-| dataQuery | 14 | queryFamily/queryMessages/queryHomeList/queryBrief/queryInsight/markRead/queryFacts/queryPolicies/queryMembers/queryFamiliesForMatch/readMemory/getCustomer/listCustomers/searchCustomers |
+| dataQuery | 8 | listFamilies / searchFamilies / getFamily（报告页详情）/ queryMessages / queryLogs / queryPolicies / queryMembers / queryFacts |
 | dataWrite | 21 | recordField/writeNote/updateMember/writePolicy/writePoliciesBatch/addFact/updateFactConfidence/deletePolicy/deleteMember/updatePolicy/deleteFact/createFamily/updateFamily/deleteFamily/writeMessage/writeOpLog/setStage/submitProfiling/migratePoliciesToFacts（保单事实迁移）/writeCashValue（现金价值写入）/matchCashValueManual（现金价值手工匹配） |
-| reportAI | 1 | 报告生成（portrait/review/plan/suggestions/milestones/disclaimer），由 conversationAI 的 triggerAnalysis 工具触发 |
+| reportAI | 1 | 报告生成（portrait/review/plan/suggestions/disclaimer），前端注册名 `generateReport`（apiClient），对话侧由 triggerAnalysis 工具触发 |
 | ocrService | 4 | ocrOnly / aiExtractBatch / aiExtractParallel / matchPolicies |
 | conversationAI | 3 mode + 13 工具路由 | getPrompt / generateText / postProcess；_dispatch 按工具定义数组路由 → 复用 dataWrite + dataQuery + reportAI；postProcess 内置 sug 确认拦截；addFact 工具谓词为自由字符串（非 enum 约束），后端 `FACT_STRATEGIES` 兜底未知谓词为 dedup |
 | login | 1 | 手机号登录；dev 登录仅限非 prod 环境 |
@@ -278,7 +278,7 @@ reasoning, created_at
 | 降级策略 | 流式重试(指数退避×2: 1s→2s→4s) → generateText → 兜底文本 | 三级降级保证可用性 |
 | 上下文构建 | v2-context.js buildFamilyContext (3 模式: conversation/report/analysis) | 统一上下文构建，各云函数共用 |
 | 三元组写入 | addFact 单入口，FACT_STRATEGIES 26 谓词全覆盖 | 5 条产线（OCR/对话/表单/备注/编辑）统一策略 |
-| 数据不可变 | facts+policies 全量 supersede 无物理删除 | 保留审计轨迹，deleteFamily 同步 |
+| 数据不可变 | facts+policies 更新走 supersede 保留审计轨迹 | 保留审计轨迹；deleteFamily 例外：物理删除（batchTx 清关联 → 删 family） |
 | 流式节流 | chat-panel setData 100ms 节流 + scrollToBottom 合并 | 减少 UI 线程阻塞，提升流式体验 |
 | 定时器管理 | chat-panel detached 生命周期全量清理 | 避免内存泄漏 |
 | 年龄计算 | calc-age.js 单一权威源 | 消除 memberRepo/dataQuery/report-builder 三份重复实现 |
@@ -289,7 +289,7 @@ reasoning, created_at
 | 模块 | 状态 |
 |------|------|
 | OCR + 置信度分流 | ✅ 含双源融合+低 birth_date 拦截+temp 清理+部分失败错误保留 |
-| 报告（4 章 8 子节） | ✅ _runReport 失败重试 1 次 |
+| 报告（7 章） | ✅ _runReport 失败重试 1 次（章节：家庭结构/家庭财务/保障汇总/缴费月历/关键节点/风险提示/附录保单明细） |
 | AI 对话三步流程 + 工具能力（13 工具） | ✅ addFact 谓词自由字符串，100ms 流式节流，定时器全清理 |
 | 客户管理 + 成员同步 | ✅ |
 | 架构统一（共享模块抽取 + 统一上下文） | ✅ |
@@ -382,7 +382,7 @@ reasoning, created_at
 
 | 失败点 | 处理 |
 |--------|------|
-| triggerAnalysis 60s 内重复 | conversationAI DB 节流，返回 `skipped: true` |
+| triggerAnalysis 30s 内重复 | conversationAI DB 节流，返回 `skipped: true` |
 | reportAI 失败 | 静默重试 1 次（间隔 2s），仍失败则记录错误不阻塞 |
 | AI 返回非 JSON | safeCallChat 兜底纯文本，降级为单段 conclusion |
 
@@ -463,19 +463,20 @@ reasoning, created_at
 
 ### reportAI
 ```js
-// 入参
-{ customerId: string }
-// 出参
-{ code: 200, data: { portrait, review, plan, suggestions, milestones, disclaimer } }
-// 流程：查 families+policies+members+finances → buildFamilyContext(mode:'report') → AI 调用 → 写 families.last_*
+// 入参（文档-代码一致性审计修正：原记录 customerId，实际为 familyId）
+{ familyId: string, _authOpenid: string }
+// 出参（milestones 已移除：report-fields.js 不持久化、前端无消费，契约不再包含）
+{ code: 200, data: { portrait, review, plan, suggestions, disclaimer } }
+// 前端注册名：generateReport（apiClient DIRECT_FN，30s 默认超时；深度分析页显式 60s 超时）
+// 流程：查 families+policies+members+finances → buildFamilyContext(mode:'report') → AI 调用 → 写 families.last_*（成功后释放 analysis_lock_at）
 ```
 
 ### dataQuery（selected）
 
-#### queryFamily
+#### getFamily
 ```js
-// 入参
-{ action: 'queryFamily', familyId, scene?: 'full'|'basic'|'list'|'report'|'insight'|'mark_read' }
+// 入参（文档-代码一致性审计修正：对外 action 名 getFamily，原文档误写 queryFamily）
+{ action: 'getFamily', familyId, scene?: 'full'|'basic'|'list'|'report'|'insight'|'mark_read' }
 // 出参
 { code: 200, data: familyDoc (含 policies[] 列表) }
 ```
@@ -488,10 +489,11 @@ reasoning, created_at
 { code: 200, data: { messages: [{role, content, cards, suggestions, pending_confirms, created_at}] } }
 ```
 
-#### queryHomeList
+#### listFamilies / searchFamilies
 ```js
-// 入参
-{ action: 'queryHomeList', limit?: number, before?: string }
+// 入参（文档-代码一致性审计修正：首页列表 action 名 listFamilies，搜索 searchFamilies，原文档误写 queryHomeList）
+{ action: 'listFamilies', limit?: number, before?: string }   // 首页家庭列表（含 agent 信息）
+{ action: 'searchFamilies', keyword: string }                 // 按名称搜索
 // 出参
 { code: 200, data: { agent, families: [{family_name,member_count,completeness_score,...}] } }
 ```

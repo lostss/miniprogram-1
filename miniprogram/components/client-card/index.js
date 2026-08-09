@@ -2,7 +2,7 @@
 // 移除每卡一个 canvas 2d 实例，避免客户列表 10+ 卡片的冷启动开销
 Component({
   properties: { client: { type: Object, value: {} } },
-  data: { _fmtTime: '', _completeness: 0 },
+  data: { _fmtTime: '', _completeness: 0, _id: '', _name: '' },
   observers: {
     'client'(c) {
       if (!c) return
@@ -11,10 +11,16 @@ Component({
     }
   },
   methods: {
-    onTap() { this.triggerEvent('tap', { _id: this.data._id }) },
+    // 真机 404 修复：onTap 直读 client 属性 _id，不再依赖 observers 缓存（observers 未触发时 this.data._id 为 undefined
+    // → navigateToFamily(undefined) → URL familyId=undefined → getFamily 404 "客户不存在"）
+    onTap() {
+      const c = this.data.client || {}
+      this.triggerEvent('tap', { _id: c._id || '' })
+    },
     onLongPress() {
       wx.vibrateShort({ type: 'medium' })
-      this.triggerEvent('longpress', { _id: this.data._id, name: this.data._name })
+      const c = this.data.client || {}
+      this.triggerEvent('longpress', { _id: c._id || '', name: c.name || c.family_name || '' })
     },
     _fmt(d) {
       if (!d) return ''; const t = new Date(d), n = new Date(), diff = n - t
