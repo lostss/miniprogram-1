@@ -8,6 +8,8 @@ const DIRECT_FN = {
   // dataQuery
   queryMessages:          ['dataQuery', { action: 'queryMessages' }],
   getFamily:              ['dataQuery', { action: 'getFamily' }],
+  shareFamily:            ['dataQuery', { action: 'shareFamily' }],
+  getSharedFamily:        ['dataQuery', { action: 'getSharedFamily' }],
   listFamilies:           ['dataQuery', { action: 'listFamilies' }],
   searchFamilies:         ['dataQuery', { action: 'searchFamilies' }],
   // queryLogs 已下线（零调用，见清理审计）
@@ -22,6 +24,7 @@ const DIRECT_FN = {
   writeCashValue:         ['dataWrite', { action: 'writeCashValue' }],
   updateFamily:           ['dataWrite', { action: 'updateFamily' }],
   updatePolicy:           ['dataWrite', { action: 'updatePolicy' }],
+    changePolicyStatus:     ['dataWrite', { action: 'changePolicyStatus' }],
   updateMember:           ['dataWrite', { action: 'updateMember' }],
   createFamily:           ['dataWrite', { action: 'createFamily' }],
   deleteFamily:           ['dataWrite', { action: 'deleteFamily' }],
@@ -49,6 +52,9 @@ const DIRECT_FN = {
   conversationAI:         ['conversationAI', null],
 }
 
+// 可观测性审计：模块级记录最近一次 reqId（opts.requestId 或 OCR 会话 _reqId），供前端错误上报串联云端 trace
+let _lastReqId = ''
+
 // 归一化返回契约：{ ok, code, msg, data }，消除调用方重复解包 res.result
 async function apiCall(action, params = {}, opts = {}) {
   const df = DIRECT_FN[action]
@@ -60,9 +66,10 @@ async function apiCall(action, params = {}, opts = {}) {
   const data = base ? { ...base, ...params } : params
   // 日志审计 #1：requestId 透传（OCR 会话等一次性操作的 trace 串联）
   if (opts.requestId) data._reqId = opts.requestId
+  if (data._reqId) _lastReqId = data._reqId
   // 网络审计：写操作强制 retries:0（超时/网络 fail 重发 = 已入库数据双写）。
   // 读操作保持默认重试（弱网可容忍）；调用方显式传 opts.retries 优先。
-  if (opts.retries === undefined && /^(create|update|delete|write|record)/.test(action)) {
+  if (opts.retries === undefined && /^(create|update|delete|write|record|change)/.test(action)) {
     opts.retries = 0
   }
   const raw = await callCloud(name, data, opts)
@@ -92,5 +99,8 @@ async function apiCall(action, params = {}, opts = {}) {
     target: (r && r.target) || ''
   }
 }
+
+// 可观测性审计：暴露最近 reqId（前端错误上报读取）
+apiCall.getLastReqId = function () { return _lastReqId }
 
 module.exports = apiCall

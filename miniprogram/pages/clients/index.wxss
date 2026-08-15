@@ -6,8 +6,8 @@
 .search-wrap { position:relative }
 .search-input { width:100%; height:72rpx; background:var(--bg-surface); border-radius:var(--r-xl); padding:0 64rpx 0 var(--sp-5); font-size:var(--fs-base); box-sizing:border-box; border:1rpx solid transparent; transition:border-color var(--dur-fast) var(--ease-out) }
 .search-input:focus { border-color:var(--accent) }
-/* UI 审计 视觉 S2：清除按钮 padding 扩点击区（48+48=96rpx），负 margin 抵消视觉占位 */
-.search-clear { position:absolute; right:var(--sp-3); top:50%; transform:translateY(-50%); width:48rpx; height:48rpx; padding:24rpx; margin:-24rpx; display:flex; align-items:center; justify-content:center; font-size:24rpx; color:var(--text-tertiary); border-radius:50% }
+/* UI 审计 视觉 S2：清除按钮 padding 扩点击区；去固定宽高（content-box 下 48+24*2=96rpx 盒，✕ 居中于 96rpx 中心=偏下 12rpx） */
+.search-clear { position:absolute; right:var(--sp-3); top:50%; transform:translateY(-50%); padding:24rpx; display:flex; align-items:center; justify-content:center; font-size:24rpx; line-height:1; color:var(--text-tertiary); border-radius:50% }
 .search-clear:active { background:var(--bg-input) }
 
 /* ========== 卡片间距 ========== */
@@ -31,8 +31,8 @@
 
 /* ========== 空状态 ========== */
 .empty { display:flex; flex-direction:column; align-items:center; padding-top:160rpx }
-.empty-text { font-size:var(--fs-lg); font-weight:var(--fw-semi); color:var(--text-primary) }
+.empty-text { font-size:var(--fs-lg); font-weight:var(--fw-semi); color:var(--text-primary); font-family:var(--font-serif); letter-spacing:var(--ls-wide); }
 .empty-sub { font-size:var(--fs-caption); color:var(--text-tertiary); margin-top:var(--sp-3); letter-spacing:var(--ls-wide) }
 /* UI 审计 #②：accent 白字不达标，改深色主文字色 */
-.empty-btn { margin-top:var(--sp-8); height:80rpx; padding:0 var(--sp-8); background:var(--accent); color:var(--text-primary); font-size:var(--fs-base); font-weight:var(--fw-semi); border-radius:var(--r-full); display:flex; align-items:center; justify-content:center; border:none }
+.empty-btn { margin-top:var(--sp-8); height:80rpx; padding:0 var(--sp-8); background:var(--accent); color:var(--btn-text-on-accent); font-size:var(--fs-base); font-weight:var(--fw-semi); border-radius:var(--r-full); display:flex; align-items:center; justify-content:center; border:none }
 .empty-btn::after { border:none }

@@ -12,6 +12,7 @@
  *
  * 状态映射（STATUS_TXT）作为公共常量导出，避免各处再写一份。
  */
+const { yuanToWan } = require('./amount')
 const STATUS_TXT = { active: '有效', expired: '已失效', deleted: '已删除', cancelled: '已取消', suspicious: '异常', unknown: '待确认' }
 
 const DEFAULT_SKIP = ['deleted', 'cancelled']
@@ -53,7 +54,7 @@ const AI_LOCATOR_COLUMNS = [
   { header: 'policyId', get: p => p.id || p._id },
   { header: '产品', get: p => fmtOr(p.product_name) },
   { header: '险种', get: p => fmtOr(p.insurance_category) },
-  { header: '保额(万)', get: p => Number(((p.sum_assured || 0) / 10000).toFixed(1)) },
+  { header: '保额(万)', get: p => Number(yuanToWan(p.sum_assured || 0).toFixed(1)) },
   { header: '年缴(元)', get: p => p.annual_premium || 0 },
   { header: '被保人', get: p => fmtOr(p.insured_name) },
   { header: '状态', get: fmtStatus },

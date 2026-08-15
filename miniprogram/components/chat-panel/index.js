@@ -22,9 +22,23 @@ Component({
   options: { styleIsolation: 'apply-shared' },
   properties: { familyId: { type: String, value: '' } },
   data: { collapsed: true, inputText: '', messages: [], thinking: false, scrollIntoView: '', refreshingMore: false, bProcessing: false, emptyHints: ['查看当前家庭的保障情况', '记录家庭成员信息', '分析保障缺口'] },
-  // AI 回复期间上抛处理态：父级 FAB 发送按钮联动置灰（逻辑守卫已在 onSend，此处补视觉）
+  // 审计：原文件存在两个 observers 键（对象字面量后者覆盖前者），'thinking, bProcessing' 监听实际失效，合并修复
   observers: {
-    'thinking, bProcessing'(t, b) { this.triggerEvent('busy', { busy: !!(t || b) }) }
+    // AI 回复期间上抛处理态：父级 FAB 发送按钮联动置灰（逻辑守卫已在 onSend，此处补视觉）
+    'thinking, bProcessing'(t, b) { this.triggerEvent('busy', { busy: !!(t || b) }) },
+    'familyId'(id) {
+      if (!id) return
+      this._historyStore.reset()
+      this._promptCache.invalidate()
+      this._sessionId = 's_' + Date.now().toString(36)
+      // 审计 P0-2：中止旧 family 的在途流式（chat-source sessionId 检查 + _streamAborted 双保险）
+      this._streamSession = null
+      this._streamAborted = true
+      this.setData({ messages: [], scrollIntoView: '', bProcessing: false, thinking: false, streaming: false })
+      if (!this.data.collapsed) {
+        wx.nextTick(() => { this._loadHistory().then(() => this._scrollAfterRender()) })
+      }
+    }
   },
   lifetimes: {
     created() {
@@ -42,21 +56,6 @@ Component({
       this._disposed = false
     },
     detached() { this._disposed = true; this._streamSession = null; this._timers.forEach(t => clearTimeout(t)); this._timers = [] }
-  },
-  observers: {
-    'familyId'(id) {
-      if (!id) return
-      this._historyStore.reset()
-      this._promptCache.invalidate()
-      this._sessionId = 's_' + Date.now().toString(36)
-      // 审计 P0-2：中止旧 family 的在途流式（chat-source sessionId 检查 + _streamAborted 双保险）
-      this._streamSession = null
-      this._streamAborted = true
-      this.setData({ messages: [], scrollIntoView: '', bProcessing: false, thinking: false, streaming: false })
-      if (!this.data.collapsed) {
-        wx.nextTick(() => { this._loadHistory().then(() => this._scrollAfterRender()) })
-      }
-    }
   },
   methods: {
     // 时间格式：当天 → 刚刚/X分钟前/HH:mm；跨天 → 昨天/M月D日 + HH:mm（区分跨天会话）
@@ -352,9 +351,11 @@ Component({
       else if (count === 0) wx.showToast({ title: '没有更多了', icon: 'none', duration: 1000 })
     },
     // 快捷建议/确认卡点击 → 直接 postProcess（CONFIRM/KEEP/sug 拦截不经 AI，不消耗流式）
+    // 审计修复：补 thinking 守卫——流式回复期间（_postProcessing=false、thinking=true）上轮残留 sug-chip 仍可点，
+    // 会导致流式输出与新 postProcess 并发（_finalizeConversation 的 _postProcessing 防重入无法拦截此窗口）
     onSugTap(e) {
       const sug = e.currentTarget.dataset.sug || ''
-      if (!sug || this._postProcessing) return
+      if (!sug || this._postProcessing || this.data.thinking) return
       const now = new Date(), nowStr = this._fmtTime(now)
       const ms = [...this.data.messages, { role: 'user', content: sug, time: nowStr }]
       const ms2 = [...ms, { role: 'assistant', content: '', time: '' }]

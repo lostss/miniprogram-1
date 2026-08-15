@@ -9,7 +9,15 @@
     </view>
     <scroll-view class="sheet-body" scroll-y>
       <block wx:for="{{fields}}" wx:key="key">
-        <view class="form-row form-row-{{item.key}} {{item.error ? 'has-error' : ''}} {{item.tone ? 'tone-' + item.tone : ''}} {{item.modified ? 'tone-modified' : ''}}">
+        <!-- 信息分组标题（与识别卡片 sheet 分组结构一致，view/edit 两态通用） -->
+        <view wx:if="{{item.isGroup}}" class="form-group-title">{{item.label}}</view>
+        <!-- 查看态：label + value 横排只读（置信度低字段保留 ⚠️ 与底色） -->
+        <view wx:elif="{{mode === 'view'}}" class="form-row form-row--view {{item.tone ? 'tone-' + item.tone : ''}}">
+          <text class="form-label">{{item.label}}<text wx:if="{{item.required}}" class="req">*</text><text wx:if="{{item.tone && !item.modified}}" class="tone-badge">⚠️</text></text>
+          <text class="form-view-val {{item.value ? '' : 'form-view-val--empty'}}">{{item.value || '--'}}</text>
+        </view>
+        <!-- 编辑态：横排 label + input/picker -->
+        <view wx:else class="form-row form-row-{{item.key}} {{item.error ? 'has-error' : ''}} {{item.tone ? 'tone-' + item.tone : ''}} {{item.modified ? 'tone-modified' : ''}}">
           <text class="form-label">{{item.label}}<text wx:if="{{item.required}}" class="req">*</text><text wx:if="{{item.tone && !item.modified}}" class="tone-badge">⚠️</text></text>
           <!-- 原生 picker 分支（原生组件审计）：selector=固定枚举（角色/险种/负债类型）、date=生效日期 -->
           <picker wx:if="{{item.type === 'selector'}}" mode="selector" range="{{item.options}}" data-key="{{item.key}}" bindchange="onFieldPicker" aria-label="{{item.label}}">
@@ -33,9 +41,11 @@
       </block>
     </scroll-view>
     <view class="sheet-actions">
-      <!-- 编辑态显式取消按钮（原仅遮罩关闭，可发现性弱） -->
+      <!-- 取消按钮（两态共用） -->
       <button class="cancel-btn pressable" bindtap="onClose" disabled="{{saving}}" aria-label="取消">取消</button>
-      <button class="save-btn pressable {{saving ? 'is-loading' : ''}}" bindtap="onSave" disabled="{{saving}}" aria-label="保存">{{saving ? '保存中...' : '保存'}}</button>
+      <!-- 查看态：编辑按钮；编辑态：保存按钮（互斥切换） -->
+      <button wx:if="{{mode === 'view'}}" class="edit-btn pressable" bindtap="onSwitchEdit" disabled="{{saving}}" aria-label="编辑">编辑</button>
+      <button wx:else class="save-btn pressable {{saving ? 'is-loading' : ''}}" bindtap="onSave" disabled="{{saving}}" aria-label="保存">{{saving ? '保存中...' : '保存'}}</button>
     </view>
   </view>
 </view>

@@ -215,6 +215,9 @@ describe('G. OCR 提取', function() {
     expect(systemPrompt).toContain('输入特征')
     expect(systemPrompt).toContain('提取重点')
     expect(systemPrompt).toContain('换行或分页撕裂')
+    // 保险公司简称契约：OCR 提取 insurer 必须输出品牌简称（禁止照抄机构全称）
+    expect(systemPrompt).toContain('品牌简称')
+    expect(systemPrompt).toContain('平安人寿')
     expect(userPrompt).toContain('OCR文本')
     expect(userPrompt).toContain('OCR字符级置信度参考')
     expect(userPrompt).toContain('95%')

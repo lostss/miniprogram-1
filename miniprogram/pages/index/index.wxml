@@ -6,6 +6,12 @@
     <view class="brand-slogan">AI保单整理助手</view>
   </view>
 
+  <!-- 上线审计：正式环境首次进入需手机号登录（建档 agents + 限额），dev 环境自动跳过 -->
+  <view class="phone-login" wx:if="{{needLogin}}">
+    <text class="phone-login-desc">手机号登录后即可使用</text>
+    <button class="phone-login-btn pressable" open-type="getPhoneNumber" bindgetphonenumber="onPhoneLogin" aria-label="手机号登录">手机号登录</button>
+  </view>
+
   <!-- 空态：上传引导 -->
   <view class="orb-stage {{recentClients.length > 0 ? 'orb-stage--done' : ''}}" wx:if="{{!ocrBusy && !loadingClients}}">
     <view class="upload-box pressable" bindtap="onUploadTap" aria-label="拍照上传保单">

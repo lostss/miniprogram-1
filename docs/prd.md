@@ -66,7 +66,8 @@
 | 项目 | 说明 |
 |------|------|
 | 输入 | 拍照/相册，最多 9 张，`compressImage(quality:80)` 预处理 |
-| 分批 | 每批 5 张并发 |
+| 分批 | 每批 5 张并发 OCR（ocrOnly，无 AI） |
+| 模型分流 | **1 张 → `aiExtractBatch`（hy3，1 次调用）**；**>1 张 → `aiExtractParallel`（DeepSeek 直连，每张 1 次并发）**。多张拼接（1 次 AI）已弃用 |
 | 字段 | 保单号、保险公司、生效日期、投保人、被保人、产品名、险种分类、保额、保费、缴费期、保障期、受益人、出生日期 |
 
 **置信度分流**：
@@ -110,42 +111,39 @@ triggerAnalysis (对话工具) → conversationAI/_dispatch → cloud.callFuncti
 
 **报告字段**（families 集合）：`last_portrait` / `last_review` / `last_plan` / `last_suggestions` / `last_milestones` / `last_disclaimer`
 
-### 4.3 AI 对话（三步流程架构）
+### 4.3 AI 对话（双通道 v9.6）
 
 | 项目 | 说明 |
 |------|------|
 | 入口 | 报告页 FAB 吸底通栏（白底 + 暖金圆按钮） |
 | 面板 | 底部滑出 70vh，遮罩覆盖 + scroll-view 自由滚动 |
-| 架构 | **三步流程**：getPrompt（缓存） → streamText（前端直连混元） → postProcess（后端工具+审计+持久化） |
-| 流式技术 | `wx.cloud.extend.AI.createModel('cloudbase').streamText({模型: hy3})`，前端 setData 100ms 节流，定时器 detached 全清理 |
-| 流式重试 | 429/超时 → 指数退避重试（最多 2 次：1s→2s→4s）→ 仍失败则降级 |
-| 降级路径 | 流式失败 → `conversationAI/generateText`（无工具调用）→ 兜底文本 |
-| 持久化 | **postProcess 统一持久化** user + assistant 消息 |
-| 历史 | 加载最近 **20 条**，换客户自动刷新 |
+| 架构 | **双通道 v9.6**：A 通道（前端 streamText 流式输出中性理解 + `{TOOL_INTENT}` 工具意图标识）→ 剥离标识后调 B 通道（`conversationAI/postProcess` function calling + 审计 + 持久化）→ 前端**无条件覆盖** A 文本为 B 结果 |
+| 流式技术 | `wx.cloud.extend.AI.createModel('cloudbase').streamText`（hy3-preview），前端 setData 100ms 节流，定时器 detached 全清理 |
+| 标识协议 | A 输出含工具意图时附加独立一行 `{TOOL_INTENT:{"tools":[{"name","args"}]}}`；前端流式过滤该行，多行 JSON 按括号平衡吸收整体剥离，畸形/未闭合块一律剥除（防泄漏） |
+| 流式重试 | 429/超时/首字 30s 无响应 → 指数退避重试（最多 2 次）→ 仍失败则降级 `conversationAI/generateText`（无工具）→ 兜底文本 |
+| 持久化 | **postProcess 统一持久化** user + assistant 消息；流式失败兜底经 `dataWrite/writeMessage` |
+| 确认拦截 | postProcess 内置 `{CONFIRM:}/{KEEP:}` 与 sug 建议回复拦截（删除/覆盖/低置信度确认，409 挂确认卡） |
+| record 模式 | 前端 agentic 单通道收尾：`mode:'record'` 仅落库 + 输出审计 + 内容安全复核 + 报告联动，不做 function calling |
+| 历史 | 加载最近 **20 条**（TTL 3 分钟本地缓存，SWR 秒开），换客户自动刷新 |
 
-#### 三步流程详解
+#### 双通道流程详解
 
 ```
-步骤 1：getPrompt（5min 缓存）
-  前端 → conversationAI { mode: 'getPrompt', familyId }
-  后端 → 构建 systemPrompt + 精简上下文（含报告内容、家庭成员、保单）
-  缓存 → 前端缓存 5 分钟，切换客户清缓存
+通道 A（前端流式，中性理解）
+  前端 → getPrompt（context 5min 缓存 / TOOL_CTX_TTL 30s）→ streamText
+  输出 → 回复文本 +（有工具意图时）{TOOL_INTENT:{"tools":[...]}} 独立行
+  前端 → 流式过滤标识行；完成后剥离解析出 intent 数组
 
-步骤 2：streamText（前端直连混元）
-  前端 → wx.cloud.extend.AI.streamText
-  流式 → onText 逐字渲染，onFinish 完成
-  失败 → 自动降级到 conversationAI/generateText
-
-步骤 3：postProcess（关键）
-  前端 → conversationAI { mode: 'postProcess', familyId, userText, text, sessionId }
-  后端 → 1. 输出审计（禁止承诺 + PII 脱敏）
-         2. 原生 function calling（工具定义由 _TOOL_DEFINITIONS 数组注册）
-         3. 执行工具（同步写库/异步报告），结果回传 AI 生成最终回复
-         4. 检测待确认项 → 生成 suggestions + pending_confirms（sug 模式）
-         5. 清理标记
-         6. 统一持久化 user + assistant 消息（含 suggestions）
-         7. 写 agent_logs 审计日志
-  返回 → { cleanText, cards, suggestions, pending_confirms, toolResults, auditBlocked }
+通道 B（云端收尾）
+  前端 → conversationAI { mode: 'postProcess', familyId, userText, text, aText, intent, sessionId }
+  后端 → 1. sanitize → PII 脱敏 → 注入检测 → 内容安全 → 限流(60/60s)
+         2. 输出审计（禁止承诺 + PII 脱敏）+ 内容安全复核
+         3. 工具编排：intent/AI 原生 function calling（TOOL_DEFINITIONS 注册）
+         4. 执行工具（同步写库/异步报告），sug 模式生成 suggestions + pending_confirms
+         5. 统一持久化 user + assistant 消息
+         6. 写 agent_logs 审计日志
+  返回 → { cleanText, suggestions, pending_confirms, toolResults, auditBlocked }
+  前端 → 无条件覆盖 A 文本为 B 的 cleanText（B 是权威输出）
 ```
 
 #### AI 助理工具能力（13 工具，原生 function calling）
@@ -166,7 +164,7 @@ triggerAnalysis (对话工具) → conversationAI/_dispatch → cloud.callFuncti
 | `triggerAnalysis` | 重新生成保障分析报告 | 异步（DB 30s 节流，失败静默重试 1 次） |
 | `createFamily` | 新建客户家庭档案 | 同步 |
 
-**调用机制**：原生 OpenAI function calling（`callChatWithTools`），非文本 `[TOOL]` 标记解析。工具定义由 `_TOOL_DEFINITIONS` 数组注册，dispatch 按 toolName 路由到 dataWrite / dataQuery / reportAI。
+**调用机制**：B 通道原生 OpenAI function calling（`callChatWithTools`）；A 通道经 `{TOOL_INTENT}` 标识协议决策意图。工具定义由 `TOOL_DEFINITIONS` 单一事实源注册，dispatch 按 toolName 路由到 dataWrite / dataQuery / reportAI。删除类工具（deletePolicy/deleteMember/deleteFact）需 `confirmed` 后执行（409 挂确认卡）。
 
 **信息澄清（sug 模式）**：不再使用内联 `[CARD]` 标记卡片。AI 直接输出澄清文本 + 气泡下方建议回复（`suggestions`），用户点击即发送对应文本确认。覆盖三类场景：
 - 成员信息矛盾 → "确认覆盖 / 保留原值"
@@ -206,6 +204,7 @@ triggerAnalysis (对话工具) → conversationAI/_dispatch → cloud.callFuncti
 - **基础层（结构化覆盖更新）**：members / finances / policies
 - **推理层（追加更新）**：facts（三元组）
 - 结构化数据不走 facts，facts 只存关系与推理结论
+- **金额单位契约**：DB 一律存**元**（`annual_income`/`sum_assured`/`annual_premium` 等元键）；前端展示 ≥1 万元时经 `utils/amount.js` `fmtYuan` 转「x.x万」（2 位精度）。权威源 `cloudfunctions/_shared/amount.js`（`yuanToWan`/`wanToYuan`/`fmtYuan`），前端镜像由 sync-shared 同步。禁止 10000× 塌缩/膨胀
 
 ### families — 家庭容器
 ```
@@ -231,7 +230,7 @@ _id, family_id, annual_income（元）, total_debt（元）, fixed_annual_expens
 ```
 _id, family_id, member_id, product_name, insurance_category（重疾险/医疗险/意外险/寿险/年金/其他）,
 sum_assured（元）, annual_premium（元）, effective_date, expiry_date,
-insurer, policy_number, policyholder, status:'active'|'expired'|'cancelled',
+insurer, policy_number, policyholder, status:'active'|'expired'|'cancelled'|'suspicious',（写入默认 active）
 confidence, need_review, created_at, updated_at
 ```
 
@@ -259,10 +258,11 @@ reasoning, created_at
 |------|-----------|------|
 | dataQuery | 8 | listFamilies / searchFamilies / getFamily（报告页详情）/ queryMessages / queryLogs / queryPolicies / queryMembers / queryFacts |
 | dataWrite | 21 | recordField/writeNote/updateMember/writePolicy/writePoliciesBatch/addFact/updateFactConfidence/deletePolicy/deleteMember/updatePolicy/deleteFact/createFamily/updateFamily/deleteFamily/writeMessage/writeOpLog/setStage/submitProfiling/migratePoliciesToFacts（保单事实迁移）/writeCashValue（现金价值写入）/matchCashValueManual（现金价值手工匹配） |
-| reportAI | 1 | 报告生成（portrait/review/plan/suggestions/disclaimer），前端注册名 `generateReport`（apiClient），对话侧由 triggerAnalysis 工具触发 |
-| ocrService | 4 | ocrOnly / aiExtractBatch / aiExtractParallel / matchPolicies |
-| conversationAI | 3 mode + 13 工具路由 | getPrompt / generateText / postProcess；_dispatch 按工具定义数组路由 → 复用 dataWrite + dataQuery + reportAI；postProcess 内置 sug 确认拦截；addFact 工具谓词为自由字符串（非 enum 约束），后端 `FACT_STRATEGIES` 兜底未知谓词为 dedup |
-| login | 1 | 手机号登录；dev 登录仅限非 prod 环境 |
+| reportAI | 1 | 报告生成（portrait/review/plan/suggestions/disclaimer），前端注册名 `generateReport`（apiClient），对话侧由 triggerAnalysis 工具触发（fire-and-forget，DB 30s 节流） |
+| ocrService | 4 | ocrOnly / aiExtractBatch / aiExtractParallel / matchPolicies；环境变量含 DEEPSEEK_API_KEY/TENCENT_SECRET_ID/TENCENT_SECRET_KEY（DeepSeek 直连） |
+| conversationAI | 4 mode + 13 工具路由 | getPrompt / generateText / postProcess / record；_dispatch 按工具定义数组路由 → 复用 dataWrite + dataQuery + reportAI；postProcess 内置 sug/CONFIRM/KEEP 拦截；addFact 工具谓词为自由字符串（非 enum 约束），后端 `FACT_STRATEGIES` 兜底未知谓词为 dedup |
+| login | 2 | phoneLogin（手机号登录，openid 劫持守卫 + writeSeam）；dev 登录仅限非 prod 环境 |
+| cleanup | 2 mode | prune（生产 TTL 清理，NODE_ENV=production 守卫，cron `daily-log-prune` 每日 3:00，按集合区分时间字段 agent_logs.timestamp/operation_logs.created_at）/ clear（开发全清，需 openid + development） |
 
 ## 八、架构决策
 
@@ -273,7 +273,7 @@ reasoning, created_at
 | 报告渲染 | WXML 原生元素（逐类型条件渲染） | 避免 rich-text 的 rpx 和 CSS 限制 |
 | 对话流式 | `wx.cloud.extend.AI.streamText` 前端直连 | 真流式零依赖；工具能力通过 postProcess 补回 |
 | 对话持久化 | postProcess 统一写 user+assistant | 单点持久化，避免双写 |
-| 模型分组 | `cloudbase` group + `hy3` model | TokenHub 托管资源池，换模型改一处常量 |
+| 模型分组 | `cloudbase` group + `hy3-preview` model（OCR 批量 >1 张走 DeepSeek 直连） | TokenHub 托管资源池，换模型改一处常量 |
 | 工具执行 | 同步（writeFact/updateMember/updateFinances）/ 异步（refreshReport/triggerAnalysis） | 长耗时工具异步避免阻塞对话 |
 | 降级策略 | 流式重试(指数退避×2: 1s→2s→4s) → generateText → 兜底文本 | 三级降级保证可用性 |
 | 上下文构建 | v2-context.js buildFamilyContext (3 模式: conversation/report/analysis) | 统一上下文构建，各云函数共用 |
@@ -282,7 +282,9 @@ reasoning, created_at
 | 流式节流 | chat-panel setData 100ms 节流 + scrollToBottom 合并 | 减少 UI 线程阻塞，提升流式体验 |
 | 定时器管理 | chat-panel detached 生命周期全量清理 | 避免内存泄漏 |
 | 年龄计算 | calc-age.js 单一权威源 | 消除 memberRepo/dataQuery/report-builder 三份重复实现 |
-| 超时控制 | callCloud Promise.race 30s | 从形同虚设改为生效 |
+| 超时控制 | callCloud Promise.race 30s 默认；对话 60s、OCR AI 提取 70s 显式覆盖 | 前端 timer < 平台超时，避免 race 先拿 timeout 丢真实错误码 |
+| 期限解析 | parse-expiry.js 前后端共用权威源（至N岁/至日期/终身/N年/至YYYY） | 消除政策状态判定（calcStatus/时间轴）多份解析实现 |
+| 金额单位 | DB 元、展示万，amount.js 契约 | 防 10000× 塌缩/膨胀，前后端镜像同步 |
 
 ## 九、优先级
 
@@ -294,7 +296,11 @@ reasoning, created_at
 | 客户管理 + 成员同步 | ✅ |
 | 架构统一（共享模块抽取 + 统一上下文） | ✅ |
 | 安全设计（注入/限流/审计/脱敏） | ✅ 空 catch 全量加日志 |
-| 测试体系（35 套件 / 261 测试） | ✅ 全部通过 |
+| 测试体系（35 套件 / 727 测试） | ✅ 全部通过 |
+| 金额单位契约 | ✅ amount.js 权威源，云端 8 处 + 前端 11 处换算收敛 |
+| 登录体系（手机号） | ✅ login/phoneLogin + openid 劫持守卫 + writeSeam；正式环境 needLogin |
+| 对话双通道 v9.6 | ✅ A 通道流式中性 + TOOL_INTENT 标识 → B 通道 postProcess 权威覆盖 |
+| 上线审计（四道门） | ✅ 合规/安全/实测/发布四轮核验：隐私协议与 API key 换新为后台必做项，代码侧无阻断 |
 | N+1 查询→Promise.all 并行 | ✅ 8 处全部修复 |
 | 重复查询消除 | ✅ reportAI/conversationAI 合并并行 |
 | 三元组单入口写入 | ✅ 5 条产线统一经 addFact |
@@ -350,8 +356,17 @@ reasoning, created_at
 
 | 集合 | 记录内容 |
 |------|---------|
-| agent_logs | 每轮对话：openid/familyId/sessionId/action/model/userText(200字)/replyText(800字)/tools[]/metrics/promptVersion |
-| operation_logs | OCR/编辑等操作：action/openid/family_id/result{status,summary,error}/meta |
+| agent_logs | 每轮对话：openid/familyId/sessionId/action/model/userText(200字)/replyText(800字)/tools[]/metrics/promptVersion；时间字段 `timestamp` |
+| operation_logs | OCR/编辑等操作：action/openid/family_id/result{status,summary,error}/meta；时间字段 `created_at` |
+
+### 11.5 登录鉴权与越权防护
+
+| 防护 | 实现 |
+|------|------|
+| 手机号登录 | `login/phoneLogin`：code 换 openid，校验 openid 劫持（agent 绑定 openid，跨 openid 拒绝） |
+| 越权防护 | 查询/写入全部含 `_openid` 过滤；cleanup 鉴权 + openid 过滤 + NODE_ENV 环境守卫（prune 仅 production，clear 仅 development） |
+| OCR fileId IDOR | `ocrService/handlers` 校验 fileId 归属当前 openid 前缀 |
+| TTL 清理 | cleanup cron 每日 3:00 按保留期（默认 90 天）删旧日志，生产守卫防误清全量 |
 
 ## 十二、错误处理与降级
 
@@ -515,11 +530,12 @@ reasoning, created_at
 | 操作 | 目标 | 超时处理 |
 |------|------|---------|
 | getPrompt | ≤800ms（含上下文构建） | 前端用兜底 prompt |
-| streamText 首字 | ≤1.5s | 用户感知不到延迟 |
-| generateText | ≤8s | safeCallChat 55s 超时 |
+| streamText 首字 | ≤1.5s | 首字 30s 无响应触发重试 |
+| generateText | ≤8s | safeCallChat 超时兜底 |
 | postProcess | ≤2s（无工具）/ ≤5s（含同步工具） | 前端兜底持久化 |
-| ocrSingle（单张） | ≤15s | 重试 1 次 |
-| reportAI | ≤30s | 后台重试 |
+| ocrSingle（单张） | ≤15s | ocrService 平台超时 100s（实测生效）；前端 AI 提取 timer 70s（有意 < 平台，防 race 丢错误码） |
+| reportAI | ≤60s | 云函数超时 60s；对话侧 fire-and-forget 不阻塞 |
+| conversationAI | ≤60s | 云函数超时 60s；前端对话调用 timer 60s |
 
 ### 14.2 Token 限额
 
@@ -533,10 +549,10 @@ reasoning, created_at
 ### 14.3 上下文长度控制
 
 **对话上下文构建**（v2-context.js buildFamilyContext mode:'conversation'）：
-1. 报告内容：conclusion(500字) + analysis(2500字) + suggestions(800字) = ~3800字
-2. 家庭成员：精简字段（memberId/name/role/age/gender/health/occupation），表格形式
-3. 保单：最多 20 条，精简字段
-4. **不加载 facts 表**（避免上下文膨胀）
+1. 经济状况表（家庭级年收入/负债）
+2. **家庭画像**（`buildPortrait(members, facts)` 聚合全部 active facts → 精简 Markdown）——facts 以画像形式注入，非原始三元组回流，记忆语义全保留且上下文不膨胀
+3. 报告结论带标签注入：`## 报告结论（上次检视，回答缺口类问题可引用）`（`family.last_conclusion`）
+4. tool 场景（postProcess 工具上下文）额外注入：原始成员表（冲突检测用）+ `## 报告结论（供引用，禁止照抄）`（last_summary + last_conclusion）
 
 **对话历史窗口**：最近 **20 条**消息，每条截断 1500 字，超出由模型自行摘要。
 

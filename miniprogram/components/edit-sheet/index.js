@@ -3,10 +3,18 @@ Component({
     visible: { type: Boolean, value: false },
     title: { type: String, value: '编辑' },
     fields: { type: Array, value: [] },
-    saving: { type: Boolean, value: false }
+    saving: { type: Boolean, value: false },
+    // 查看/编辑双态：view=只读 rows + [编辑]按钮；edit=可编辑表单 + [保存]按钮（ocr/report 保单 sheet 复用）
+    mode: { type: String, value: 'edit' }
   },
   methods: {
     onNoop() {},
+    // 查看态 → 编辑态切换（按钮「编辑」点击）；触发 edit 事件供宿主感知
+    onSwitchEdit() {
+      if (this.properties.saving) return
+      this.setData({ mode: 'edit' })
+      this.triggerEvent('edit')
+    },
     _applyValue(idx, value) {
       const fields = this.properties.fields
       const patch = { ['fields[' + idx + '].value']: value }
@@ -75,7 +83,11 @@ Component({
       if (this.properties.saving) return
       if (!this._validateAll()) return
       const data = {}
-      this.data.fields.forEach(f => { data[f.key] = f.value })
+      this.data.fields.forEach(f => {
+        // 分组标题项（isGroup）无 key/value，跳过不收集
+        if (f.isGroup) return
+        data[f.key] = f.value
+      })
       this.triggerEvent('save', data)
     },
     onClose() {

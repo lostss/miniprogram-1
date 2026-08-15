@@ -26,15 +26,20 @@ page {
   --accent-muted: #E0D4BD;
   --color-on-accent: #FFFFFF;
   --color-on-accent-soft: #F5EBD8;
+  --btn-text-on-accent: #2E2418;
 
   /* 状态色（amber 偏黄拉开与金色强调的距离） */
   --green: #6B8E6B;
   --amber: #B8912E;
   --amber-deep: #7C5E1C;
   --red: #B85450;
+  --red-deep: #9E423D;
   --green-dim: #E8EDDF;
   --amber-dim: #F5ECCE;
   --red-dim: #EBD8D2;
+  /* UI 审计：--bg-error-soft/--bg-disabled 补 token（原 ocr-flow 硬编码 fallback #fef2f2/#F3F1EE） */
+  --bg-error-soft: #FEF2F2;
+  --bg-disabled: #F3F1EE;
 
   /* UI 审计：置信度底色 token（ocr-flow/edit-sheet 原两处硬编码 #FFF8E1 等，收敛复用） */
   --tone-mid: #FFF8E1;
@@ -43,18 +48,18 @@ page {
 
   /* UI 审计 #③：报告/OCR 绿色收敛（原 --green-report/--green-deep 分散定义，统一为 --ok 系） */
   --ok: #4A9C6D;
-  --ok-deep: #1a7f4f;
+  --ok-deep: #17754A;
   --ok-dim: #e6f4ec;
 
   /* 文字 */
   --text-primary: #1A1A2E;
   --text-secondary: #6E5A3E;
   --text-tertiary: #6B5A3F;
-  --text-disabled: #9A8B7C;
+  --text-disabled: #837463;
 
   /* 字体 */
   --font: 'PingFang SC', 'HarmonyOS Sans SC', 'Noto Sans CJK SC', -apple-system, 'Microsoft YaHei', sans-serif;
-  --font-serif: 'Songti SC', 'STSong', 'Source Han Serif SC', 'Noto Serif SC', serif;
+  --font-serif: 'Songti SC', 'STSong', 'Noto Serif CJK SC', 'Source Han Serif SC', 'Noto Serif SC', 'SimSun', serif;
   --font-mono: 'SF Mono', Monaco, 'Cascadia Code', monospace;
 
   /* 字号阶梯（UI 打磨：消除 26/30 两档 2rpx 重复，层级 20→24→28→32→36→40→44→52 每档 ≥4rpx） */
@@ -91,6 +96,7 @@ page {
   --sp-3-5: 14rpx;
   --sp-4: 16rpx; --sp-4-5: 20rpx; --sp-5: 24rpx;
   --sp-6: 32rpx; --sp-7: 40rpx; --sp-8: 48rpx; --sp-9: 52rpx; --sp-10: 56rpx;
+  --sp-11: 64rpx; --sp-12: 80rpx; --sp-13: 120rpx; --sp-14: 160rpx;
 
   /* 圆角 */
   --r-sm: 8rpx; --r-md: 16rpx; --r-lg: 20rpx;
@@ -131,6 +137,70 @@ page {
 }
 
 page ::selection { background: rgba(201,169,110,0.25); color: var(--text-primary); }
+
+/* ============================================================
+   暗色模式 — 保持暖色调，层级感通过明度差而非阴影
+   ============================================================ */
+@media (prefers-color-scheme: dark) {
+  page {
+    --bg-root: #1A1715;
+    --bg-surface: #232120;
+    --bg-card: #2A2826;
+    --bg-input: #1F1C1A;
+
+    --border: #3A3530;
+    --border-accent: rgba(201,169,110,0.4);
+
+    --accent: #D4B87E;
+    --accent-deep: #C9A96E;
+    --accent-dim: rgba(201,169,110,0.15);
+    --accent-glow: rgba(201,169,110,0.25);
+    --accent-muted: #4A4035;
+    --color-on-accent: #1A1715;
+    --color-on-accent-soft: #2A2826;
+    --btn-text-on-accent: #1A1715;
+
+    --green: #7BA87B;
+    --amber: #D4A93E;
+    --amber-deep: #D4A93E;
+    --red: #D06560;
+    --red-deep: #D06560;
+    --green-dim: rgba(107,142,107,0.15);
+    --amber-dim: rgba(184,145,46,0.15);
+    --red-dim: rgba(184,84,80,0.15);
+
+    --tone-mid: rgba(184,145,46,0.12);
+    /* UI 审计：暗色块补 --bg-error-soft（暗红底）/--bg-disabled（暗灰底），脱离亮色 fallback */
+    --bg-error-soft: #3A2422;
+    --bg-disabled: #33302D;
+    --tone-low: rgba(184,84,80,0.10);
+    --tone-modified: rgba(100,150,200,0.12);
+
+    --ok: #5BBD7F;
+    --ok-deep: #5BBD7F;
+    --ok-dim: rgba(74,156,109,0.15);
+
+    --text-primary: #E8E0D5;
+    --text-secondary: #A89B85;
+    --text-tertiary: #948872;
+    --text-disabled: #8A8072;
+
+    --shadow-sm: 0 1rpx 3rpx rgba(0,0,0,0.3);
+    --shadow-md: 0 2rpx 8rpx rgba(0,0,0,0.4);
+    --shadow-lg: 0 4rpx 16rpx rgba(0,0,0,0.5);
+    --shadow-sheet: 0 -4rpx 24rpx rgba(0,0,0,0.5);
+
+    --overlay-dim: rgba(0,0,0,0.5);
+    --overlay-strong: rgba(0,0,0,0.7);
+    --overlay-inner: rgba(0,0,0,0.5);
+
+    -webkit-tap-highlight-color: rgba(201,169,110,0.25);
+  }
+
+  /* 对比度修复：暗色 FAB 用固定深金渐变（若随 --accent-deep 变亮金，白图标跌回 2.2:1） */
+  .fab { background: linear-gradient(135deg, #8B6F3C 0%, #6A5425 100%); }
+  page ::selection { background: rgba(201,169,110,0.35); color: var(--text-primary); }
+}
 
 /* 全局页面容器动画（不放在 page 选择器上，避免破坏 position:fixed） */
 .page-view { animation: pageEnter 0.35s var(--ease-spring) both; }
@@ -228,7 +298,7 @@ page ::selection { background: rgba(201,169,110,0.25); color: var(--text-primary
 .ocr-phase-num { font-size:var(--fs-3xl); font-weight:var(--fw-bold); color:var(--text-primary); font-family:var(--font-serif); line-height:var(--lh-none); margin-bottom:var(--sp-4); font-variant-numeric:tabular-nums; }
 .ocr-phase-of { font-size:var(--fs-2xl); font-weight:var(--fw-normal); color:var(--text-tertiary); }
 
-.ocr-phase-title { font-size:var(--fs-xl); font-weight:var(--fw-semi); color:var(--text-primary); margin-bottom:var(--sp-3); text-align:center }
+.ocr-phase-title { font-size:var(--fs-xl); font-weight:var(--fw-semi); color:var(--text-primary); font-family:var(--font-serif); letter-spacing:var(--ls-wide); margin-bottom:var(--sp-3); text-align:center }
 .ocr-phase-sub { font-size:var(--fs-caption); color:var(--text-tertiary); text-align:center }
 
 /* 动画点：金/绿双色区分阶段，呼吸感替代脉冲 */
@@ -241,7 +311,7 @@ page ::selection { background: rgba(201,169,110,0.25); color: var(--text-primary
 .ocr-summary-list { width:100%; max-height:300rpx; margin-bottom:var(--sp-6) }
 .ocr-actions-row { width:100%; display:flex; gap:var(--sp-3) }
 /* UI 审计 #②：accent 白字 2.24:1 不达标，改深色主文字色（7.62:1） */
-.ocr-confirm-btn { flex:1; height:88rpx; background:var(--accent); color:var(--text-primary); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none }
+.ocr-confirm-btn { flex:1; height:88rpx; background:var(--accent); color:var(--btn-text-on-accent); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none }
 .ocr-confirm-btn::after { border:none }
 .ocr-confirm-btn.is-loading { background:var(--accent-dim); }
 .ocr-confirm-btn[disabled] { opacity:0.7; }

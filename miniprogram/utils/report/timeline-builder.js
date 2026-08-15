@@ -9,6 +9,7 @@ var _parseExpiry = null
 function _loadExpiry() {
   if (!_parseExpiry) _parseExpiry = require('../parse-expiry').parseExpiry
 }
+const { yuanToWan } = require('../amount')
 
 /**
  * 解析 insurance_period 为到期年份（null=无明确到期年/终身）
@@ -23,6 +24,34 @@ function parseExpiryYear(period, startY) {
 }
 
 /**
+ * 保障到期年（双字段兼容）：OCR 文本（insurance_period）优先，兜底对话数字（coverage_term，0=终身→null）
+ */
+function _coverTermYear(p, startY) {
+  if (p.insurance_period) return parseExpiryYear(p.insurance_period, startY)
+  var ct = p.coverage_term
+  if (ct === 0 || ct === '0') return null // 终身，无到期节点
+  if (ct) {
+    var n = parseInt(ct, 10)
+    if (!isNaN(n) && n > 0) return startY + n
+  }
+  return null
+}
+
+/**
+ * 缴费期满年（双字段兼容）：OCR 文本（payment_period）优先，兜底对话数字（premium_term，0=趸交→null）
+ */
+function _payTermYear(p, startY) {
+  if (p.payment_period) return parseExpiryYear(p.payment_period, startY)
+  var pt = p.premium_term
+  if (pt === 0 || pt === '0') return null // 趸交，无"缴完"节点
+  if (pt) {
+    var n = parseInt(pt, 10)
+    if (!isNaN(n) && n > 0) return startY + n
+  }
+  return null
+}
+
+/**
  * 现价=已缴保费的"回本"年份（保单年度 y），无现价表/永不回本返回 null
  * 公式与 report-coverage 回本判定一致：row.v(每万元保额表值) × scale >= annual_premium × row.y
  * @param {object} p - 保单
@@ -30,7 +59,7 @@ function parseExpiryYear(period, startY) {
  */
 function findBreakEvenYear(p, cv) {
   if (!p || !cv || !cv.cash_values || !cv.cash_values.length) return null
-  var scale = Math.max(1, Math.round((p.sum_assured || 0) / 10000))
+  var scale = Math.max(1, Math.round(yuanToWan(p.sum_assured || 0)))
   var premium = p.annual_premium || 0
   if (scale <= 0 || premium <= 0) return null
   for (var i = 0; i < cv.cash_values.length; i++) {
@@ -65,18 +94,16 @@ function buildTimeline(policies, members, cashValues) {
     var startD = new Date(eff)
     var dayOfMonth = isNaN(startD.getDate()) ? 1 : startD.getDate()
 
-    // 保障到期
-    var endY = parseExpiryYear(p.insurance_period, startY)
+    // 保障到期（insurance_period 文本或 coverage_term 数字双字段）
+    var endY = _coverTermYear(p, startY)
     if (endY && endY > thisYear) {
       events.push({ y: endY, label: p.product_name + '（' + name + '）到期', type: 'expiry' })
     }
 
-    // 缴费期满
-    if (p.payment_period) {
-      var payEnd = parseExpiryYear(p.payment_period, startY)
-      if (payEnd && payEnd > thisYear) {
-        events.push({ y: payEnd, label: p.product_name + '（' + name + '）缴完', type: 'paydone' })
-      }
+    // 缴费期满（payment_period 文本或 premium_term 数字双字段）
+    var payEnd = _payTermYear(p, startY)
+    if (payEnd && payEnd > thisYear) {
+      events.push({ y: payEnd, label: p.product_name + '（' + name + '）缴完', type: 'paydone' })
     }
 
     // 现价回本节点：现价表关联保单且回本在未来的自然年 → 注入 breakeven 节点
@@ -91,7 +118,8 @@ function buildTimeline(policies, members, cashValues) {
       if (beY && beY > 0) {
         var beNatural = startY + (beY - 1)
         if (beNatural > thisYear) {
-          events.push({ y: beNatural, label: p.product_name + '（' + name + '）现价=已缴保费', type: 'breakeven' })
+          // 文案与缴费期满（"缴完"）同级：现价回本
+          events.push({ y: beNatural, label: p.product_name + '（' + name + '）现价回本', type: 'breakeven' })
         }
       }
     }
@@ -142,30 +170,4 @@ function buildTimeline(policies, members, cashValues) {
   })
 }
 
-/**
- * 从 AI milestones 表格提取时间轴数据（保单字段不支持时降级使用）
- */
-function parseMilestonesToTimeline(md) {
-  var text = String(md || '')
-  if (!text) return []
-  var events = []
-  var lines = text.split('\n')
-  for (var i = 0; i < lines.length; i++) {
-    var line = lines[i]
-    var m = line.match(/^\|\s*(\d+年|现在)\s*\|\s*(.+?)\s*\|/)
-    if (!m) continue
-    if (m[1] === '现在') continue
-    var y = parseInt(m[1], 10)
-    if (isNaN(y)) continue
-    var rawLabel = (m[2] || '').replace(/\[|\]/g, '').trim()
-    if (!rawLabel) continue
-    var type = /缴费|缴完|续保|保费/.test(rawLabel) ? 'payment'
-      : /领取|返还|派发/.test(rawLabel) ? 'paydone'
-      : 'expiry'
-    events.push({ y: y, label: rawLabel, type: type })
-  }
-  events.sort(function(a, b) { return a.y - b.y })
-  return events
-}
-
-module.exports = { buildTimeline, findBreakEvenYear, parseMilestonesToTimeline }
+module.exports = { buildTimeline, findBreakEvenYear }

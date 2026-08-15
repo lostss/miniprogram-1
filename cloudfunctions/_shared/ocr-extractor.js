@@ -50,7 +50,8 @@ async function ocrRecognize(tempFileURL) {
     )
   } catch (e) {
     console.error('[ocr-extractor] OCR 重试后仍失败:', e.message)
-    return { text: '', confs: [] }
+    // 服务异常与"未识别到文字"区分：返回错误码由上层提示"服务异常请重试"，避免误导为"未识别"
+    return { text: '', confs: [], error_code: 'ocr_service_error' }
   }
 }
 

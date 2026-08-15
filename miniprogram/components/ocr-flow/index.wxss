@@ -1,6 +1,6 @@
 /* ========== 遮罩与卡片 ========== */
 .ocr-mask { position:fixed; top:0; left:0; right:0; bottom:0; background:var(--overlay-strong); z-index:var(--z-modal); display:flex; align-items:center; justify-content:center; padding:var(--sp-6) }
-.ocr-card { width:100%; max-width:640rpx; max-height:78vh; overflow-y:auto; background:var(--bg-surface); border-radius:var(--r-lg); padding:var(--sp-5) var(--sp-5) var(--sp-4); box-sizing:border-box; display:flex; flex-direction:column; align-items:center; animation:popIn var(--dur-fast) var(--ease-spring) }
+.ocr-card { width:100%; max-width:640rpx; max-height:78vh; min-height:44vh; overflow-y:auto; background:var(--bg-surface); border-radius:var(--r-lg); padding:var(--sp-5) var(--sp-5) var(--sp-4); box-sizing:border-box; display:flex; flex-direction:column; align-items:center; animation:popIn var(--dur-fast) var(--ease-spring) }
 
 /* ========== 处理中 ========== */
 .proc-head { width:100%; text-align:center }
@@ -18,7 +18,7 @@
 .proc-pending-state { flex-shrink:0; font-size:var(--fs-tiny); color:var(--text-tertiary) }
 .stream-pulse-bar { flex:1; height:26rpx; border-radius:var(--sp-1); background:var(--border); position:relative; overflow:hidden }
 .stream-pulse-bar::after { content:''; position:absolute; top:0; left:0; right:0; bottom:0; background:linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent); transform:translateX(-100%); animation:skeleton-shimmer 1.4s infinite }
-.stream-pulse-bar.is-error { background:var(--red-dim, #ebd8d2) }
+.stream-pulse-bar.is-error { background:var(--red-dim) }
 .stream-pulse-bar.is-ok { background:var(--green-dim, #e8eddf) }
 /* UI 审计 交互 L3：识别结果空态兜底 */
 .proc-empty { padding:var(--sp-10) 0; text-align:center; font-size:var(--fs-caption); color:var(--text-tertiary) }
@@ -29,20 +29,27 @@
 .proc-group-head { display:flex; align-items:center; justify-content:space-between; font-size:var(--fs-tiny); color:var(--text-tertiary); letter-spacing:var(--ls-wide); margin:var(--sp-4) 0 var(--sp-2) }
 .proc-group-head:first-child { margin-top:0 }
 .proc-group-head--err { color:var(--red) }
-.proc-retry-all { color:var(--accent-deep); padding:var(--sp-1) var(--sp-3); border-radius:var(--r-full); background:var(--accent-dim) }
-.proc-card { display:flex; align-items:center; padding:var(--sp-3) var(--sp-3-5); background:var(--bg-input); border-radius:var(--r-md); margin-bottom:var(--sp-2); border-left:8rpx solid var(--green) }
+.proc-retry-all { display:inline-flex; align-items:center; justify-content:center; min-height:88rpx; color:var(--accent-deep); padding:var(--sp-1) var(--sp-3); border-radius:var(--r-full); background:var(--accent-dim) }
+.proc-retry-all:active { opacity:0.6 }
+/* 等高：thumb 为 wx:if 条件渲染，无缩略图卡片高度缩水 → 固定 min-height = thumb(72) + padding(2×12)，三组卡片统一等高 */
+.proc-card { display:flex; align-items:center; padding:var(--sp-3) var(--sp-3-5); background:var(--bg-input); border-radius:var(--r-md); margin-bottom:var(--sp-2); border-left:8rpx solid var(--green); min-height:96rpx }
 .proc-card--review { border-left-color:var(--amber-deep) }
-.proc-card--err { border-left-color:var(--red); background:var(--bg-error-soft, #fef2f2) }
+.proc-card--err { border-left-color:var(--red); background:var(--bg-error-soft) }
 .proc-thumb { width:72rpx; height:72rpx; border-radius:var(--r-sm); flex-shrink:0; margin-right:var(--sp-3); background:var(--border) }
 .proc-info { flex:1; min-width:0; display:flex; flex-direction:column; gap:var(--sp-1) }
 .proc-name { font-size:var(--fs-base); font-weight:var(--fw-semi); color:var(--text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
 .proc-cat { font-size:var(--fs-caption); color:var(--text-tertiary); font-weight:var(--fw-normal) }
 .proc-date { font-size:var(--fs-tiny); color:var(--text-tertiary) }
-.proc-err { font-size:var(--fs-caption); color:var(--red); overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+/* 失败原因横滚容器：flex:1 占满剩余宽度，内层 nowrap 滚动展示完整文案 */
+.proc-err-scroll { flex:1; min-width:0; white-space:nowrap; }
+.proc-err { font-size:var(--fs-caption); color:var(--red); white-space:nowrap; display:inline-block; }
 .proc-side { flex-shrink:0; display:flex; align-items:center; gap:var(--sp-2) }
-.proc-manual-btn { font-size:var(--fs-caption); color:var(--accent-deep); border:1rpx solid var(--accent-muted); padding:var(--sp-1-5) var(--sp-4); border-radius:var(--r-full) }
+/* 移除按钮：弱化次级（灰字无底），点击二次确认 */
+.proc-ignore-btn { display:inline-flex; align-items:center; justify-content:center; min-height:88rpx; font-size:var(--fs-caption); color:var(--text-tertiary); padding:var(--sp-1-5) var(--sp-3); border-radius:var(--r-full) }
 /* UI 审计 #②：#③：accent 背景改深色文字达标；badge-ok 收敛为全局 --ok 系 */
-.proc-retry-btn { font-size:var(--fs-caption); color:var(--text-primary); background:var(--accent); padding:var(--sp-1-5) var(--sp-4); border-radius:var(--r-full) }
+/* UI 审计：重试按钮降权——异常卡内次级操作，accent 实底(主按钮级) 改浅金底 accent-dim */
+.proc-retry-btn { display:inline-flex; align-items:center; justify-content:center; min-height:88rpx; font-size:var(--fs-caption); color:var(--accent-deep); background:var(--accent-dim); padding:var(--sp-1-5) var(--sp-4); border-radius:var(--r-full) }
+.proc-retry-btn:active { opacity:0.6 }
 .proc-retry-btn.is-busy { opacity:0.6 }
 .ocr-badge { font-size:var(--fs-tiny); padding:var(--sp-1) var(--sp-2); border-radius:var(--r-full) }
 .ocr-badge.badge-ok { color:var(--ok-deep, #1a7f4f); background:var(--ok-dim, #e6f4ec) }
@@ -65,13 +72,14 @@
 .ocr-modify-btn { flex:1; height:88rpx; background:var(--bg-surface); color:var(--text-tertiary); font-size:var(--fs-body); font-weight:var(--fw-medium); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:1rpx solid var(--border) }
 .ocr-modify-btn::after { border:none }
 /* UI 审计 #②：组件内定义覆盖 app.wxss 全局（app.wxss 改动对此不生效），一并改深色文字 */
-.ocr-confirm-btn { flex:1; height:88rpx; background:var(--accent); color:var(--text-primary); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none }
+.ocr-confirm-btn { flex:1; height:88rpx; background:var(--accent); color:var(--btn-text-on-accent); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none }
 .ocr-confirm-btn::after { border:none }
 .ocr-confirm-btn.is-loading { background:var(--accent-dim) }
 .ocr-confirm-btn[disabled] { opacity:0.7 }
 
 /* ========== 文案态 ========== */
-.ocr-done-title { font-size:var(--fs-2xl); font-weight:var(--fw-semi); color:var(--text-primary); margin-bottom:var(--sp-2); animation:popIn 0.4s var(--ease-spring); text-align:center }
+/* UI 审计：popIn 组件内仍用 ease-spring（app.wxss 全局改 expo 因组件样式隔离未生效），此处收敛 */
+.ocr-done-title { font-size:var(--fs-2xl); font-weight:var(--fw-semi); color:var(--text-primary); font-family:var(--font-serif); margin-bottom:var(--sp-2); animation:popIn 0.4s var(--ease-out-expo); text-align:center }
 .done-gold { color:var(--accent-deep) }
 .done-green { color:var(--green, #6B8E6B) }
 .done-red { color:var(--red) }
@@ -87,50 +95,13 @@
 .role-row + .role-row { border-top:1rpx solid var(--border) }
 .role-name { width:100rpx; font-size:var(--fs-body); font-weight:var(--fw-semi); color:var(--text-primary); flex-shrink:0 }
 .role-opts { display:flex; gap:var(--sp-2); flex-wrap:wrap }
-.role-opt { font-size:var(--fs-caption); color:var(--text-tertiary); padding:var(--sp-1-5) var(--sp-3); border-radius:var(--r-full); background:var(--bg-input); transition:background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out) }
+/* UI 审计：role-opt 触控目标扩大（padding sp-1-5→sp-3，48rpx→72rpx 高，高频成员角色选择防误触） */
+.role-opt { font-size:var(--fs-caption); color:var(--text-tertiary); padding:var(--sp-3) var(--sp-5); border-radius:var(--r-full); background:var(--bg-input); transition:background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out) }
 .role-opt:active { transform:scale(0.94) }
 .role-opt--on { color:var(--color-on-accent); background:var(--accent-deep); font-weight:var(--fw-semi) }
 /* 被占用角色：置灰提示（仍可点击触发替换确认） */
-.role-opt--off { color:var(--text-disabled); background:var(--bg-disabled, #F3F1EE); opacity:0.75 }
+.role-opt--off { color:var(--text-disabled); background:var(--bg-disabled); opacity:0.75 }
 .role-opt-holder { font-size:var(--fs-tiny); margin-left:var(--sp-1) }
 .role-tip { margin-top:var(--sp-4); text-align:center }
 
-/* ========== 编辑 sheet ========== */
-/* 弹层叠加审计：遮罩透明度收敛为 --overlay-inner token（原硬编码 rgba(0,0,0,0.4)） */
-.ocr-sheet-mask { position:fixed; left:0; top:0; right:0; bottom:0; background:var(--overlay-inner, rgba(26,26,46,0.4)); z-index:var(--z-sheet-inner) }
-.ocr-sheet { position:fixed; left:0; right:0; bottom:0; z-index:var(--z-sheet-inner-top); background:var(--bg-surface); border-radius:var(--r-lg) var(--r-lg) 0 0; padding:var(--sp-5) var(--sp-5) calc(var(--sp-6) + env(safe-area-inset-bottom)); transform:translateY(105%); transition:transform 0.3s var(--ease-out), box-shadow 0.3s var(--ease-out); box-shadow:0 -4rpx 24rpx rgba(0,0,0,0); max-height:85vh; display:flex; flex-direction:column }
-.ocr-sheet--show { transform:translateY(0); box-shadow:0 -4rpx 24rpx rgba(0,0,0,0.12) }
-.ocr-sheet-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-4); flex-shrink:0 }
-.ocr-sheet-title { font-size:var(--fs-lg); font-weight:var(--fw-semi); color:var(--text-primary) }
-/* UI 审计 视觉 S2：关闭按钮 padding 扩点击区（56+32=88rpx），icon 居中不受影响 */
-.ocr-sheet-close { width:56rpx; height:56rpx; padding:16rpx; display:flex; align-items:center; justify-content:center; font-size:28rpx; color:var(--text-tertiary) }
-/* UI 审计 #⑤：关闭按钮统一 close.svg（原文本 ✕） */
-.ocr-sheet-close-icon { width:36rpx; height:36rpx; opacity:0.5; }
-.ocr-sheet-body { flex:1; height:0; min-height:0 }
-.ocr-sheet-hint { font-size:var(--fs-caption); color:var(--text-tertiary); margin-bottom:var(--sp-3); line-height:var(--lh-base) }
-.ocr-sheet-field { margin-bottom:var(--sp-3) }
-.ocr-sheet-label-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-1-5) }
-.ocr-sheet-label { font-size:var(--fs-caption); color:var(--text-tertiary) }
-/* UI 审计 交互 M2：必填星号（与 edit-sheet 一致） */
-.ocr-sheet-label .req { color:var(--red); margin-left:var(--sp-1); font-weight:var(--fw-semi) }
-.ocr-sheet-warn { font-size:var(--fs-caption); line-height:var(--lh-none) }
-/* UI 审计 交互 M1：日期 picker 显示容器（与 input 同规格，左右分布） */
-.ocr-sheet-picker { display:flex; align-items:center; justify-content:space-between }
-.ocr-sheet-picker-text { font-size:var(--fs-base); color:var(--text-primary) }
-.ocr-sheet-picker-placeholder { font-size:var(--fs-base); color:var(--text-disabled) }
-.ocr-sheet-picker-arrow { font-size:var(--fs-caption); color:var(--text-tertiary); margin-left:var(--sp-2) }
-/* 置信度底色：高白 / 中淡黄 / 低淡橙 / 已修改浅蓝（设计稿） */
-/* UI 审计 视觉 S3：#FFFFFF 硬编码 → --bg-card（随主题切换） */
-.ocr-sheet-input { height:80rpx; padding:0 var(--sp-4); background:var(--bg-card); border-radius:var(--r-md); font-size:var(--fs-base); color:var(--text-primary); width:100%; box-sizing:border-box }
-/* UI 审计 V-M1：置信度底色收敛为全局 token（app.wxss --tone-*） */
-.bg-mid { background:var(--tone-mid) }
-.bg-low { background:var(--tone-low) }
-.bg-modified { background:var(--tone-modified) }
-.ocr-sheet-actions { display:flex; gap:var(--sp-3); margin-top:var(--sp-5); flex-shrink:0 }
-.ocr-sheet-cancel { flex:1; height:88rpx; display:flex; align-items:center; justify-content:center; font-size:var(--fs-base); color:var(--text-secondary); background:var(--bg-input); border-radius:var(--r-md); border:none }
-.ocr-sheet-cancel::after { border:none }
-/* UI 审计 #②：保存按钮 accent 白字不达标，改深色文字 */
-.ocr-sheet-save { flex:1; height:88rpx; display:flex; align-items:center; justify-content:center; font-size:var(--fs-base); font-weight:var(--fw-semi); color:var(--text-primary); background:var(--accent); border-radius:var(--r-md); border:none }
-.ocr-sheet-save::after { border:none }
-.ocr-sheet-group-title { font-size:var(--fs-caption); color:var(--accent-deep); font-weight:var(--fw-semi); margin-top:var(--sp-4); margin-bottom:var(--sp-2); padding-bottom:var(--sp-1); border-bottom:1rpx solid var(--border-accent) }
-.ocr-sheet-group-title:first-child { margin-top:0 }
+/* ========== 编辑 sheet（统一 edit-sheet 组件承载，样式见 edit-sheet/index.wxss） ========== */

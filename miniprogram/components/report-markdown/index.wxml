@@ -2,32 +2,40 @@
   <view class="md-card" wx:for="{{cards}}" wx:key="key" id="ch-{{item.key}}" style="{{item.style}}">
     <view wx:if="{{item.collapsible}}" class="fold-hd" catchtap="toggleChapter" data-k="{{item.key}}">
       <text class="fold-title">{{item.num}} {{item.title}}</text>
-      <text class="fold-arrow">{{item.collapsed ? '展开 ▾' : '收起 ▴'}}</text>
+      <text class="fold-arrow" aria-label="{{item.collapsed ? '展开章节' : '收起章节'}}">{{item.collapsed ? '展开 ▾' : '收起 ▴'}}</text>
     </view>
     <block wx:if="{{!item.collapsed}}">
     <view class="h1n" wx:if="{{!item.collapsible}}">
       <text class="h1n-digit" wx:if="{{item.num}}">{{item.num}}</text><text class="h1n-title">{{item.title}}</text>
       <text class="h1n-unit" wx:if="{{item.unit}}">{{item.unit}}</text>
-      <text class="h1n-edit pressable" wx:if="{{item.edit}}" catchtap="onChapterEdit" data-mode="{{item.edit}}">[编辑]</text>
+      <text class="h1n-edit pressable" wx:if="{{item.edit && !readonly}}" catchtap="onChapterEdit" data-mode="{{item.edit}}" aria-label="编辑本章">[编辑]</text>
     </view>
       <view wx:if="{{item.customBlocks}}" wx:for="{{item.customBlocks}}" wx:for-index="bi" wx:for-item="block" wx:key="bi">
         <view wx:if="{{block.section}}" class="h2">{{block.section}}</view>
         <view wx:if="{{block.t==='panorama'}}" class="pano-wrap">
-          <view class="pano-hd"><text class="pano-hd-cell pano-hd-first">{{block.heads[0]}}</text><text class="pano-hd-cell" wx:for="{{block.cats}}" wx:for-item="h" wx:key="index">{{h}}</text><text class="pano-hd-cell pano-hd-total" wx:if="{{block.heads.length > 5}}">合计</text></view>
+          <view class="pano-hd"><text class="pano-hd-cell pano-hd-first">{{block.heads[0]}}</text><text class="pano-hd-cell" wx:for="{{block.cats}}" wx:for-item="h" wx:key="index">{{h}}</text></view>
           <view class="pano-row" wx:for="{{block.rows}}" wx:for-item="row" wx:for-index="ri" wx:key="name">
             <text class="pano-cell pano-name {{row.name === '合计' ? 'pano-name-total' : ''}}">{{row.name}}</text>
             <view class="pano-cell pano-status ps-{{c.s}}" wx:for="{{row.cells}}" wx:for-item="c" wx:for-index="ci" wx:key="ci"><text class="pano-val">{{c.v}}</text></view>
           </view>
+          <!-- 图例：色块 + 符号双通道（色弱用户可辨） -->
+          <view class="pano-legend">
+            <view class="pano-legend-item"><view class="pano-legend-dot lg-ok"></view><text>✓ 已覆盖</text></view>
+            <view class="pano-legend-item"><view class="pano-legend-dot lg-partial"></view><text>△ 部分</text></view>
+            <view class="pano-legend-item"><view class="pano-legend-dot lg-missing"></view><text>✗ 缺失</text></view>
+            <view class="pano-legend-item"><view class="pano-legend-dot lg-na"></view><text>— 不适用</text></view>
+          </view>
         </view>
         <view wx:if="{{block.t==='timeline'}}" class="tl-wrap">
-          <view class="tl-item {{e.soon ? 'tl-soon' : ''}}" wx:for="{{block.items}}" wx:for-item="e" wx:key="label">
-            <view class="tl-dot {{e.type === 'expiry' ? 'tl-red' : e.type === 'paydone' || e.type === 'breakeven' ? 'tl-green' : 'tl-yellow'}}"></view>
+          <!-- 年份为第一层节点；年份下多产品归类；单产品同年多节点 note 以/分隔 -->
+          <view class="tl-item" wx:for="{{block.items}}" wx:for-item="e" wx:key="y">
+            <view class="tl-dot {{e.type === 'expiry' ? 'tl-red' : 'tl-green'}}"></view>
             <view class="tl-content">
-              <text class="tl-year">{{e.date || (e.y + (e.type === 'payment' ? '缴费' : '年'))}}</text>
-              <text class="tl-label">{{e.name || e.label}}</text>
-              <text class="tl-note" wx:if="{{e.premium}}">保费 {{e.premium}}元</text>
-              <text class="tl-note tl-note-{{e.type}}" wx:if="{{e.note && !e.premium}}">{{e.note}}</text>
-              <text class="tl-note tl-note-{{e.type}}" wx:if="{{e.premium && e.note}}">· {{e.note}}</text>
+              <text class="tl-year">{{e.date || (e.y + '年')}}</text>
+              <view class="tl-prod" wx:for="{{e.policies}}" wx:for-item="p" wx:key="name">
+                <text class="tl-label">{{p.name}}</text>
+                <text class="tl-note">{{p.note}}</text>
+              </view>
             </view>
           </view>
         </view>
@@ -40,7 +48,7 @@
         <!-- 家庭结构：成员卡片平铺流动布局（去代际分层） -->
         <view wx:if="{{block.t==='family_tree'}}" class="ft-wrap">
           <view class="ft-nodes">
-            <view class="ft-node {{node.role}} pressable" wx:for="{{block.nodes}}" wx:for-item="node" wx:key="name" data-mode="member" data-mid="{{node.member_id}}" catchtap="onChapterEdit" aria-label="编辑成员">
+            <view class="ft-node {{node.role}} {{readonly ? '' : 'pressable'}}" wx:for="{{block.nodes}}" wx:for-item="node" wx:key="name" data-mode="member" data-mid="{{node.member_id}}" catchtap="onChapterEdit" aria-label="编辑成员">
               <view class="ft-info">
                 <text class="ft-name">{{node.name}}</text>
                 <text class="ft-role">{{node.display}}</text>
@@ -63,18 +71,29 @@
             <view class="risk-item" wx:for="{{block.items}}" wx:for-item="a" wx:key="name">
               <text class="risk-name">· {{a.name}}：</text>
               <text class="risk-issue">{{a.issue}}</text>
-              <view wx:if="{{a.policy_id}}" class="risk-check pressable" data-pid="{{a.policy_id}}" data-field="{{a.field || ''}}" catchtap="onRiskCheck">核对</view>
+              <view wx:if="{{a.policy_id && !readonly}}" class="risk-check pressable" data-pid="{{a.policy_id}}" data-field="{{a.field || ''}}" catchtap="onRiskCheck" aria-label="核对保单信息">核对</view>
             </view>
           </view>
         </view>
         <!-- 附录保单卡片（按成员分组，点击弹明细） -->
         <view wx:if="{{block.t==='policy_cards'}}" class="pc-wrap">
+          <!-- 二级分组：被保人 → 保险公司 → 保单卡片 -->
           <view class="pc-group" wx:for="{{block.groups}}" wx:for-item="g" wx:key="name">
             <view class="pc-group-name">{{g.name}}</view>
-            <view class="pc-card pressable" wx:for="{{g.policies}}" wx:for-item="p" wx:key="policy_id" data-id="{{p.policy_id}}" catchtap="onPolicyTap">
-              <view class="pc-card-top"><text class="pc-name">{{p.product_name}}</text><text class="pc-cat">{{p.category}}</text></view>
-              <view class="pc-card-meta">保额{{p.sum_display}} · 年缴{{p.premium_display}}</view>
-              <view class="pc-card-date">{{p.effective_date}}起</view>
+            <view class="pc-subgroup" wx:for="{{g.subgroups}}" wx:for-item="sg" wx:key="name">
+              <view class="pc-subgroup-name">{{sg.name}}</view>
+              <view class="pc-card {{p.status && p.status !== 'active' ? 'pc-card--inactive ' : ''}}{{readonly ? '' : 'pressable'}}" wx:for="{{sg.policies}}" wx:for-item="p" wx:key="policy_id" data-id="{{p.policy_id}}" catchtap="onPolicyTap" aria-label="查看{{p.product_name}}保单明细">
+                <view class="pc-card-top">
+                  <view class="pc-name-wrap">
+                    <text class="pc-name">{{p.product_name}}<text wx:if="{{p.category}}" class="pc-cat">（{{p.category}}）</text></text>
+                  </view>
+                    <text class="pc-status pc-status--{{p.status}} pressable" data-id="{{p.policy_id}}" catchtap="onStatusTap" aria-label="快速更改{{p.product_name}}状态">{{p.status_label}}</text>
+
+                </view>
+                <!-- 三行简写：产品 / 保障信息 / 缴费信息，纯数据无字段名；缺失项在数据侧以「未知」占位 -->
+                <view class="pc-meta-row">{{p.meta1}}</view>
+                <view class="pc-meta-row">{{p.meta2}}</view>
+              </view>
             </view>
           </view>
         </view>

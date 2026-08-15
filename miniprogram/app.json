@@ -5,16 +5,17 @@
     "pages/clients/index"
   ],
   "window": {
-    "backgroundColor": "#F5F0EB",
-    "backgroundTextStyle": "light",
-    "navigationBarBackgroundColor": "#F5F0EB",
+    "backgroundColor": "@bgColor",
+    "backgroundTextStyle": "@bgTxtStyle",
+    "navigationBarBackgroundColor": "@navBgColor",
     "navigationBarTitleText": "保小秘",
-    "navigationBarTextStyle": "black"
+    "navigationBarTextStyle": "@navTxtStyle"
   },
+  "darkmode": true,
+  "themeLocation": "theme.json",
   "sitemapLocation": "sitemap.json",
   "style": "v2",
   "lazyCodeLoading": "requiredComponents",
-  "libVersion": "2.19.0",
   "networkTimeout": {
     "request": 30000,
     "uploadFile": 60000,

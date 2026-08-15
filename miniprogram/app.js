@@ -5,7 +5,7 @@ const api = require('./utils/apiClient.js')
 const { desensitize } = require('./utils/pii-rules')
 
 // 前端错误上报（fire-and-forget，走统一 callCloud 入口，便于后续归一化/超时控制）
-function _uploadError(type, info) {
+function _uploadError(type, info, reqId) {
   try {
     // S1 修复：openid 由 _silentLogin 写入 globalData（内存），此处应读 globalData 而非 Storage
     // （原读 wx.getStorageSync('openid') 永远为空，导致错误上报缺主体）
@@ -22,6 +22,8 @@ function _uploadError(type, info) {
       result: {
         status: 'error',
         errorType,
+        // 可观测性审计：trace_id 串联（reqId 优先，兜底最近一次云端调用 _reqId）
+        trace_id: reqId || api.getLastReqId() || '',
         summary,
         error
       }
@@ -46,7 +48,7 @@ App({
       });
     }
 
-    // 静默获取 openid（不弹窗）
+    // 静默获取 openid（不弹窗）；正式环境首次需手机号登录（needLogin 由首页按钮触发）
     this._silentLogin()
   },
 
@@ -68,11 +70,21 @@ App({
 
   _uploadError: _uploadError,
 
+  // 上线审计：正式环境（体验版/正式版）手机号登录引导。
+  // dev 环境 → devLogin（无需授权）；非 dev 且未登录过 → needLogin（首页显示手机号按钮）。
+  // 已登录标记存 storage（agent_logged_in），避免已建档用户每次授权。
   _silentLogin: function () {
     try {
       var devMode = typeof __wxConfig !== 'undefined' && __wxConfig.envVersion === 'develop'
       var self = this
-      this.globalData.openidPromise = api('login', { devMode: devMode }).then(res => {
+      if (!devMode) {
+        var loggedIn = false
+        try { loggedIn = !!wx.getStorageSync('agent_logged_in') } catch (e) {}
+        this.globalData.needLogin = !loggedIn
+        this.globalData.openidPromise = Promise.resolve('')
+        return
+      }
+      this.globalData.openidPromise = api('login', { devMode: true }).then(res => {
         var oid = (res && res.ok && res.data && res.data.openid) || ''
         self.globalData.openid = oid
         return oid
@@ -81,5 +93,13 @@ App({
         return ''
       })
     } catch (e) { /* 初始化阶段失败不阻塞 */ }
+  },
+
+  // 手机号登录成功回调（首页按钮触发，见 pages/index onPhoneLogin）
+  completePhoneLogin: function (res) {
+    var oid = (res && res.openid) || ''
+    this.globalData.openid = oid
+    this.globalData.needLogin = false
+    try { wx.setStorageSync('agent_logged_in', 1) } catch (e) {}
   }
 });

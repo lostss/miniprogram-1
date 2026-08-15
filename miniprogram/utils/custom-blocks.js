@@ -13,12 +13,12 @@
  *
  * 类型契约（字段说明）：
  *  - panorama:     { heads, cats, rows: [{name, cells: [{v, s}]}] }
- *  - timeline:     { items: [{y, label, type, soon?, date?, premium?, note?}] }
+ *  - timeline:     { items: [{y, label, type, date, policies: [{name, note}]}] }  年份为第一层节点，policies 内单产品同年多节点 note 以/分隔
  *  - calendar:     { items: [{m, v, h}] }   h: 1=有缴费 2=峰值月
  *  - family_tree:  { nodes: [{name, role, display, member_id}] }
  *  - finance:      { income, debt, expense }
  *  - risk_alerts:  { items: [{name, issue}] }
- *  - policy_cards: { groups: [{name, policies: [{product_name, category, sum_assured, annual_premium, effective_date, policy_id}]}] }
+ *  - policy_cards: { groups: [{name(被保人), subgroups: [{name(保司), policies: [...]}]}] }  二级分组；组内按保单号排序（同号主险+附加险相邻）
  *
  * 已下线类型（清理审计）：overview / urgent_list / insight_cards / dashboard（无生成端）
  */

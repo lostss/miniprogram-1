@@ -10,7 +10,7 @@
  * 本文件负责 re-export + 保留未迁移的小型导出函数。
  */
 
-var { buildChapters, buildGaps, buildGapMatrix, buildCoverageMatrix, buildConfidenceAlerts, buildTimeline, parseMilestonesToTimeline, normalizeFamilyData } = require('./report/index')
+var { buildChapters, buildGaps, buildCoverageMatrix, buildTimeline, normalizeFamilyData } = require('./report/index')
 
 /**
  * buildReportView — 报告聚合入口深模块（候选 2）
@@ -123,26 +123,13 @@ function buildHero(family, gaps) {
   return { alerts: alerts, summary: summary, topAdvice: topAdvice }
 }
 
-/**
- * 计算报告元信息
- */
-function computeReportMeta(family) {
-  var d = new Date()
-  var dateStr = d.getFullYear() + '.' + ('0' + (d.getMonth() + 1)).slice(-2) + '.' + ('0' + d.getDate()).slice(-2)
-  return { date: dateStr, no: (family.report_no || ''), version: family.report_version || 1 }
-}
-
 module.exports = {
   buildChapters: buildChapters,
   buildGaps: buildGaps,
-  buildGapMatrix: buildGapMatrix,
   buildCoverageMatrix: buildCoverageMatrix,
-  buildConfidenceAlerts: buildConfidenceAlerts,
   buildTimeline: buildTimeline,
-  parseMilestonesToTimeline: parseMilestonesToTimeline,
   makeHints: makeHints,
   assessDataCompleteness: assessDataCompleteness,
-  computeReportMeta: computeReportMeta,
   buildHero: buildHero,
   buildReportView: buildReportView
 }

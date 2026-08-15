@@ -57,12 +57,21 @@ var dataWrite = require('../cloudfunctions/dataWrite/index')
 var pw = require('../cloudfunctions/dataWrite/policy-write')
 
 describe('ingestPolicies step — _dedupPolicies（候选 3 step 化）', function() {
-  test('有 policy_number：按号去重（同号不同产品名也算重复）', function() {
+  test('有 policy_number：同号同产品名判重（OCR 两次提取同保单同产品）', function() {
     var r = pw._dedupPolicies([
       { policy_number: 'P1', product_name: '康宁' },
-      { policy_number: 'P1', product_name: '康宁·升级版' }
+      { policy_number: 'P1', product_name: '康宁' }
     ])
     expect(r.dedupedPolicies.length).toBe(1)
+    expect(r.dedupSkipped).toBe(1)
+  })
+  test('P-DUP：同保单号多产品（主险+附加险）不互相去重', function() {
+    var r = pw._dedupPolicies([
+      { policy_number: 'P1', product_name: '康宁终身寿险' },
+      { policy_number: 'P1', product_name: '康宁附加住院医疗' },
+      { policy_number: 'P1', product_name: '康宁终身寿险' }
+    ])
+    expect(r.dedupedPolicies.length).toBe(2)
     expect(r.dedupSkipped).toBe(1)
   })
   test('无保单号：按 产品+被保人+投保人 去重', function() {

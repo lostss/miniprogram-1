@@ -13,6 +13,7 @@
  * 依赖：buildStructuredCoverage 已抽到 report-coverage.js，本模块仅组合调用。
  */
 const { buildStructuredCoverage } = require('./report-coverage')
+const { yuanToWan } = require('./_shared/amount')
 
 /**
  * 保单汇总数据预计算 Markdown（禁止 AI 自行推算）
@@ -72,7 +73,7 @@ function buildGapSnapshot(policies, snap, members) {
   for (const k of Object.keys(byMember)) {
     const m = byMember[k]
     for (const cat of cats) {
-      const existing = (m.sums[cat] || 0) / 10000
+      const existing = yuanToWan(m.sums[cat] || 0)
       let ok = false, basis = ''
       if (cat === '重疾险') { ok = existing >= 50; basis = ok ? `已覆盖${existing}万(参考50万)` : `缺口：现有${existing}万<50万` }
       else if (cat === '医疗险') { ok = existing > 0; basis = ok ? '已覆盖' : '无医疗险' }

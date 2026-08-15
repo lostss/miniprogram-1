@@ -77,14 +77,20 @@ async function ocrOnly(db, openid, event) {
   for (var i = 0; i < results.length; i++) {
     var r = results[i]
     if (r.ok) {
-      // OCR 识别为空文本：直接标记失败，避免前端传空 ocrText 给 AI 提取被拒
+      // OCR 识别为空文本：直接标记失败，避免前端传空 ocrText 给 AI 提取被拒。
+      // 服务异常（ocrRecognize 重试后仍失败）与真空白区分：前者提示重试，后者提示换图
       if (!r.data.ocrText || typeof r.data.ocrText !== 'string' || r.data.ocrText.length === 0) {
-        failures.push({ fileId: r.data.fileId, error: 'OCR识别结果为空', error_code: 'ocr_empty' })
+        if (r.data.ocrErrorCode === 'ocr_service_error') {
+          failures.push({ fileId: r.data.fileId, error: 'OCR 服务异常，请稍后重试', error_code: 'ocr_service_error' })
+        } else {
+          failures.push({ fileId: r.data.fileId, error: 'OCR识别结果为空', error_code: 'ocr_empty' })
+        }
       } else {
         ocrResults.push({
           fileId: r.data.fileId,
           ocrText: r.data.ocrText,
           ocrConfInfo: r.data.ocrConfInfo,
+          ocrErrorCode: r.data.ocrErrorCode,
           t0: r.data.t0, t1: r.data.t1, t2: r.data.t2
         })
       }
@@ -176,7 +182,8 @@ async function aiExtractBatch(db, openid, event) {
     buildBatchExtractionPrompt: buildBatchExtractionPrompt,
     safeCallChat: require('./_shared/ai-gateway').safeCallChat,
     // 用户决策（2026-08）：单图走 TokenHub hy3，批量才走 DeepSeek 并发
-    // aiExtractBatch 仅服务单图（前端分流：>1 张走 aiExtractParallel），恒走 hy3，不受 USE_DIRECT 影响
+    // aiExtractBatch 仅服务单图（前端分流：>1 张走 aiExtractParallel），首次走 hy3，
+    // AI 提取失败重试（_callBatchAI 内 attempt≥2）切 DeepSeek 直连，与张数无关
     // 批量路径 aiExtractParallel 内部经 aiPhase 按 USE_DIRECT=true 走 DeepSeek 直连
     callChat: _aiClient.callChat
   }
@@ -222,6 +229,7 @@ async function aiExtractParallel(db, openid, event) {
       return aiPhase({
         ocrText: item.ocrText,
         ocrConfInfo: item.ocrConfInfo || [],
+        ocrErrorCode: item.ocrErrorCode,
         fileId: item.fileId,
         t0: item.t0 || t0,
         t1: item.t1 || t0,

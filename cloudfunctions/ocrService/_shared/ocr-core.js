@@ -137,13 +137,18 @@ async function ocrPhase({ cloud, fileId, openid, familyId }) {
     throw new Error('获取图片临时链接失败')
   }
   const t1 = Date.now()
-  const { text: ocrText, confs: ocrConfInfo } = await ocrRecognize(tempFile.tempFileURL)
+  const { text: ocrText, confs: ocrConfInfo, error_code: ocrErrorCode } = await ocrRecognize(tempFile.tempFileURL)
   const t2 = Date.now()
-  return { ocrText, ocrConfInfo, t0, t1, t2, fileId }
+  return { ocrText, ocrConfInfo, ocrErrorCode, t0, t1, t2, fileId }
 }
 
 // ---- 拆分接口：AI 提取 + 构建（需错峰，有 429 风险） ----
-async function aiPhase({ ocrText, ocrConfInfo, fileId, t0, t1, t2, cloud, db, buildExtractionPrompt, familyId, openid, traceId }) {
+async function aiPhase({ ocrText, ocrConfInfo, ocrErrorCode, fileId, t0, t1, t2, cloud, db, buildExtractionPrompt, familyId, openid, traceId }) {
+  // OCR 服务异常（识别接口重试后仍失败）与"未识别到文字"区分：前者提示重试，后者提示换图
+  if (ocrErrorCode === 'ocr_service_error') {
+    opLog(db, { action: 'ocr_recognize', openid, familyId, result: { status: 'fail', summary: 'OCR服务异常', errorCode: 'ocr_service_error' } }).catch(() => {})
+    return { success: false, fileId, policiesCount: 0, error: 'OCR 服务异常，请稍后重试', error_code: 'ocr_service_error' }
+  }
   if (!ocrText || ocrText.length === 0) {
     opLog(db, { action: 'ocr_recognize', openid, familyId, result: { status: 'fail', summary: 'OCR文字为空', errorCode: 'ocr_empty' } }).catch(() => {})
     return { success: false, fileId, policiesCount: 0, error: 'OCR识别结果为空', error_code: 'ocr_empty' }
@@ -212,6 +217,10 @@ const { is429 } = require('./ai-error')
 async function _callBatchAI(ocrResults, deps) {
   const { buildBatchExtractionPrompt, safeCallChat, callChat, cloud, db, openid, familyId } = deps
   const { AI } = require('./config')
+  // 用户决策（2026-08）：AI 识别失败重试无论张数均走 DeepSeek 直连
+  // （DeepSeek 并发 2500 更稳，避免 TokenHub hy3 排队/限流下重试继续失败）
+  // ——单图路径（aiExtractBatch）首次仍走 hy3，重试切 DeepSeek；多图路径本就全走 DeepSeek
+  const { callChatDirect } = require('./ai-client')
   const { systemPrompt, userPrompt } = buildBatchExtractionPrompt(ocrResults)
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -219,13 +228,13 @@ async function _callBatchAI(ocrResults, deps) {
   ]
   const sessionId = 'ocr_batch_' + Date.now().toString(36)
 
-  // DeepSeek JSON 模式有概率返回空 content（官方已知问题），启用 1 次重试
+  // AI 返回空 content（已知问题）时启用 1 次重试；重试走 DeepSeek 直连
   const maxAttempts = 2
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let res
     try {
       res = await safeCallChat(
-        messages, callChat,
+        messages, attempt === 1 ? callChat : callChatDirect,
         { cloud, db, openid, familyId, sessionId, traceId: deps.traceId, model: AI.OCR_MODEL, action: 'ocr_extract_batch', skipInjection: true, skipOutputAudit: true, skipContentSafety: true },
         // 不使用 response_format: json_object（DeepSeek JSON 模式有概率返回空 content）
         // 改用普通模式 + prompt 严格约束 JSON 输出

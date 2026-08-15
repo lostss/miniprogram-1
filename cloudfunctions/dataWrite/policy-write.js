@@ -18,6 +18,7 @@ const { locatePolicy } = require('./policy-locate')
 const { policyToFacts } = require('./policyToFacts')
 const { matchPoliciesToMembers } = require('./_shared/member-matcher')
 const { matchCashToPolicies, matchOrphanCashValues } = require('./cash-value-matcher')
+const { calcStatus } = require('./_shared/policy-status')
 const { addFact } = require('./fact-write')
 
 // ---------- writePolicy ----------
@@ -54,17 +55,19 @@ async function writePolicy(db, openid, event) {
     family_id: familyId, member_id: resolvedMemberId,
     confidence: confidence || 0, field_confidence: field_confidence || {}, confidence_source: confidence_source || '',
     auto_confirmed: !!auto_confirmed,
-    // 状态审计：OCR/对话录入=当前持有=默认有效（status 显式落库，避免读取层按 insurance_period
-    // 推算误判在缴续保产品为 expired）；失效由用户/updatePolicy 显式标注
-    status: 'active',
     created_at: now
   }
+  // 状态：写入时按期限判定（一年期/在缴→active，明确到期→expired），显式落库；
+  // 读取层 ensureStatus 尊重显式状态，后续失效/恢复由用户/updatePolicy 显式变更
+  //（doc 组装完成后赋值，避免对象字面量内引用自身触发 TDZ）
+  doc.status = calcStatus(doc).status
   // writeSeam 接缝：silent 写入 + 末尾统一 triggerHooks（addFact 内部已自带钩子，此处 silent 避免 N 次重复 markFamilyMutated）
   const ws = writeSeam(db, openid, familyId)
   let policyDbId, isExisting = false
   if (doc.policy_number) {
-    // policy_number 主键去重（OCR 两次提取同保单，产品名可能略有偏差；过滤软删除避免已删保单阻断重新录入）
-    const exist = await db.collection('policies').where({ policy_number: doc.policy_number, family_id: familyId, _openid: openid, status: _.neq('deleted') }).limit(1).get()
+    // policy_number 主键去重（P-DUP 修复）：同保单号 + 同产品名才判重（OCR 两次提取同保单同产品）；
+    // 同保单号不同产品（主险+附加险）是独立文档，必须各自入库——原单用 policy_number 导致附加险被吞
+    const exist = await db.collection('policies').where({ policy_number: doc.policy_number, product_name: doc.product_name, family_id: familyId, _openid: openid, status: _.neq('deleted') }).limit(1).get()
     if (exist.data && exist.data.length > 0) { policyDbId = exist.data[0]._id; isExisting = true }
   } else if (doc.product_name && doc.insured_name) {
     // 无保单号时二级去重：产品名+被保人+投保人（同样过滤软删除）
@@ -97,8 +100,9 @@ async function writePolicy(db, openid, event) {
 // Bug-1,2 修复：并发竞态 + DB 雪崩。方案：批次内去重 + 限流并发到 3
 // Step 契约：每步纯函数化，内部 try/catch 隔离，失败策略集中（跳过继续），行为等价原五步链
 
-// Step 1：批次内去重（P1-4 空保单号场景）
-//   - 有 policy_number：按 policy_number 去重（OCR 两次提取同保单）
+// Step 1：批次内去重（P1-4 空保单号场景；P-DUP 修复：同保单号多产品=主险+附加险不互相去重）
+//   - 有 policy_number：按 policy_number + product_name 去重（OCR 两次提取同保单同产品才重复；
+//     同保单不同产品如附加险是独立文档，不能用 policy_number 单键否则附加险被吞）
 //   - 无 policy_number：按 product_name + insured_name + policyholder_name 去重
 function _dedupPolicies(policies) {
   const seen = new Set()
@@ -106,7 +110,7 @@ function _dedupPolicies(policies) {
   let dedupSkipped = 0
   for (const p of policies) {
     const key = p.policy_number
-      ? ('pn:' + p.policy_number)
+      ? ('pn:' + p.policy_number + '|' + (p.product_name || ''))
       : ('nm:' + (p.product_name || '') + '|' + (p.insured_name || '') + '|' + (p.policyholder_name || ''))
     if (seen.has(key)) { dedupSkipped++; continue }
     seen.add(key)
@@ -311,7 +315,28 @@ async function deletePolicy(db, openid, event) {
 
 // ---------- updatePolicy ----------
 // 修改已录入保单字段（白名单），保额/保费变化同步"拥有保障"事实边
-const POLICY_EDITABLE = ['product_name', 'insurer', 'sum_assured', 'annual_premium', 'insurance_category', 'insurance_type', 'effective_date', 'premium_term', 'coverage_term', 'policyholder_name', 'beneficiary_name', 'insured_name', 'policy_number', 'status']
+// 业务员可手动变更的保单状态；到期终止(expired)由系统自动判断，不在此白名单
+const POLICY_STATUS_CHANGEABLE = ['active', 'lapsed', 'surrendered', 'claim_terminated', 'cancelled']
+const POLICY_STATUS_META = ['status_reason', 'status_effective_date']
+const POLICY_EDITABLE = ['product_name', 'insurer', 'sum_assured', 'annual_premium', 'insurance_category', 'insurance_type', 'effective_date', 'premium_term', 'coverage_term', 'policyholder_name', 'beneficiary_name', 'insured_name', 'policy_number', 'status', ...POLICY_STATUS_META]
+
+function _isActivePolicyStatus(status) {
+  return !status || status === 'active' || status === 'unknown'
+}
+
+function _statusDecisionText(target, newStatus, reason) {
+  const labelMap = {
+    active: '恢复有效',
+    lapsed: '失效',
+    surrendered: '退保',
+    claim_terminated: '理赔终止',
+    cancelled: '退保'
+  }
+  const action = labelMap[newStatus] || newStatus
+  const targetName = (target && target.product_name) || '保单'
+  const insured = (target && target.insured_name) ? `（被保人：${target.insured_name}）` : ''
+  return `变更保单状态：${targetName}${insured} → ${action}${reason ? `，原因：${reason}` : ''}`
+}
 async function updatePolicy(db, openid, event) {
   const { familyId, policyId, policy_number, product_name, insured_name, data } = event
   if (!familyId) return { code: 400, msg: '缺少参数 familyId' }
@@ -323,6 +348,10 @@ async function updatePolicy(db, openid, event) {
     policyId, policy_number, product_name, insured_name, excludeDeleted: true
   })
   if (!target) return { code: 404, msg: '未找到要修改的保单' }
+  // 状态白名单校验：不允许业务员手动设置"到期终止/已删除"等系统态
+  if (data.status !== undefined && !POLICY_STATUS_CHANGEABLE.includes(data.status)) {
+    return { code: 400, msg: `不允许手动设置该保单状态: ${data.status}` }
+  }
   const patch = {}
   for (const k of Object.keys(data)) {
     if (!POLICY_EDITABLE.includes(k)) continue
@@ -334,10 +363,49 @@ async function updatePolicy(db, openid, event) {
   }
   if (Object.keys(patch).length === 0) return { code: 400, msg: '没有可更新的合法字段' }
   const ws = writeSeam(db, openid, familyId)
+    const statusChanged = patch.status !== undefined && patch.status !== target.status
+    const oldActive = _isActivePolicyStatus(target.status)
+    const newActive = patch.status === 'active'
+
+    // 离开 active → 先作废 facts，避免"已失效保单仍显示保障"的幽灵保单
+    if (statusChanged && oldActive && !newActive) {
+      await ws.silentUpdateWhere('facts', { subject_type: 'policy', subject_id: target.id, status: 'active' }, { status: 'superseded' }).catch(e => { console.error('[dataWrite] updatePolicy policy supersede 失败:', e.message); throw new Error('保单事实作废失败：' + e.message) })
+      await ws.silentUpdateWhere('facts', { predicate: _.in(['拥有保障', '公司提供保障', '投保']), object_id: target.id, status: 'active' }, { status: 'superseded' }).catch(e => { console.error('[dataWrite] updatePolicy coverage supersede 失败:', e.message); throw new Error('保障/投保边事实作废失败：' + e.message) })
+    }
+
   await ws.silentUpdateDoc('policies', target._id, patch).catch(e => { console.error('[dataWrite] updatePolicy 失败:', e.message); throw new Error('保单更新失败：' + e.message) })
+
+    // 恢复 active → 重建保障 facts（先更新保单，再重建，避免失败时出现"active 保单无保障"）
+    if (statusChanged && !oldActive && newActive) {
+      const restored = { ...target, ...patch }
+      const factEvents = policyToFacts(restored, {
+        memberId: restored.member_id || '', memberName: restored.insured_name,
+        confidence: 1, source: 'agent_edit'
+      })
+      for (let ri = 0; ri < factEvents.length; ri++) {
+        await addFact(db, openid, { familyId, ...factEvents[ri] }).catch(function(e) { console.error('[dataWrite] updatePolicy 恢复 active addFact 失败:', e.message) })
+      }
+    }
+
+    // 状态变更留痕：facts 层写一条可追溯的保单决策备注
+    if (statusChanged) {
+      await addFact(db, openid, {
+        familyId, subjectId: '', subjectType: 'family', subjectName: '',
+        predicate: '备注', objectValue: _statusDecisionText(target, patch.status, patch.status_reason),
+        source: 'user_form', confidence: 1
+      }).then(r => {
+        if (r.code === 200 && r.data && r.data.factId) {
+          return ws.silentUpdateDoc('facts', r.data.factId, { category: 'policy_decision' }).catch(e => console.error('[dataWrite] updatePolicy 状态备注 category 更新失败:', e.message))
+        }
+        return null
+      })
+    }
+    const finalActive = statusChanged ? newActive : oldActive
+
+
   const hasFieldChange = patch.sum_assured !== undefined || patch.annual_premium !== undefined
   const hasNameChange = patch.product_name !== undefined || patch.insured_name !== undefined
-  if (hasFieldChange || hasNameChange) {
+  if ((hasFieldChange || hasNameChange) && finalActive) {
     // 构建合并后的完整保单文档（字段级 patch 合并到 target）
     var updated = {}; for (var k in target) updated[k] = target[k]; for (var k2 in patch) updated[k2] = patch[k2]
     const factEvents = policyToFacts(updated, {
@@ -348,12 +416,35 @@ async function updatePolicy(db, openid, event) {
     for (var i = 0; i < factEvents.length; i++) {
       await addFact(db, openid, { familyId, ...factEvents[i] }).catch(function(e) { console.error('[dataWrite] updatePolicy addFact 失败:', e.message) })
     }
-  } else {
+  } else if (!statusChanged && !hasFieldChange && !hasNameChange) {
     await ws.triggerHooks()
   }
   // addFact 已触发钩子，无需重复
   return { code: 200, data: { updated: true, policyId: target.id, fields: Object.keys(patch) } }
 }
+
+// ---------- changePolicyStatus ----------
+// 保单状态变更的显式入口（UI/对话工具均可调用）。
+// 内部复用 updatePolicy 的状态同步逻辑，避免事实作废/重建两套实现。
+async function changePolicyStatus(db, openid, event) {
+  const { familyId, policyId, policy_number, product_name, insured_name, status, reason, effectiveDate } = event
+  if (!familyId || !status) return { code: 400, msg: '缺少参数 familyId/status' }
+  if (!POLICY_STATUS_CHANGEABLE.includes(status)) {
+    return { code: 400, msg: `不允许手动设置该保单状态: ${status}` }
+  }
+  const data = { status }
+  if (reason !== undefined) data.status_reason = reason
+  if (effectiveDate !== undefined) data.status_effective_date = effectiveDate
+  return updatePolicy(db, openid, {
+    familyId,
+    policyId,
+    policy_number,
+    product_name,
+    insured_name,
+    data
+  })
+}
+
 
 // ---------- writeCashValue ----------
 async function writeCashValue(db, openid, event) {
@@ -426,4 +517,4 @@ async function writeCashValue(db, openid, event) {
   return { code: 200, data: { matched: effectiveMatched, policyId: effectivePolicyId, candidates } }
 }
 
-module.exports = { writePolicy, writePoliciesBatch, ingestPolicies, _dedupPolicies, _runConcurrent, deletePolicy, updatePolicy, writeCashValue, POLICY_EDITABLE }
+module.exports = { writePolicy, writePoliciesBatch, ingestPolicies, _dedupPolicies, _runConcurrent, deletePolicy, updatePolicy, changePolicyStatus, writeCashValue, POLICY_EDITABLE, POLICY_STATUS_CHANGEABLE }

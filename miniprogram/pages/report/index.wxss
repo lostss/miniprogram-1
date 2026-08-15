@@ -1,46 +1,45 @@
 .page { height:100vh; background:var(--bg-root); display:flex; flex-direction:column; overflow:hidden }
 .content { flex:1; min-height:0 }
 
-/* Hero 保障覆盖检查卡（结论先行） */
-/* UI 打磨：hero 与摘要卡间距统一为 24rpx（原 sp-4 16rpx 过紧，两卡相连）；
-   内边距 sp-7/sp-6 → sp-6/sp-6 与摘要卡统一（审计 P2 卡片内边距三套收敛） */
-.hero { margin:var(--sp-5) var(--sp-5) var(--sp-5); padding:var(--sp-6); border-radius:var(--r-xl); background:var(--bg-card); border:1rpx solid var(--border); box-shadow:var(--shadow-md); animation:cardReveal var(--dur-glacial) var(--ease-out-expo) both; }
-/* UI 打磨：Hero 标题 24→28rpx 缩小首屏 52→24 断层 */
-.hero-title { font-size:var(--fs-base); font-weight:var(--fw-bold); color:var(--accent-deep); letter-spacing:var(--ls-wide); margin-bottom:var(--sp-5); padding-bottom:var(--sp-4); border-bottom:1rpx solid var(--border-accent); }
+/* 保障摘要 + 覆盖检查融合卡：数据在上，检查在下（原独立 Hero 卡已并入） */
+/* 正文卡片间距：sp-6（24rpx，与卡内 padding 同值，紧凑连贯） */
+.summary-card { margin:0 var(--sp-5) var(--sp-7); padding:var(--sp-6); border-radius:var(--r-xl); background:var(--bg-card); border:1rpx solid var(--border); box-shadow:var(--shadow-md); animation:cardReveal var(--dur-glacial) var(--ease-out-expo) both; }
+.summary-card-title { font-size:var(--fs-lg); font-weight:var(--fw-bold); color:var(--accent-deep); letter-spacing:var(--ls-wide); font-family:var(--font-serif); margin-bottom:var(--sp-5); padding-bottom:var(--sp-4); border-bottom:1rpx solid var(--border-accent); }
+.summary-card-grid { display:flex; gap:var(--sp-3); }
+/* 覆盖检查区：与摘要数据分隔，卡内下半区（分隔线统一 --border-accent） */
+.summary-check { margin-top:var(--sp-5); padding-top:var(--sp-4); border-top:1rpx solid var(--border-accent); }
 .hero-alert { display:flex; align-items:flex-start; gap:var(--sp-3); padding:var(--sp-3) 0; }
 .hero-alert-icon { font-size:var(--fs-caption); line-height:var(--lh-body); flex-shrink:0; }
 .hero-alert-text { font-size:var(--fs-body); line-height:var(--lh-body); flex:1; color:var(--text-primary); }
 .hero-alert.is-warn .hero-alert-text { color:var(--red); font-weight:var(--fw-medium); }
-.hero-alert.is-ok .hero-alert-text { color:var(--ok, #4A9C6D); }
-.hero-summary-line { margin-top:var(--sp-5); padding-top:var(--sp-4); border-top:1rpx solid var(--border); font-size:var(--fs-caption); color:var(--text-secondary); line-height:var(--lh-body); }
-.hero-advice { margin-top:var(--sp-3); font-size:var(--fs-caption); color:var(--accent-deep); background:var(--accent-dim); border-radius:var(--r-md); padding:var(--sp-3) var(--sp-4); line-height:var(--lh-body); }
-
-/* 保障摘要卡（标题在卡内，与 Hero 同构） */
-.summary-card { margin:0 var(--sp-5) var(--sp-5); padding:var(--sp-6) var(--sp-6) var(--sp-5); border-radius:var(--r-xl); background:var(--bg-card); border:1rpx solid var(--border); box-shadow:var(--shadow-md); animation:cardReveal var(--dur-glacial) var(--ease-out-expo) 0.1s both; }
-.summary-card-title { font-size:var(--fs-base); font-weight:var(--fw-bold); color:var(--accent-deep); letter-spacing:var(--ls-wide); margin-bottom:var(--sp-5); padding-bottom:var(--sp-4); border-bottom:1rpx solid var(--border-accent); }
-.summary-card-grid { display:flex; gap:var(--sp-3); }
+.hero-alert.is-ok .hero-alert-text { color:var(--ok-deep, #17754A); }
+/* 结论先行：汇总居上（semibold 深色，区别于论据），论据列表随后 */
+.hero-summary-lead { font-size:var(--fs-body); font-weight:var(--fw-semi); color:var(--text-primary); line-height:var(--lh-body); margin-bottom:var(--sp-2); }
+/* 行动建议：与上方点评诊断分隔——伪元素画独立分隔线（块外，不与建议块上边框融合；色统一 --border-accent） */
+.hero-advice { margin-top:var(--sp-5); font-size:var(--fs-base); color:var(--accent-deep); background:var(--accent-dim); border-radius:var(--r-md); padding:var(--sp-3) var(--sp-4); line-height:var(--lh-body); position:relative; }
+.hero-advice::before { content:''; position:absolute; left:0; right:0; top:-16rpx; height:1rpx; background:var(--border-accent); }
 
 /* UI 打磨：建议提问 chips（此前 .hints/.hint-chip 无样式定义，渲染为默认——布局 bug 修复）。
    与对话侧 sug-chip 同构但改描边胶囊，弱化视觉权重避免与摘要卡抢注意力 */
-.hints { display:flex; flex-wrap:wrap; gap:var(--sp-3); margin:0 var(--sp-5) var(--sp-5); }
+.hints { display:flex; flex-wrap:wrap; gap:var(--sp-3); margin:0 var(--sp-5) var(--sp-7); }
 .hint-chip { padding:var(--sp-3) var(--sp-5); background:var(--bg-card); border:1rpx solid var(--border-accent); border-radius:var(--r-full); font-size:var(--fs-caption); color:var(--accent-deep); letter-spacing:var(--ls-wide); transition:background var(--dur-fast) var(--ease-out); }
 .hint-chip:active { background:var(--accent-dim); }
 
 /* 全链路审计 UC4：无保单空状态卡（与首页/客户列表空状态同构：描边卡 + 引导按钮） */
-.empty-report { margin:var(--sp-5); padding:var(--sp-10) var(--sp-6); border-radius:var(--r-xl); background:var(--bg-card); border:1rpx dashed var(--border-accent); display:flex; flex-direction:column; align-items:center; text-align:center; }
+.empty-report { margin:0 var(--sp-5) var(--sp-6); padding:var(--sp-10) var(--sp-6); border-radius:var(--r-xl); background:var(--bg-card); border:1rpx dashed var(--border-accent); display:flex; flex-direction:column; align-items:center; text-align:center; }
 .empty-report-icon { font-size:var(--fs-3xl); margin-bottom:var(--sp-4); opacity:0.6; }
-.empty-report-title { font-size:var(--fs-xl); font-weight:var(--fw-semi); color:var(--text-primary); margin-bottom:var(--sp-3); letter-spacing:var(--ls-wide); }
+.empty-report-title { font-size:var(--fs-xl); font-weight:var(--fw-semi); color:var(--text-primary); font-family:var(--font-serif); margin-bottom:var(--sp-3); letter-spacing:var(--ls-wide); }
 .empty-report-desc { font-size:var(--fs-base); color:var(--text-secondary); line-height:var(--lh-body); max-width:480rpx; }
 
 .title-bar { display:flex; align-items:flex-start; padding:0 var(--sp-5); }
-.report-title { flex:1; min-width:0; padding:var(--sp-5) 0 var(--sp-3); display:flex; flex-direction:column; gap:var(--sp-2); }
-.title-name { font-size:var(--fs-3xl); font-weight:var(--fw-bold); color:var(--text-primary); letter-spacing:var(--ls-wide); font-family:var(--font-serif); }
+.report-title { flex:1; min-width:0; padding:var(--sp-7) 0 var(--sp-5); display:flex; flex-direction:column; gap:var(--sp-2); }
+.title-name { font-size:var(--fs-display); font-weight:var(--fw-bold); color:var(--text-primary); letter-spacing:var(--ls-wide); font-family:var(--font-serif); }
 .title-subrow { display:flex; align-items:baseline; justify-content:space-between; gap:var(--sp-3); }
 .title-sub { font-size:var(--fs-caption); font-weight:var(--fw-normal); color:var(--text-secondary); letter-spacing:var(--ls-wide); }
 /* 报告生成时间（副标题层级，衬线小字区别于主副标题） */
-.title-meta { font-size:var(--fs-tiny); color:var(--text-tertiary); letter-spacing:var(--ls-wide); font-variant-numeric:tabular-nums; font-family:var(--font-serif); flex-shrink:0; }
-/* 标题区域与正文分隔线 */
-.title-divider { margin:0 var(--sp-5) var(--sp-3); height:1rpx; background:var(--border); }
+.title-meta { font-size:var(--fs-tiny); color:var(--text-tertiary); letter-spacing:var(--ls-wide); font-variant-numeric:tabular-nums; flex-shrink:0; }
+/* 标题区域与正文分隔线（统一 --border-accent；距正文 sp-5 与章节 h1n 标题节奏对齐） */
+.title-divider { margin:0 var(--sp-5) var(--sp-6); height:1rpx; background:var(--border-accent); }
 
 
 
@@ -55,30 +54,10 @@
 .footer-share, .footer-analyze { flex:1; height:80rpx; display:flex; align-items:center; justify-content:center; font-size:var(--fs-body); border-radius:var(--r-lg); line-height:normal; }
 .footer-share { background:var(--bg-surface); color:var(--text-primary); border:1rpx solid var(--border); }
 /* UI 审计 #②：accent 浅金背景配白字仅 2.24:1 不达标（WCAG AA），改深色主文字色 7.62:1 */
-.footer-analyze { background:var(--accent); color:var(--text-primary); font-weight:var(--fw-medium); border:none; }
+.footer-analyze { background:var(--accent); color:var(--btn-text-on-accent); font-weight:var(--fw-medium); border:none; }
 .footer-share::after, .footer-analyze::after { border:none; }
-
-/* ========== 保单明细只读 Sheet ========== */
-.policy-sheet-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:var(--overlay-dim); z-index:var(--z-sheet); animation:fadeIn var(--dur-base) var(--ease-out); -webkit-backdrop-filter:blur(8rpx); backdrop-filter:blur(8rpx); }
-.policy-sheet { position:absolute; bottom:0; left:0; right:0; background:var(--bg-surface); border-radius:var(--r-2xl) var(--r-2xl) 0 0; padding:var(--sp-4) var(--sp-6); padding-bottom:calc(var(--sp-6) + env(safe-area-inset-bottom)); animation:slideUp var(--dur-base) var(--ease-spring); box-shadow:var(--shadow-sheet); max-height:75vh; display:flex; flex-direction:column; }
-.ps-grabber { width:64rpx; height:6rpx; border-radius:3rpx; background:var(--border); margin:0 auto var(--sp-6); flex-shrink:0; }
-.ps-title { font-size:var(--fs-xl); font-weight:var(--fw-bold); color:var(--text-primary); font-family:var(--font-serif); letter-spacing:var(--ls-wide); text-align:center; margin-bottom:var(--sp-6); flex-shrink:0; }
-/* 保单明细 sheet 内容区：75vh 封顶容器内，scroll-view 用 max-height 限高 + flex:1 自适应，
-   既能撑开滚动区又不会超过容器；小内容时不强制占满（自然高度） */
-.ps-body { flex:1; min-height:0; max-height:calc(75vh - 220rpx); }
-.ps-row { display:flex; justify-content:space-between; gap:var(--sp-4); padding:var(--sp-4) 0; border-bottom:1rpx solid var(--border); }
-.ps-row-lbl { font-size:var(--fs-caption); color:var(--text-tertiary); flex-shrink:0; letter-spacing:var(--ls-wide); }
-.ps-row-val { font-size:var(--fs-body); color:var(--text-primary); font-weight:var(--fw-medium); text-align:right; flex:1; min-width:0; word-break:break-all; font-variant-numeric:tabular-nums; }
-/* 底部操作：取消 + 编辑（只读 sheet 补显式取消，避免只能点遮罩/关闭；ps-divider 已移除——与表格横线冲突，间距由 margin-top 承担） */
-.ps-actions { display:flex; gap:var(--sp-4); flex-shrink:0; margin-top:var(--sp-5); }
-.ps-cancel-btn { width:176rpx; height:88rpx; background:var(--bg-card); color:var(--text-secondary); font-size:var(--fs-lg); font-weight:var(--fw-medium); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:1rpx solid var(--border); margin:0; flex-shrink:0; }
-/* UI 审计 #②：accent 白字不达标，改深色主文字色 */
-.ps-edit-btn { flex:1; height:88rpx; background:var(--accent); color:var(--text-primary); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none; }
-/* UI 审计 #⑤：保单明细 Sheet 显式关闭按钮（定位上下文：.policy-sheet 为 absolute 定位元素） */
-/* UI 审计 视觉 S2：关闭按钮 padding 扩点击区（64+24=88rpx），负 margin 抵消视觉占位 */
-.ps-close { position:absolute; top:20rpx; right:20rpx; width:64rpx; height:64rpx; padding:12rpx; margin:-12rpx; display:flex; align-items:center; justify-content:center; border-radius:50%; }
-.ps-close:active { background:var(--accent-dim); }
-.ps-close-icon { width:36rpx; height:36rpx; opacity:0.5; }
+/* 分享模式（客户查看）底部水印 */
+.share-watermark { flex:1; display:flex; align-items:center; justify-content:center; font-size:var(--fs-tiny); color:var(--text-tertiary); }
 
 /* ========== 成员管理 Sheet ========== */
 .member-manage-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:var(--overlay-dim); z-index:var(--z-sheet); animation:fadeIn var(--dur-base) var(--ease-out); -webkit-backdrop-filter:blur(8rpx); backdrop-filter:blur(8rpx); }
@@ -93,7 +72,7 @@
 .mm-edit { font-size:var(--fs-caption); color:var(--accent-deep); background:var(--accent-dim); border-radius:var(--r-full); padding:var(--sp-2) var(--sp-4); }
 .mm-divider { height:1rpx; background:var(--border-accent); margin:var(--sp-6) 0 var(--sp-5); flex-shrink:0; }
 /* UI 审计 #②：#⑤：accent 白字改深色；成员管理 Sheet 显式关闭按钮 */
-.mm-add { width:100%; height:88rpx; background:var(--accent); color:var(--text-primary); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none; flex-shrink:0; }
+.mm-add { width:100%; height:88rpx; background:var(--accent); color:var(--btn-text-on-accent); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none; flex-shrink:0; }
 /* UI 审计 视觉 S2：关闭按钮 padding 扩点击区（64+24=88rpx），负 margin 抵消视觉占位 */
 .mm-close { position:absolute; top:20rpx; right:20rpx; width:64rpx; height:64rpx; padding:12rpx; margin:-12rpx; display:flex; align-items:center; justify-content:center; border-radius:50%; }
 .mm-close:active { background:var(--accent-dim); }
@@ -109,7 +88,7 @@
 .fab-wrap { position:relative; z-index:110; flex-shrink:0; background:var(--bg-surface); padding-bottom:0px; padding-bottom:env(safe-area-inset-bottom); border-top:1rpx solid var(--border); box-shadow:var(--shadow-sheet); }
 .fab-bar { padding:var(--sp-4) var(--sp-5) }
 .fab-inner { display:flex; align-items:center; height:88rpx; padding:0 var(--sp-1) }
-.fab-upload { width:88rpx; height:88rpx; border-radius:50%; background:linear-gradient(135deg, var(--accent) 0%, var(--accent-deep) 100%); box-shadow:0 8rpx 24rpx rgba(201,169,110,0.3); display:flex; align-items:center; justify-content:center; flex-shrink:0; transition:transform var(--dur-fast) var(--ease-out) }
+.fab-upload { width:88rpx; height:88rpx; border-radius:50%; background:linear-gradient(135deg, var(--accent-deep) 0%, #6A5425 100%); box-shadow:0 8rpx 24rpx rgba(201,169,110,0.3); display:flex; align-items:center; justify-content:center; flex-shrink:0; transition:transform var(--dur-fast) var(--ease-out) }
 .fab-upload:active { transform:scale(0.92); opacity:0.9 }
 .fab-upload-icon { width:44rpx; height:44rpx; filter:brightness(0) invert(1) }
 .fab-input { flex:1; height:88rpx; margin:0 var(--sp-3); background:var(--bg-input); border-radius:var(--r-full); display:flex; align-items:center; padding:0 var(--sp-5); }
@@ -132,7 +111,7 @@
 .load-error { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:0 var(--sp-7); }
 .load-error-title { font-family:var(--font-serif); font-size:var(--fs-2xl); font-weight:var(--fw-semi); color:var(--text-primary); margin-bottom:var(--sp-3); }
 .load-error-sub { font-size:var(--fs-caption); color:var(--text-tertiary); margin-bottom:var(--sp-7); }
-.load-error-btn { width:320rpx; height:88rpx; background:var(--accent); color:var(--text-primary); font-size:var(--fs-base); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none; margin-bottom:var(--sp-3); }
+.load-error-btn { width:320rpx; height:88rpx; background:var(--accent); color:var(--btn-text-on-accent); font-size:var(--fs-base); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none; margin-bottom:var(--sp-3); }
 .load-error-btn::after { border:none }
 .load-error-btn--ghost { background:var(--bg-card); color:var(--text-secondary); border:1rpx solid var(--border); }
 
@@ -140,7 +119,7 @@
 .analysis-mask { position:fixed; inset:0; background:rgba(28,25,23,0.45); z-index:300; display:flex; align-items:center; justify-content:center; }
 .analysis-card { width:520rpx; background:var(--bg-card); border-radius:var(--r-xl); padding:var(--sp-8) var(--sp-7); display:flex; flex-direction:column; align-items:center; gap:var(--sp-3); }
 .analysis-spinner { width:56rpx; height:56rpx; border:6rpx solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin 0.9s linear infinite; }
-.analysis-title { font-size:var(--fs-lg); font-weight:var(--fw-semi); color:var(--text-primary); }
+.analysis-title { font-size:var(--fs-lg); font-weight:var(--fw-semi); color:var(--text-primary); font-family:var(--font-serif); letter-spacing:var(--ls-wide); }
 .analysis-sec { font-size:var(--fs-caption); color:var(--text-tertiary); }
 .analysis-cancel { margin-top:var(--sp-4); background:var(--bg-card); color:var(--text-secondary); border:1rpx solid var(--border); font-size:var(--fs-base); width:240rpx; height:80rpx; display:flex; align-items:center; justify-content:center; border-radius:var(--r-lg); }
 .analysis-cancel::after { border:none }
@@ -153,3 +132,12 @@
 .sk-summary { width:100%; height:88rpx; border-radius:var(--r-2xl); margin:var(--sp-2) 0; }
 .sk-block-card { width:100%; height:200rpx; border-radius:var(--r-lg); margin-bottom:var(--sp-4-5); }
 .sk-shimmer { background:linear-gradient(90deg,var(--bg-input) 25%,var(--accent-dim) 37%,var(--bg-input) 63%); background-size:400% 100%; animation:shimmer 1.8s ease infinite; }
+
+/* UI 审计 P1：暗色下 FAB 栏图标/箭头不可见（--accent 变浅金 #D4B87E，白图标 1.3:1 / 箭头 1.45:1）
+   覆盖为固定深金渐变 + 深色箭头（与 app.wxss .fab 暗色覆盖一致） */
+@media (prefers-color-scheme: dark) {
+  .fab-upload { background: linear-gradient(135deg, #8B6F3C 0%, #6A5425 100%); }
+  .fab-send { background: #8B6F3C; }
+  .fab-send.is-disabled { background: var(--accent-muted); }
+  .fab-arrow { color: var(--color-on-accent); }
+}

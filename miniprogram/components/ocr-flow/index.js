@@ -19,7 +19,8 @@ Component({
   },
   data: {
     ocrMask: flow.defaultState(),
-    ocrSheet: { visible: false, policyIndex: -1, fields: [], title: '' }
+    // 统一 edit-sheet 状态：mode='view' 查看态起步（按钮=编辑），手动录入 mode='edit' 直接编辑
+    ocrSheet: { visible: false, policyIndex: -1, fields: [], title: '', mode: 'view' }
   },
   lifetimes: {
     detached() {
@@ -87,7 +88,12 @@ Component({
             self._procErrors = (batch.errors || []).map(function(e) { return { fileId: e.fileId, thumb: e.thumb || '', error: e.error || '识别失败', retrying: false } })
             self._procFamilyId = self.properties.familyId || ''
             // 延迟渲染：等 showModal 关闭动画结束再显示确认卡，避免视觉上"弹窗未关闭，需再点一次"
-            setTimeout(function() { if (self._disposed) return; self._procRefresh(); self._ocrBusy = false }, 300)
+            // 恢复渲染兜底：_procRefresh 异常时清 batch + 释放 _ocrBusy，避免"继续处理后悬空"（_ocrBusy 卡死拦后续 OCR）
+            setTimeout(function() {
+              if (self._disposed) return
+              try { self._procRefresh() } catch (e) { console.error('[ocr-flow] resume render:', e); self._clearBatch() }
+              self._ocrBusy = false
+            }, 300)
           } else self._clearBatch()
         }
       })
@@ -255,7 +261,8 @@ Component({
       var fileId = e.currentTarget.dataset.fileid
       if (this.data.ocrMask.procBusy) return
       this._manualFileId = fileId
-      this.setData({ 'ocrSheet.visible': true, 'ocrSheet.policyIndex': -1, 'ocrSheet.fields': this._buildSheetFields({}), 'ocrSheet.title': '手动录入保单' })
+      // 空表单直接编辑态（无值可查看，无需 view 态）
+      this.setData({ 'ocrSheet.visible': true, 'ocrSheet.policyIndex': -1, 'ocrSheet.fields': this._buildSheetFields({}), 'ocrSheet.title': '手动录入保单', 'ocrSheet.mode': 'edit' })
     },
     onProcPreview(e) {
       var src = e.currentTarget.dataset.src
@@ -284,11 +291,37 @@ Component({
           // UI 审计 状态 S1：进行中取消置位，_startOCR 的 await 检查点提前退出并清理已上传文件
           self._ocrCancelled = true
           self._procPolicies = []; self._procCash = []; self._procErrors = []
+          // P0 修复（dsh UI 审计）：放弃时 resolve 挂起的匹配/角色阶段 promise，
+          // 否则 _doSave 的 await 永不返回，_saving 永久卡死（后续保存静默失效）
+          if (self._roleResolve) { var rr = self._roleResolve; self._roleResolve = null; rr(null) }
+          if (self._matchResolve) { var mr = self._matchResolve; self._matchResolve = null; mr(null) }
           self.setData(Object.assign(flow.hide(), { 'ocrMask._policies': [], 'ocrMask._cashValues': [], 'ocrMask._familyId': '' }))
           self._clearBatch()
           self._emitBusy()
           wx.showToast({ title: '已放弃本次结果', icon: 'none' })
           self.triggerEvent('discarded')
+        }
+      })
+    },
+
+    // ============ 单张移除（UX：失败项可单独丢弃，二次确认防误触；原"忽略"改"移除"） ============
+    onProcIgnore(e) {
+      var fileId = e.currentTarget.dataset.fileid
+      if (!fileId) return
+      var self = this
+      wx.showModal({
+        title: '移除该项',
+        content: '移除后该识别结果将删除，无法恢复。确定移除？',
+        confirmText: '移除',
+        confirmColor: '#B00020',
+        cancelText: '取消',
+        success: function (res) {
+          if (!res.confirm) return
+          var removed = (self._procErrors || []).filter(function(x) { return x.fileId !== fileId })
+          if (removed.length === (self._procErrors || []).length) return
+          self._procErrors = removed
+          self._procRefresh(); self._persistBatch()
+          wx.showToast({ title: '已移除', icon: 'none' })
         }
       })
     },
@@ -301,7 +334,7 @@ Component({
       if (errCount > 0 || reviewCount > 0) {
         wx.showModal({
           title: '还有保单未处理',
-          content: '识别异常 ' + errCount + ' 份，待核对 ' + reviewCount + ' 份。确认后异常将被丢弃，待核对项按当前结果保存。',
+          content: '识别异常 ' + errCount + ' 份，待核对 ' + reviewCount + ' 份。确认后将跳过异常，待核对项按当前结果保存。',
           confirmText: '下一步', cancelText: '返回处理',
           success: function(r) { if (r.confirm && !self._disposed) self._doSave() }
         })
@@ -370,6 +403,12 @@ Component({
       }
       var savedCount = policies.length, cashCount = (cashValues || []).length, self = this
       wx.nextTick(function() { if (!self._disposed) self._showSaved(savedCount, cashCount) })
+      // 悬空修复：保存链任何环节抛错（匹配/角色/写入）→ 进 failed 相（有放弃/重试出口），不再无反馈悬空
+      } catch (e) {
+        if (this._disposed) return
+        console.error('[ocr-flow] save chain:', e)
+        errorHandler.handle({ msg: (e && e.message) || '保存异常' }, { silent: true, context: 'ocrSave' })
+        this.setData(flow.setFailed('保存遇到问题，请重试'))
       } finally {
         this._saving = false
       }
@@ -395,9 +434,11 @@ Component({
         if (this._disposed) return null
         if (cached) candidates.push(cached)
       } else {
-        var matchRes = await api('searchFamilies', { keyword: primaryHolder })
+        // 悬空修复：searchFamilies 网络失败降级为空候选（默认"新建家庭"），不再抛错冒泡至 _doSave 悬空
+        var matchRes = null
+        try { matchRes = await api('searchFamilies', { keyword: primaryHolder }) } catch (e) { matchRes = null }
         if (this._disposed) return null
-        if (matchRes.ok) {
+        if (matchRes && matchRes.ok) {
           var cands = (matchRes.data.families || []).filter(function(c) { return c.name === primaryHolder })
           if (cands.length > 0) {
             var details = await Promise.all(cands.map(function(c) { return apiGetFamily(c._id).then(function(f) { return { c: c, f: f } }).catch(function() { return { c: c, f: null } }) }))
@@ -576,93 +617,48 @@ Component({
       if (mask.confirming || mask.procBusy) return
       var p = (this._procPolicies || [])[pi]
       if (!p) return
-      this.setData({ 'ocrSheet.visible': true, 'ocrSheet.policyIndex': pi, 'ocrSheet.fields': this._buildSheetFields(p), 'ocrSheet.title': '编辑 · ' + (p.product_name || '保单') })
+      // 查看态起步（按钮=编辑）：先看识别结果，[编辑] 后切编辑态 [保存]
+      this.setData({ 'ocrSheet.visible': true, 'ocrSheet.policyIndex': pi, 'ocrSheet.fields': this._buildSheetFields(p), 'ocrSheet.title': '保单 · ' + (p.product_name || '保单'), 'ocrSheet.mode': 'view' })
     },
-    onSheetInput(e) {
-      var fi = e.currentTarget.dataset.fi
-      // 已修改：浅蓝底 + ⚠️ 消失（confidence 提升为高）
-      var patch = {}
-      patch['ocrSheet.fields[' + fi + '].value'] = e.detail.value
-      patch['ocrSheet.fields[' + fi + '].modified'] = true
-      patch['ocrSheet.fields[' + fi + '].tone'] = 'modified'
-      patch['ocrSheet.fields[' + fi + '].confidence'] = 1
-      this.setData(patch)
-    },
-    // UI 审计 交互 M1：effective_date 原生 date picker 选择（与 edit-sheet 一致）
-    onSheetDateChange(e) {
-      var fi = e.currentTarget.dataset.fi
-      var patch = {}
-      patch['ocrSheet.fields[' + fi + '].value'] = e.detail.value
-      patch['ocrSheet.fields[' + fi + '].modified'] = true
-      patch['ocrSheet.fields[' + fi + '].tone'] = 'modified'
-      patch['ocrSheet.fields[' + fi + '].confidence'] = 1
-      this.setData(patch)
-    },
-    // UI 审计 交互 M4：关闭即清空 sheet 状态，防下次打开残留旧字段
-    onSheetClose() { this.setData({ 'ocrSheet.visible': false, 'ocrSheet.fields': [], 'ocrSheet.policyIndex': -1, 'ocrSheet.title': '' }) },
-    // UI 审计 A-S2/A-S3：编辑/手动录入共用字段校验（产品名称必填 + 数值格式 + 日期格式）
-    // requireProduct：新增模式下即使 fields 未包含 product_name 也强制必填
-    _validateSheet(sheet, requireProduct) {
-      var err = ''
-      var hasProduct = false
-      ;(sheet.fields || []).forEach(function(f) {
-        if (f.isGroup || err) return
-        var v = (f.value || '').trim()
-        if (f.key === 'product_name') {
-          hasProduct = true
-          if (!v) err = '请填写产品名称'
-          return
-        }
-        if (!v) return
-        // 兼容"80万/2亿/800,000"等单位与分隔写法，仅拦截纯非数字（如"abc"）
-        if (SHEET_NUMERIC_KEYS.indexOf(f.key) !== -1 && isNaN(Number(v.replace(/[万亿,，\s]/g, '')))) {
-          err = '「' + f.label + '」需为数字'; return
-        }
-        if (f.key === 'effective_date' && !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
-          err = '「' + f.label + '」格式应为 YYYY-MM-DD'; return
-        }
-      })
-      if (!err && requireProduct && !hasProduct) err = '请填写产品名称'
-      return err
-    },
-    onSheetConfirm() {
+    // 统一 edit-sheet 事件：编辑态保存（e.detail = {key:value}，edit-sheet 已完成校验）
+    onEditSheetSave(e) {
       var sheet = this.data.ocrSheet
       if (!sheet.visible) return
-      var err = this._validateSheet(sheet, sheet.policyIndex === -1)
-      if (err) { wx.showToast({ title: err, icon: 'none' }); return }
+      var data = e.detail || {}
       if (sheet.policyIndex === -1) {
+        // 手动录入新增：保留非空字段，清空项不入库
         var np = {}
-        ;(sheet.fields || []).forEach(function(f) {
-          if (f.isGroup) return
-          var v = (f.value || '').trim()
-          if (v) { np[f.key] = v; np.field_confidence = np.field_confidence || {}; np.field_confidence[f.key] = 0.99 }
+        Object.keys(data).forEach(function(k) {
+          var v = String(data[k] || '').trim()
+          if (v) { np[k] = v; np.field_confidence = np.field_confidence || {}; np.field_confidence[k] = 0.99 }
         })
         np.confidence = 0.99
         this._procPolicies.push(np)
         var fid = this._manualFileId
         if (fid) { this._procErrors = (this._procErrors || []).filter(function(x) { return x.fileId !== fid }) }
         this._manualFileId = ''
-        this.setData({ 'ocrSheet.visible': false })
+        this.setData({ 'ocrSheet.visible': false, 'ocrSheet.mode': 'view' })
         this._procRefresh(); this._persistBatch()
         return
       }
+      // 编辑识别结果：清空字段 = 删除错误识别值（A-M9）
       var policies = (this._procPolicies || []).slice()
       var p = policies[sheet.policyIndex]
-      if (!p) { this.setData({ 'ocrSheet.visible': false }); return }
+      if (!p) { this.setData({ 'ocrSheet.visible': false, 'ocrSheet.mode': 'view' }); return }
       var np2 = Object.assign({}, p)
       if (!np2.field_confidence) np2.field_confidence = {}
-      ;(sheet.fields || []).forEach(function(f) {
-        if (f.isGroup) return
-        var v = (f.value || '').trim()
-        if (v) { np2[f.key] = v; np2.field_confidence[f.key] = 0.99 }
-        // UI 审计 A-M9：清空字段 = 删除错误识别值（原旧值保留，用户无法纠错）
-        else { delete np2[f.key]; delete np2.field_confidence[f.key] }
+      Object.keys(data).forEach(function(k) {
+        var v = String(data[k] || '').trim()
+        if (v) { np2[k] = v; np2.field_confidence[k] = 0.99 }
+        else { delete np2[k]; delete np2.field_confidence[k] }
       })
       policies[sheet.policyIndex] = np2
       this._procPolicies = policies
-      this.setData({ 'ocrSheet.visible': false })
+      this.setData({ 'ocrSheet.visible': false, 'ocrSheet.mode': 'view' })
       this._procRefresh(); this._persistBatch()
     },
+    // 统一 edit-sheet 事件：关闭即清空 sheet 状态，防下次打开残留旧字段
+    onEditSheetClose() { this.setData({ 'ocrSheet.visible': false, 'ocrSheet.fields': [], 'ocrSheet.policyIndex': -1, 'ocrSheet.title': '', 'ocrSheet.mode': 'view' }) },
 
     // ============ 保存态 ============
     onFailedRetry() { if (!this._disposed) this._doSave() },
@@ -745,13 +741,21 @@ Component({
         { title: '缴费信息', keys: ['payment_method', 'payment_period', 'annual_premium'] },
         { title: '保障信息', keys: ['sum_assured', 'guaranteed', 'guaranteed_years'] }
       ]
+      // 保单基本必填：产品名称/被保人/保额/保障期限(effective_date)/年缴保费/缴费年期
+      var REQUIRED_KEYS = ['product_name', 'insured_name', 'sum_assured', 'effective_date', 'annual_premium', 'payment_period']
       var result = []
       GROUPS.forEach(function(g) {
         var fields = g.keys.filter(function(k) { return FL[k] !== undefined }).map(function(k) {
-          var t = tone[k] || 'high'
+          // 高置信度 → ''（空串，与 report 侧 toneOf 语义对齐）：edit-sheet 仅 tone 非空才渲染 ⚠️，
+          // 原 'high' 非空导致所有字段都带 ⚠️（曾全线误显）
+          var t = tone[k] || ''
           // UI 审计 A-S1：数值字段补 type:'digit'（原弹文本键盘，保额/保费/年限手动切数字）
-          // UI 审计 交互 M2/M1：product_name 必填星号；effective_date 走原生 date picker（与 edit-sheet 一致）
-          return { key: k, label: FL[k], value: p2[k] || '', tone: t, confidence: t === 'low' ? 0.4 : (t === 'mid' ? 0.7 : 1), modified: false, required: k === 'product_name', type: k === 'effective_date' ? 'date' : (SHEET_NUMERIC_KEYS.indexOf(k) !== -1 ? 'digit' : 'text') }
+          // UI 审计 交互 M2/M1：必填星号；effective_date 走原生 date picker（与 edit-sheet 一致）
+          // 数值字段补 pattern：兼容"80万/2亿/800,000"等单位与分隔写法，仅拦截纯非数字（原 _validateSheet 能力）
+          var isNum = SHEET_NUMERIC_KEYS.indexOf(k) !== -1
+          var f = { key: k, label: FL[k], value: p2[k] || '', tone: t, confidence: t === 'low' ? 0.4 : (t === 'mid' ? 0.7 : 1), modified: false, required: REQUIRED_KEYS.indexOf(k) !== -1, type: k === 'effective_date' ? 'date' : (isNum ? 'digit' : 'text') }
+          if (isNum) { f.pattern = '^[0-9万亿,，.\\s]+$'; f.patternMsg = '「' + FL[k] + '」需为数字' }
+          return f
         })
         if (fields.length > 0) {
           result.push({ isGroup: true, label: g.title })

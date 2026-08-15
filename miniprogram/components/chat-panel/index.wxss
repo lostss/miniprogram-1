@@ -22,11 +22,12 @@
 /* UI 打磨：气泡入场去回弹缓动（与 ai-msg fadeIn 统一） */
 .bubble { display:inline-block; max-width:82%; padding:var(--sp-4) var(--sp-5); font-size:var(--fs-base); line-height:var(--lh-body); word-break:break-word; text-align:left; box-sizing:border-box; animation:fadeUp var(--dur-slow) var(--ease-out) }
 /* UI 审计 #②：用户气泡 accent 白字 2.24:1 不达标，改深色文字（7.62:1） */
-.bubble.user { background:var(--accent); color:var(--text-primary); border-radius:18rpx 6rpx 18rpx 18rpx; }
+.bubble.user { background:var(--accent); color:var(--btn-text-on-accent); border-radius:18rpx 6rpx 18rpx 18rpx; }
 
-.retry-btn { display:inline-block; margin-top:var(--sp-3); padding:var(--sp-2) var(--sp-5); border:1rpx solid var(--accent-muted); border-radius:var(--r-full); font-size:var(--fs-caption); color:var(--accent-deep); background:transparent }
+.retry-btn { display:inline-flex; align-items:center; justify-content:center; min-height:88rpx; margin-top:var(--sp-3); padding:var(--sp-2) var(--sp-5); border:1rpx solid var(--accent-muted); border-radius:var(--r-full); font-size:var(--fs-caption); color:var(--accent-deep); background:transparent }
+.retry-btn:active { opacity:0.6 }
 .sug-bar { display:flex; flex-wrap:wrap; gap:var(--sp-3); margin-top:var(--sp-5) }
-.sug-chip { padding:var(--sp-3) var(--sp-5); background:var(--accent-dim); border-radius:var(--r-full); font-size:var(--fs-caption); color:var(--accent-deep); letter-spacing:var(--ls-wide); }
+.sug-chip { display:inline-flex; align-items:center; justify-content:center; min-height:88rpx; padding:var(--sp-3) var(--sp-5); background:var(--accent-dim); border-radius:var(--r-full); font-size:var(--fs-caption); color:var(--accent-deep); letter-spacing:var(--ls-wide); }
 .sug-chip:active { background:var(--accent-glow); }
 
 /* UI 打磨：thinking/streaming 左线同步 ai-msg（4rpx + accent 实色） */
@@ -35,7 +36,7 @@
 /* UI 审计 状态 S2：流式生成指示 + 停止按钮 */
 .streaming-row { display:flex; align-items:center; justify-content:space-between; padding:var(--sp-3) var(--sp-5); border-left:4rpx solid var(--accent); margin-top:var(--sp-2); }
 .streaming-text { font-size:var(--fs-caption); color:var(--text-tertiary); }
-.stop-generate { font-size:var(--fs-caption); color:var(--accent-deep); border:1rpx solid var(--border-accent); border-radius:var(--r-full); padding:var(--sp-1) var(--sp-4); }
+.stop-generate { display:inline-flex; align-items:center; justify-content:center; min-height:88rpx; font-size:var(--fs-caption); color:var(--accent-deep); border:1rpx solid var(--border-accent); border-radius:var(--r-full); padding:var(--sp-1) var(--sp-4); }
 .stop-generate:active { background:var(--bg-input); }
 /* P0修复1: B处理行内三点+文案组合在左侧 */
 .processing-left { display:flex; align-items:center; gap:var(--sp-3); }
@@ -45,7 +46,8 @@
 .msg-empty { display:flex; flex-direction:column; gap:var(--sp-4); padding:var(--sp-8) var(--sp-5) var(--sp-6); align-items:flex-start; }
 .msg-empty-title { font-size:var(--fs-base); color:var(--text-primary); font-family:var(--font-serif); letter-spacing:var(--ls-wide); }
 .msg-empty-sub { font-size:var(--fs-tiny); color:var(--text-tertiary); letter-spacing:var(--ls-wide); margin-top:calc(var(--sp-4) * -1); }
-.msg-empty-chip { font-size:var(--fs-base); color:var(--text-secondary); background:var(--bg-card); border:1rpx solid var(--border); border-radius:var(--r-full); padding:var(--sp-2) var(--sp-5); }
+.msg-empty-chip { display:inline-flex; align-items:center; justify-content:center; min-height:88rpx; font-size:var(--fs-base); color:var(--text-secondary); background:var(--bg-card); border:1rpx solid var(--border); border-radius:var(--r-full); padding:var(--sp-2) var(--sp-5); }
+.msg-empty-chip:active { opacity:0.6 }
 .thinking-dots { display:flex; gap:var(--sp-2); padding:var(--sp-2) 0; opacity:0; animation:dotFadeIn var(--dur-base) var(--ease-out) .1s forwards }
 .thinking-dot { width:10rpx; height:10rpx; border-radius:50%; background:var(--accent); animation:dotBounce 1.4s var(--ease-out) infinite }
 .thinking-dot:nth-child(2){animation-delay:.2s}.thinking-dot:nth-child(3){animation-delay:.4s}

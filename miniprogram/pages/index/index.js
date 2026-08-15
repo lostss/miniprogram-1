@@ -9,14 +9,32 @@ const HOME_CACHE_TTL = 60 * 1000
 
 Page({
   data: {
-    recentClients: [], loadingClients: false, removingId: '', ocrBusy: false, loadError: false
+    recentClients: [], loadingClients: false, removingId: '', ocrBusy: false, loadError: false, needLogin: false
   },
 
   onUnload() { this._disposed = true },
   onShow() {
+    this.setData({ needLogin: !!(getApp().globalData.needLogin) })
     this._fetchClients()
     const ocrFlow = this.selectComponent('#ocrFlow')
     if (ocrFlow) ocrFlow.checkResume()
+  },
+  // 手机号登录（正式环境；open-type=getPhoneNumber → e.detail.code → login({code})）
+  onPhoneLogin(e) {
+    var code = e.detail && e.detail.code
+    if (!code) { wx.showToast({ title: '未获取到授权，请重试', icon: 'none' }); return }
+    api('login', { code: code }).then(res => {
+      if (res.ok) {
+        getApp().completePhoneLogin(res.data || {})
+        this.setData({ needLogin: false })
+        this._fetchClients(true)
+      } else {
+        wx.showToast({ title: res.msg || '登录失败', icon: 'none' })
+      }
+    }).catch(err => {
+      console.error('[index] 手机号登录失败:', err)
+      wx.showToast({ title: '登录失败，请重试', icon: 'none' })
+    })
   },
   onOcrBusy(e) {
     this.setData({ ocrBusy: !!((e && e.detail) && e.detail.busy) })

@@ -3,7 +3,22 @@
  * _parseAIJSON + _toNum
  * RED phase → GREEN
  */
-const { _parseAIJSON } = require('../cloudfunctions/_shared/ocr-extractor')
+jest.mock('tencentcloud-sdk-nodejs-ocr', () => ({
+  ocr: {
+    v20181119: {
+      Client: class {
+        constructor() {}
+        async GeneralAccurateOCR() {
+          throw new Error('mock OCR 服务异常')
+        }
+      }
+    }
+  }
+}), { virtual: true })
+process.env.TENCENT_SECRET_ID = 'test-secret-id'
+process.env.TENCENT_SECRET_KEY = 'test-secret-key'
+
+const { _parseAIJSON, ocrRecognize } = require('../cloudfunctions/_shared/ocr-extractor')
 const { _toNum } = require('../cloudfunctions/_shared/ocr-core')
 
 
@@ -76,5 +91,12 @@ describe('_parseAIJSON', () => {
   test('数组JSON也能解析', () => {
     const r = _parseAIJSON('[1,2,3]')
     expect(r).toEqual([1, 2, 3])
+  })
+})
+
+describe('ocrRecognize 服务异常', () => {
+  test('SDK 重试后仍失败返回 ocr_service_error（与空识别区分）', async () => {
+    const r = await ocrRecognize('http://example.com/temp.jpg')
+    expect(r).toEqual({ text: '', confs: [], error_code: 'ocr_service_error' })
   })
 })

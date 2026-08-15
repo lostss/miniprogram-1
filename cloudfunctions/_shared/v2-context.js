@@ -13,6 +13,7 @@
 const { calcAge } = require('./calc-age')
 const { safeQuery, getFamily } = require('./db-helpers')
 const { buildPortrait, renderPortraitMarkdown } = require('./familyPortrait')
+const { yuanToWan } = require('./amount')
 
 function _memberTable(members) {
   if (!members || members.length === 0) return ''
@@ -71,10 +72,10 @@ function _financeTable(finances, snap) {
   return rows.join('\n')
 }
 
-/** 元 → 万（数值审计 #1/#2 共用，round 到 2 位防浮点噪音） */
+/** 元 → 万（数值审计 #1/#2 共用，round 到 2 位防浮点噪音；换算核心走金额契约 amount.js） */
 function _wan(v) {
   const n = Number(v)
-  return isNaN(n) ? '-' : Math.round(n / 100) / 100
+  return isNaN(n) ? '-' : yuanToWan(n)
 }
 
 /**

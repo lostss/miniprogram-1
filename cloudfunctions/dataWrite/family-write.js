@@ -19,6 +19,7 @@ const { STAGES } = require('./_shared/domain/stageMachine')
 const { upsertFinances, createMembersForFamily } = require('./_shared/memberRepo')
 const { loadFamilyView } = require('./_shared/familyView')
 const { wrapError } = require('./_shared/errorHandler')
+const { wanToYuan } = require('./_shared/amount')
 
 // ---------- createFamily ----------
 // Plan A：先建 families 文档，成员写入 members 集合（不再内嵌 families.members）
@@ -72,10 +73,10 @@ async function _updateFamilyHandleUpdateData(db, familyId, openid, updateDataInp
       // 家庭财务 → finances 集合（唯一真相源，数值审计 #2：统一存元键——表单输入为万，×10000 转元）
       const snap = updateDataInput[key] || {}
       const patch = {}
-      if (snap.income !== undefined) patch.annual_income = Number(snap.income) * 10000
-      if (snap.debt !== undefined) patch.total_debt = Number(typeof snap.debt === 'object' ? (snap.debt.amount != null ? snap.debt.amount : 0) : snap.debt) * 10000
+      if (snap.income !== undefined) patch.annual_income = wanToYuan(snap.income)
+      if (snap.debt !== undefined) patch.total_debt = wanToYuan(typeof snap.debt === 'object' ? (snap.debt.amount != null ? snap.debt.amount : 0) : snap.debt)
       if (snap.debt && snap.debt.type !== undefined) patch.debt_type = snap.debt.type
-      if (snap.fixed_expense !== undefined) patch.fixed_annual_expense = Number(snap.fixed_expense) * 10000
+      if (snap.fixed_expense !== undefined) patch.fixed_annual_expense = wanToYuan(snap.fixed_expense)
       if (snap.annual_premium_budget !== undefined) patch.annual_premium_budget = snap.annual_premium_budget
       if (Object.keys(patch).length > 0) await upsertFinances(db, familyId, openid, patch)
       needCompletenessCalc = true

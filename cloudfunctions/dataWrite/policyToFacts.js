@@ -15,13 +15,14 @@
  * @param {Object} opts { memberId, memberName, confidence, source }
  * @returns {Array} addFact 事件数组
  */
+const { fmtYuan } = require('./_shared/amount')
+
 function formatAmount(amount) {
   if (amount == null || amount === '') return '待确认'
   const n = Number(amount)
   if (!isFinite(n)) return String(amount)
   if (n >= 10000) {
-    const wan = n / 10000
-    return `${Number.isInteger(wan) ? wan : wan.toFixed(1)}万`
+    return fmtYuan(n)
   }
   return `${n}元`
 }

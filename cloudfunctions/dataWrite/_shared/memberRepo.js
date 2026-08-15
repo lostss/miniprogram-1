@@ -12,6 +12,7 @@ const { safeQuery } = require('./db-helpers')
 const { writeSeam } = require('./writeSeam')
 const { calcAgeYears } = require('./calc-age')
 const { detectInjection } = require('./guard')
+const { yuanToWan } = require('./amount')
 
 // members 集合允许的字段白名单（防 AI 误写 financial/policy 字段）
 // age 直接允许（对话"X岁"场景），birth_date 由 age 推导或用户明确给出
@@ -66,7 +67,7 @@ async function getFinance(db, familyId, openid) {
 function _toWan(newVal, fallbackVal) {
   if (newVal != null) {
     const n = Number(newVal)
-    return isNaN(n) ? null : Math.round(n / 100) / 100
+    return isNaN(n) ? null : yuanToWan(n)
   }
   if (fallbackVal != null) {
     if (typeof fallbackVal === 'string') { const m = String(fallbackVal).match(/([\d.]+)/); return m ? parseFloat(m[1]) : null }

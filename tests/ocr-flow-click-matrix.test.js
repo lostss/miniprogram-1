@@ -156,50 +156,38 @@ describe('ocr-flow 点击矩阵：编辑 sheet', function () {
     expect(inst.data.ocrSheet.title).toContain('康宁')
   })
 
-  test('onSheetInput：更新字段值并提升置信度', function () {
+  test('onEditSheetClose：关闭面板并重置 mode', function () {
     const cfg = loadComponent()
     const inst = makeInstance(cfg)
-    inst.setData({ 'ocrSheet.fields': [{ key: 'sum_assured', value: '50万' }] })
-    inst.onSheetInput({ currentTarget: { dataset: { fi: 0 } }, detail: { value: '80万' } })
-    expect(inst.data.ocrSheet.fields[0].value).toBe('80万')
-    expect(inst.data.ocrSheet.fields[0].modified).toBe(true)
-    expect(inst.data.ocrSheet.fields[0].confidence).toBe(1)
-  })
-
-  test('onSheetClose：关闭面板', function () {
-    const cfg = loadComponent()
-    const inst = makeInstance(cfg)
-    inst.setData({ 'ocrSheet.visible': true })
-    inst.onSheetClose()
+    inst.setData({ 'ocrSheet.visible': true, 'ocrSheet.mode': 'edit' })
+    inst.onEditSheetClose()
     expect(inst.data.ocrSheet.visible).toBe(false)
+    expect(inst.data.ocrSheet.mode).toBe('view')
   })
 
-  test('onSheetConfirm：编辑模式 → 更新保单并关闭', function () {
+  test('onEditSheetSave：编辑模式 → 更新保单并关闭（校验已移交 edit-sheet 组件）', function () {
     const cfg = loadComponent()
     const inst = makeInstance(cfg)
     inst._procPolicies = [{ product_name: '康宁', sum_assured: '50万' }]
-    // SHEET_NUMERIC_KEYS 数值校验：sum_assured 须为纯数字（元），中文单位 '80万' 会被 _validateSheet 拦截（历史契约）
-    inst.setData({ 'ocrSheet.visible': true, 'ocrSheet.policyIndex': 0, 'ocrSheet.fields': [{ key: 'sum_assured', value: '800000' }] })
-    inst.onSheetConfirm()
+    inst.setData({ 'ocrSheet.visible': true, 'ocrSheet.policyIndex': 0 })
+    inst.onEditSheetSave({ detail: { sum_assured: '800000' } })
     expect(inst.data.ocrSheet.visible).toBe(false)
+    expect(inst.data.ocrSheet.mode).toBe('view')
     expect(inst._procPolicies[0].sum_assured).toBe('800000')
     expect(inst._procPolicies[0].field_confidence.sum_assured).toBe(0.99)
   })
 
-  test('onSheetConfirm：新增模式 → 追加新保单（无产品名则拦截）', function () {
+  test('onEditSheetSave：新增模式 → 仅收集非空值入新保单（空值过滤）', function () {
     const cfg = loadComponent()
     const inst = makeInstance(cfg)
     inst._procPolicies = []
-    inst.setData({ 'ocrSheet.visible': true, 'ocrSheet.policyIndex': -1, 'ocrSheet.fields': [{ key: 'sum_assured', value: '800000' }] })
-    inst.onSheetConfirm()
-    expect(wxMock.showToast).toHaveBeenCalled() // 缺产品名拦截
-    expect(inst._procPolicies.length).toBe(0)
-
-    inst.setData({ 'ocrSheet.visible': true, 'ocrSheet.fields': [{ key: 'product_name', value: '康宁' }, { key: 'sum_assured', value: '800000' }] })
-    inst.onSheetConfirm()
-    expect(inst.data.ocrSheet.visible).toBe(false)
+    inst.setData({ 'ocrSheet.visible': true, 'ocrSheet.policyIndex': -1 })
+    // 必填校验在 edit-sheet 组件内完成（product_name 非空才触发 save）；此处验证空值字段不入录
+    inst.onEditSheetSave({ detail: { product_name: '康宁', sum_assured: '800000', effective_date: '' } })
     expect(inst._procPolicies.length).toBe(1)
     expect(inst._procPolicies[0].product_name).toBe('康宁')
+    expect(inst._procPolicies[0].sum_assured).toBe('800000')
+    expect(inst._procPolicies[0].effective_date).toBeUndefined()
   })
 })
 

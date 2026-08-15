@@ -16,6 +16,7 @@ const familyList = require('./family-list')
 const familyDetail = require('./family-detail')
 const messageQuery = require('./message-query')
 const entityQuery = require('./entity-query')
+const share = require('./share')
 
 module.exports = {
   // family-list
@@ -32,5 +33,9 @@ module.exports = {
   queryPolicies: entityQuery.queryPolicies,
   queryMembers: entityQuery.queryMembers,
   queryFacts: entityQuery.queryFacts,
-  queryMemberProfile: entityQuery.queryMemberProfile
+  queryMemberProfile: entityQuery.queryMemberProfile,
+
+  // share（分享域：token 生成 + 客户只读脱敏读取）
+  shareFamily: share.shareFamily,
+  getSharedFamily: share.getSharedFamily
 }

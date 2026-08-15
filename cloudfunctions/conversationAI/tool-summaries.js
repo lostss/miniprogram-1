@@ -15,6 +15,8 @@
  *   - 新增工具的 UI 文案只改本文件，不触碰 index.js 编排流程
  *   - _ok 辅助判定内聚于此（原 index.js _ok 函数）
  */
+const { fmtYuan } = require('./_shared/amount')
+
 function _ok(tr) {
   return !!(tr && tr.result && tr.result.code === 200)
 }
@@ -30,8 +32,8 @@ const TOOL_SUMMARIES = {
     if (!_ok(tr)) return null
     const a = tr.args || {}
     const name = a.product_name || '保单'
-    const premium = a.annual_premium ? ('年缴' + (a.annual_premium >= 10000 ? (a.annual_premium / 10000) + '万元' : a.annual_premium + '元')) : ''
-    const sum = a.sum_assured ? ('保额' + (a.sum_assured >= 10000 ? (a.sum_assured / 10000) + '万' : a.sum_assured + '元')) : ''
+    const premium = a.annual_premium ? ('年缴' + fmtYuan(a.annual_premium)) : ''
+    const sum = a.sum_assured ? ('保额' + fmtYuan(a.sum_assured)) : ''
     return '✅ 已记录' + name + (premium || sum ? '（' + [premium, sum].filter(Boolean).join('，') + '）' : '')
   },
   addFact: (tr) => {

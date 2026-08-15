@@ -4,6 +4,7 @@
  * 从 report-builder.js 抽取：buildGaps, buildGapMatrix + 阈值辅助函数。
  * 纯计算模块，不依赖 AI，可独立单测。
  */
+const { yuanToWan } = require('../amount')
 
 // 阈值单一事实源
 var _thresholds = null
@@ -110,7 +111,7 @@ function buildGaps(family) {
       var n = (p.member_id && _memberIdToName[p.member_id]) || p.insured_name
       if (n === mb.name) {
         var c = _canonCat(p.insurance_category || '其他')
-        existing[c] = (existing[c] || 0) + ((p.sum_assured || 0) / 10000)
+        existing[c] = (existing[c] || 0) + yuanToWan(p.sum_assured || 0)
       }
     }
     for (var l = 0; l < _neededCats(mb.role).length; l++) {
@@ -207,7 +208,7 @@ function buildCoverageMatrix(members, policies) {
       var n = (p.member_id && memberIdToName[p.member_id]) || p.insured_name
       if (n === m.name) {
         var c = _canonCat(p.insurance_category || '其他')
-        if (cells[c] !== undefined) cells[c] += (p.sum_assured || 0) / 10000
+        if (cells[c] !== undefined) cells[c] += yuanToWan(p.sum_assured || 0)
       }
     }
     return { name: m.name, cells: cells }

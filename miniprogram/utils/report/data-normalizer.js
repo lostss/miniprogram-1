@@ -4,6 +4,7 @@
  * 消除 buildChapters / buildGaps / makeHints / assessDataCompleteness 中
  * 4 处重复的聚合统计模式，收敛为一处。
  */
+const { yuanToWan } = require('../amount')
 
 /**
  * @param {object} family — { policies, members, debt, family_income }
@@ -17,9 +18,9 @@ function normalizeFamilyData(family) {
   const memIncome = members.reduce(function(s, m) { return s + (m.income || 0) }, 0)
   const totalIncome = memIncome > 0 ? memIncome : (parseInt(family.family_income) || 0)
   const annualPremium = active.reduce(function(s, p) { return s + (p.annual_premium || 0) }, 0)
-  const annualPremiumW = Math.round(annualPremium / 10000 * 100) / 100
+  const annualPremiumW = yuanToWan(annualPremium)
   const premiumRatio = totalIncome > 0 ? Math.round(annualPremiumW / totalIncome * 1000) / 10 : 0
-  const totalCoverage = Math.round(active.reduce(function(s, p) { return s + (p.sum_assured || 0) }, 0) / 10000 * 100) / 100
+  const totalCoverage = yuanToWan(active.reduce(function(s, p) { return s + (p.sum_assured || 0) }, 0))
   const policyCount = active.length
   const fs = (family && family.financial_snapshot) || {}
   const expense = fs.fixed_expense || 0
@@ -40,21 +41,11 @@ function normalizeFamilyData(family) {
     if (!memberMap[n]) memberMap[n] = { name: n, items: [] }
     memberMap[n].items.push({
       cat: p.insurance_category || '其他',
-      sum: Number(((p.sum_assured || 0) / 10000).toFixed(1))
+      sum: Number(yuanToWan(p.sum_assured || 0).toFixed(1))
     })
   }
 
   return { active, debt, totalIncome, annualPremium, annualPremiumW, premiumRatio, totalCoverage, policyCount, expense, memberIdToName, memberMap, members, policies }
 }
 
-/**
- * 章节编号生成器工厂
- * @returns {function} () => string 返回 '1','2',...
- */
-function createNumbering() {
-  var g = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12']
-  var gi = -1
-  return function() { return g[(++gi) % g.length] }
-}
-
-module.exports = { normalizeFamilyData, createNumbering }
+module.exports = { normalizeFamilyData }

@@ -1,18 +1,34 @@
-.overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:var(--overlay-dim); z-index:var(--z-sheet); animation:fadeIn var(--dur-base) var(--ease-out); -webkit-backdrop-filter:blur(8rpx); backdrop-filter:blur(8rpx); }
+/* 弹层叠加审计：遮罩用 --z-modal(300)——OCR 场景 edit-sheet 需盖过 ocr-mask(300) 同级后才能被点击；
+   report 页 member-manage(200) 之下同层时靠 DOM 后置压制（与页面其他 sheet 的 200 层级错位，统一以模态语义为准） */
+.overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:var(--overlay-dim); z-index:var(--z-modal); animation:fadeIn var(--dur-base) var(--ease-out); -webkit-backdrop-filter:blur(8rpx); backdrop-filter:blur(8rpx); }
 /* 表单 sheet：限高 3/4 屏 + 内部滚动（字段补齐后超高不再铺满全屏无出口） */
 .sheet { position:absolute; bottom:0; left:0; right:0; background:var(--bg-surface); border-radius:var(--r-2xl) var(--r-2xl) 0 0; padding:var(--sp-6); padding-bottom:calc(var(--sp-6) + env(safe-area-inset-bottom)); animation:slideUp var(--dur-base) var(--ease-spring); box-shadow:var(--shadow-sheet); max-height:75vh; display:flex; flex-direction:column; }
 /* scroll-view 在 max-height 容器内用 max-height 限高 + flex:1 自适应，小内容不强制占满 */
 .sheet-body { flex:1; min-height:0; max-height:calc(75vh - 240rpx); }
-.sheet-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--sp-5); flex-shrink:0; }
+.sheet-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--sp-4); flex-shrink:0; }
 .sheet-title { font-size:var(--fs-lg); font-weight:var(--fw-semi); color:var(--text-primary); font-family:var(--font-serif); letter-spacing:var(--ls-wide); }
 .sheet-close { width:88rpx; height:88rpx; display:flex; align-items:center; justify-content:center; margin:-16rpx -16rpx 0 0; border-radius:50%; }
 .sheet-close:active { background:var(--accent-dim); }
 .sheet-close-icon { width:36rpx; height:36rpx; opacity:0.5; }
 /* 字段并排布局：label 固定宽度左对齐，input 占满剩余空间；error/helper 换行占满 */
-.form-row { display:flex; align-items:center; flex-wrap:wrap; gap:var(--sp-4); margin-bottom:var(--sp-4); }
+/* 垂直空间优化：组内字段 sp-3（紧），组间距由 group-title margin-top sp-6 承担（松）→ 节奏分明且 sheet 更矮 */
+.form-row { display:flex; align-items:center; flex-wrap:wrap; gap:var(--sp-4); margin-bottom:var(--sp-3); }
+/* 信息分组标题（识别卡片 sheet 同款：accent-deep 小标 + 底部金线）；组间 sp-3+sp-6=36rpx，组内 sp-3=12rpx */
+.form-group-title { font-size:var(--fs-caption); color:var(--accent-deep); font-weight:var(--fw-semi); margin-top:var(--sp-6); margin-bottom:var(--sp-3); padding-bottom:var(--sp-1); border-bottom:1rpx solid var(--border-accent); }
+.form-group-title:first-child { margin-top:0 }
+/* 查看态只读行：label + value 横排，值用主文字色（空值 '--' 弱化） */
+.form-row--view { min-height:88rpx; }
+.form-view-val { flex:1; min-width:0; font-size:var(--fs-body); color:var(--text-primary); font-variant-numeric:tabular-nums; }
+.form-view-val--empty { color:var(--text-tertiary); }
+/* 查看态保留置信度底色（低/中置信字段可读时即提示 ⚠️） */
+.form-row--view.tone-mid { background:var(--tone-mid); border-radius:var(--r-md); padding:0 var(--sp-5); }
+.form-row--view.tone-low { background:var(--tone-low); border-radius:var(--r-md); padding:0 var(--sp-5); }
+/* 编辑按钮：与保存按钮同规格（accent 深字） */
+.edit-btn { flex:1; height:88rpx; background:var(--accent); color:var(--btn-text-on-accent); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none; margin:0; }
+.edit-btn::after { border:none }
 .form-label { font-size:var(--fs-caption); color:var(--text-tertiary); flex-shrink:0; width:160rpx; letter-spacing:var(--ls-wide); }
 .form-label .req { color:var(--red); margin-left:var(--sp-1); font-weight:var(--fw-semi); }
-.form-input { flex:1; min-width:0; height:88rpx; background:var(--bg-input); border:2rpx solid transparent; border-radius:var(--r-md); padding:0 var(--sp-5); font-size:var(--fs-body); box-sizing:border-box; transition:border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+.form-input { flex:1; min-width:0; height:88rpx; background:var(--bg-input); border:2rpx solid transparent; border-radius:var(--r-md); padding:0 var(--sp-5); font-size:var(--fs-body); box-sizing:border-box; font-variant-numeric:tabular-nums; transition:border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
 .form-input:focus { border-color:var(--accent); background:var(--bg-card); }
 /* 原生 picker 显示容器（与 input 同规格，仅内部布局改为左右分布） */
 .form-picker { display:flex; align-items:center; justify-content:space-between; }
@@ -30,8 +46,8 @@
 .form-error { font-size:var(--fs-caption); color:var(--red); width:100%; padding:var(--sp-2) var(--sp-3); background:var(--red-dim); border-radius:var(--r-sm); display:none; line-height:var(--lh-snug); margin-left:calc(160rpx + var(--sp-4)); }
 .form-row.has-error .form-error { display:block; }
 /* UI 审计 #②：accent 白字 2.24:1 不达标，改深色主文字色（7.62:1） */
-.save-btn { flex:1; height:88rpx; background:var(--accent); color:var(--text-primary); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none; margin:0; }
+.save-btn { flex:1; height:88rpx; background:var(--accent); color:var(--btn-text-on-accent); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none; margin:0; }
 .cancel-btn { width:176rpx; height:88rpx; background:var(--bg-card); color:var(--text-secondary); font-size:var(--fs-lg); font-weight:var(--fw-medium); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:1rpx solid var(--border); margin:0; }
-.sheet-actions { display:flex; gap:var(--sp-4); margin-top:var(--sp-5); flex-shrink:0; }
+.sheet-actions { display:flex; gap:var(--sp-4); margin-top:var(--sp-4); flex-shrink:0; }
 .save-btn.is-loading { background:var(--accent-muted); box-shadow:none; }
 .save-btn[disabled] { opacity:0.7; }

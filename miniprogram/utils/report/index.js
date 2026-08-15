@@ -5,19 +5,15 @@
  * report-builder.js 直接桥接到此文件。
  */
 
-var { buildGaps, buildGapMatrix, buildCoverageMatrix } = require('./gap-engine')
-var { buildTimeline, parseMilestonesToTimeline } = require('./timeline-builder')
-var { buildChapters, buildConfidenceAlerts } = require('./chapter-builder')
-var { normalizeFamilyData, createNumbering } = require('./data-normalizer')
+var { buildGaps, buildCoverageMatrix } = require('./gap-engine')
+var { buildTimeline } = require('./timeline-builder')
+var { buildChapters } = require('./chapter-builder')
+var { normalizeFamilyData } = require('./data-normalizer')
 
 module.exports = {
   buildChapters: buildChapters,
   buildGaps: buildGaps,
-  buildGapMatrix: buildGapMatrix,
   buildCoverageMatrix: buildCoverageMatrix,
-  buildConfidenceAlerts: buildConfidenceAlerts,
   buildTimeline: buildTimeline,
-  parseMilestonesToTimeline: parseMilestonesToTimeline,
-  normalizeFamilyData: normalizeFamilyData,
-  createNumbering: createNumbering
+  normalizeFamilyData: normalizeFamilyData
 }

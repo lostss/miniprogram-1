@@ -1,5 +1,8 @@
 const { desensitize } = require('./pii-rules')
 
+// 可观测性审计：网络/超时采样上报限频（10s 内只报一次，降噪）
+let _lastNetReport = 0
+
 /**
  * errorHandler — 全局错误处理策略
  *
@@ -92,12 +95,17 @@ function handle(err, options) {
   const logMsg = '[errorHandler] ' + (opts.context || '') + ' | code=' + info.code + ' label=' + info.label + ' detail=' + info.detail
   console.error(logMsg)
 
-  // 云端上报（仅非静默且非网络错误）
-  if (!opts.silent && info.code !== 'NETWORK' && info.code !== 'TIMEOUT') {
-    try {
-      const app = getApp()
-      if (app && app._uploadError) app._uploadError(opts.context || 'handler', { message: desensitize(info.detail) })
-    } catch (e) { console.error('[errorHandler] 云端上报失败:', (e && e.message) || e) }
+  // 云端上报：非网络错误全量；网络/超时（用户端最高频运行时问题）采样 1% + 10s 限频降噪
+  if (!opts.silent) {
+    const isNet = info.code === 'NETWORK' || info.code === 'TIMEOUT'
+    const now = Date.now()
+    if (!isNet || (Math.random() < 0.01 && now - _lastNetReport > 10000)) {
+      if (isNet) _lastNetReport = now
+      try {
+        const app = getApp()
+        if (app && app._uploadError) app._uploadError(opts.context || 'handler', { message: desensitize(info.detail) })
+      } catch (e) { console.error('[errorHandler] 云端上报失败:', (e && e.message) || e) }
+    }
   }
 
   // 用户提示（错误提示审计 #5：mask 遮罩防止错误期间误操作）

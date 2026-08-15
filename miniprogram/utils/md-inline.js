@@ -14,26 +14,4 @@ function _toFullwidth(s) {
     .replace(/\.(?![a-zA-Z0-9])/g, '。')  // 避免替换版本号中的点
 }
 
-const _SUP_RE = /[⁹²³⁰⁴-⁹]/  // ¹²³⁰⁴-⁹ 上标 Unicode
-
-function _splitSupers(s) {
-  const parts = []
-  let i = 0
-  while (i < s.length) {
-    const ch = s[i]
-    if (_SUP_RE.test(ch)) {
-      let j = i + 1
-      while (j < s.length && _SUP_RE.test(s[j])) j++
-      parts.push({ t: s.slice(i, j), sup: true })
-      i = j
-    } else {
-      let j = i + 1
-      while (j < s.length && !_SUP_RE.test(s[j])) j++
-      parts.push({ t: s.slice(i, j), sup: false })
-      i = j
-    }
-  }
-  return parts.length ? parts : [{ t: s, sup: false }]
-}
-
-module.exports = { _toFullwidth, _splitSupers }
+module.exports = { _toFullwidth }

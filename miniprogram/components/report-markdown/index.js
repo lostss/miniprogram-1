@@ -1,7 +1,7 @@
 const { normalize: normalizeBlock } = require('../../utils/custom-blocks')
 
 Component({
-  properties: { chapters: { type: Array, value: [] } },
+  properties: { chapters: { type: Array, value: [] }, readonly: { type: Boolean, value: false } },
   data: { cards: [], _detailOpen: {} },
   observers: {
   chapters(arr) {
@@ -26,17 +26,27 @@ Component({
       this.setData({ cards })
     },
     onPolicyTap(e) {
+      if (this.data.readonly) return
       const id = e.currentTarget.dataset.id
       if (!id) return
       this.triggerEvent('policytap', { policyId: id })
     },
+      onStatusTap(e) {
+        if (this.data.readonly) return
+        const id = e.currentTarget.dataset.id
+        if (!id) return
+        this.triggerEvent('statuschange', { policyId: id })
+      },
+
     onRiskCheck(e) {
+      if (this.data.readonly) return
       const pid = e.currentTarget.dataset.pid || ''
       const field = e.currentTarget.dataset.field || ''
       if (!pid) return
       this.triggerEvent('riskcheck', { policyId: pid, field: field })
     },
     onChapterEdit(e) {
+      if (this.data.readonly) return
       const mode = e.currentTarget.dataset.mode
       const mid = e.currentTarget.dataset.mid || ''
       this.triggerEvent('chapteredit', { mode: mode || '', memberId: mid })

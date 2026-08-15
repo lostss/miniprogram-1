@@ -18,20 +18,24 @@
  */
 const { parseExpiry } = require('./_shared/parse-expiry')
 const { buildPolicyTable, fmtStatus, fmtOr } = require('./_shared/policy-table')
+const { yuanToWan } = require('./_shared/amount')
 
 // 报告专属列：含现金价值/已缴年/累计保费/回本点
 // 通过 ctx 接收 cashMap 和 thisYear
 const REPORT_COLUMNS = [
   { header: '产品', get: p => fmtOr(p.product_name) },
   { header: '险种', get: p => fmtOr(p.insurance_category) },
-  { header: '保额(万)', get: p => Number(((p.sum_assured || 0) / 10000).toFixed(1)) },
+  { header: '保额(万)', get: p => Number(yuanToWan(p.sum_assured || 0).toFixed(1)) },
   { header: '被保人', get: p => fmtOr(p.insured_name) },
   { header: '状态', get: fmtStatus },
   { header: '生效日', get: p => fmtOr(p.effective_date) },
   {
     header: '保障到期',
     get: (p, ctx) => {
-      const r = parseExpiry(p.insurance_period, p.effective_date, 0)
+      // 双字段兼容：OCR 文本（insurance_period）优先，兜底对话数字（coverage_term，0=终身）
+      const periodText = p.insurance_period || (p.coverage_term === 0 || p.coverage_term === '0' ? '终身' : (p.coverage_term ? String(p.coverage_term) + '年' : ''))
+      if (!periodText) return '-'
+      const r = parseExpiry(periodText, p.effective_date, 0)
       if (!r.year) return '-'
       return r.label === '长期' ? '终身' : String(r.year)
     }
@@ -69,7 +73,7 @@ const REPORT_COLUMNS = [
       const cash = ctx.cashMap.get(p.id)
       if (!cash || !p.annual_premium || !cash.cash_values) return '-'
       // 数值审计 #5：现金价值表按每万元保额列示，回本判定需按保额比例换算表值（50万保单表值×50）
-      const scale = Math.max(1, Math.round((p.sum_assured || 0) / 10000))
+      const scale = Math.max(1, Math.round(yuanToWan(p.sum_assured || 0)))
       for (const row of cash.cash_values) {
         if (row.v * scale >= p.annual_premium * row.y) return `第${row.y}年`
       }

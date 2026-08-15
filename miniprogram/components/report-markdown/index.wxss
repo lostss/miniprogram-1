@@ -3,22 +3,26 @@
 .md-root { padding:var(--sp-5) var(--sp-5) var(--sp-7); word-break:break-word; overflow-wrap:break-word; --missing-bg:var(--red-dim); --covered-bg:var(--ok-dim); }
 
 /* 章节卡：细边框 + 宽松节奏 + 入场动画 */
-.md-card { background:var(--bg-card); border-radius:var(--r-lg); padding:var(--sp-6) var(--sp-5); margin-bottom:var(--sp-6); border:1rpx solid var(--border); }
+/* 正文卡片间距：sp-8（卡间 > 卡内 padding，强化分块感；summary-card 与 md-card 相邻处同值） */
+.md-card { background:var(--bg-card); border-radius:var(--r-lg); padding:var(--sp-6); margin-bottom:var(--sp-8); border:1rpx solid var(--border); }
 
 /* 标题：衬线体章节号 + 暖金分割线 */
 /* UI 打磨：章节号 44→32rpx + accent→accent-deep 降权降饱和，章节标题为视觉第一 */
-.h1n { display:flex; align-items:baseline; gap:var(--sp-4); margin:0 0 var(--sp-5); padding-bottom:var(--sp-4); border-bottom:1rpx solid var(--border-accent); }
+.h1n { display:flex; align-items:baseline; gap:var(--sp-4); margin:0 0 var(--sp-6); padding-bottom:var(--sp-5); border-bottom:1rpx solid var(--border-accent); }
 .h1n-digit { font-size:var(--fs-lg); font-weight:var(--fw-bold); color:var(--accent-deep); line-height:var(--lh-none); font-family:var(--font-serif); font-variant-numeric:tabular-nums; }
 .h1n-title { font-size:var(--fs-xl); font-weight:var(--fw-bold); color:var(--text-primary); flex:1; font-family:var(--font-serif); letter-spacing:var(--ls-wide); }
 /* UI 审计 V-S1：--fw-regular 未定义（app.wxss 仅 normal/medium/semi/bold），改 --fw-normal */
 .h1n-unit { font-size:var(--fs-caption); color:var(--text-secondary); flex-shrink:0; margin-right:var(--sp-2); font-weight:var(--fw-normal); }
-.h1n-edit { font-size:var(--fs-caption); color:var(--accent-deep); background:var(--accent-dim); border-radius:var(--r-full); padding:var(--sp-2) var(--sp-4); flex-shrink:0; line-height:var(--lh-none); }
+/* 编辑入口：视觉保持小 pill（88rpx 大底色有"补丁感"，已回退），触控热区由伪元素透明外扩至 ≥88rpx */
+.h1n-edit { position:relative; display:inline-flex; align-items:center; font-size:var(--fs-caption); color:var(--accent-deep); background:var(--accent-dim); border-radius:var(--r-full); padding:var(--sp-2) var(--sp-4); flex-shrink:0; line-height:var(--lh-none); }
+.h1n-edit::after { content:''; position:absolute; left:-24rpx; right:-24rpx; top:50%; height:88rpx; transform:translateY(-50%); }
+.h1n-edit:active { opacity:0.6 }
 
 .h2 { font-size:var(--fs-body); font-weight:var(--fw-bold); color:var(--text-primary); margin:var(--sp-5) 0 var(--sp-3); padding-left:var(--sp-4); border-left:4rpx solid var(--accent-muted); }
 
 .cal-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:var(--sp-3); margin:var(--sp-4) 0; }
 .cal-cell { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:var(--sp-4) var(--sp-2); min-height:96rpx; background:var(--bg-input); border-radius:var(--r-md); box-sizing:border-box; }
-.cal-m { font-size:var(--fs-tiny); color:var(--text-secondary); margin-bottom:var(--sp-2); font-family:var(--font-serif); }
+.cal-m { font-size:var(--fs-tiny); color:var(--text-secondary); margin-bottom:var(--sp-2); font-family:var(--font-serif); letter-spacing:var(--ls-wide); }
 .cal-v { font-size:var(--fs-caption); font-weight:var(--fw-bold); color:var(--text-primary); font-variant-numeric:tabular-nums; }
 .cal-none { color:var(--text-disabled); font-weight:var(--fw-normal); }
 
@@ -51,6 +55,9 @@
 .tl-green { background:var(--green); }
 .tl-yellow { background:var(--amber); }
 .tl-content { flex:1; min-width:0; display:flex; flex-direction:column; gap:var(--sp-1); }
+/* 年份组内产品行：名称 + 节点（/分隔）同行基线对齐，多产品纵向堆叠 */
+.tl-prod { display:flex; align-items:baseline; flex-wrap:wrap; gap:0 var(--sp-2); }
+.tl-prod + .tl-prod { margin-top:var(--sp-1); }
 .tl-year { font-size:var(--fs-caption); font-weight:var(--fw-bold); color:var(--accent-deep); font-family:var(--font-serif); font-variant-numeric:tabular-nums; }
 .tl-label { font-size:var(--fs-caption); color:var(--text-primary); line-height:var(--lh-body); }
 /* soon 高亮：从 dot 中心左侧（覆盖整圆）延伸，item 自身不移位 → dot 恒居轴线 */
@@ -69,7 +76,6 @@
 .pano-hd { display:flex; background:var(--accent-dim); }
 .pano-hd-cell { flex:1; padding:var(--sp-4) var(--sp-2); font-size:var(--fs-caption); color:var(--accent-deep); font-weight:var(--fw-semi); text-align:center; letter-spacing:var(--ls-wide); }
 .pano-hd-first { flex:0 0 84rpx; }
-.pano-hd-total { flex:0 0 96rpx; }
 .pano-row { display:flex; }
 .pano-row:nth-child(even) { background:var(--bg-input); }
 .pano-cell { flex:1; padding:var(--sp-3) var(--sp-2); font-size:var(--fs-caption); text-align:center; display:flex; align-items:center; justify-content:center; }
@@ -77,14 +83,21 @@
 .pano-name-total { color:var(--accent-deep); }
 .pano-status { min-height:56rpx; border-radius:var(--r-sm); margin:var(--sp-1); font-weight:var(--fw-semi); }
 .pano-val { font-size:var(--fs-caption); line-height:var(--lh-tight); font-variant-numeric:tabular-nums; }
-.ps-ok { background:var(--covered-bg); } .ps-ok .pano-val { color:var(--ok); }
-.ps-partial { background:var(--amber-dim); } .ps-partial .pano-val { color:var(--amber); }
-.ps-missing { background:var(--missing-bg); } .ps-missing .pano-val { color:var(--red); }
+.ps-ok { background:var(--covered-bg); } .ps-ok .pano-val { color:var(--ok-deep); }
+.ps-partial { background:var(--amber-dim); } .ps-partial .pano-val { color:var(--amber-deep); }
+.ps-missing { background:var(--missing-bg); } .ps-missing .pano-val { color:var(--red-deep); }
 .ps-hold { background:var(--accent-dim); } .ps-hold .pano-val { color:var(--accent-deep); }
 .ps-blocked { background:var(--accent-dim); } .ps-blocked .pano-val { color:var(--text-secondary); }
 .ps-na { background:var(--bg-input); } .ps-na .pano-val { color:var(--text-disabled); }
 .ps-total { background:var(--accent-dim); } .ps-total .pano-val { color:var(--accent-deep); font-weight:var(--fw-bold); }
 .ps-grand { background:var(--accent-dim); } .ps-grand .pano-val { color:var(--accent-deep); font-weight:var(--fw-bold); }
+.pano-legend { display:flex; flex-wrap:wrap; gap:var(--sp-4); justify-content:center; margin-top:var(--sp-3); }
+.pano-legend-item { display:flex; align-items:center; gap:var(--sp-2); font-size:var(--fs-tiny); color:var(--text-tertiary); }
+.pano-legend-dot { width:20rpx; height:20rpx; border-radius:4rpx; box-sizing:border-box; }
+.lg-ok { background:var(--covered-bg); border:2rpx solid var(--ok-deep); }
+.lg-partial { background:var(--amber-dim); border:2rpx solid var(--amber-deep); }
+.lg-missing { background:var(--missing-bg); border:2rpx solid var(--red-deep); }
+.lg-na { background:var(--bg-input); border:2rpx solid var(--border); }
 
 /* 缴费月历峰值高亮（浅金底 + 深金字，与表头语义分流） */
 .cal-peak { background:var(--accent-dim); }
@@ -100,33 +113,64 @@
 .ft-nodes { display:flex; flex-wrap:wrap; gap:var(--sp-3); width:100%; box-sizing:border-box; }
 /* 家庭结构：方形圆角卡片，自适应内容宽度，平铺流动排列 */
 .ft-node { display:flex; align-items:center; justify-content:center; padding:var(--sp-4) var(--sp-6); background:var(--bg-input); border-radius:var(--r-lg); }
+.ft-node:active { opacity:0.6 }
 .ft-info { display:flex; flex-direction:column; align-items:center; gap:0; min-width:0; }
 .ft-name { font-size:var(--fs-body); font-weight:var(--fw-semi); color:var(--text-primary); }
 .ft-role { font-size:var(--fs-tiny); color:var(--text-tertiary); margin-top:2rpx; }
-/* 家庭财务：block 容器无卡样式（章卡 md-card 即卡）；数字块复用全局 num-cell（审计 P3 与保障摘要 sc-cell 同构合并） */
+/* 家庭财务：block 容器无卡样式（章卡 md-card 即卡） */
 .fin-wrap { margin:var(--sp-4) 0 0; }
 .fin-grid { display:flex; gap:var(--sp-3); }
+/* 数字块（组件隔离：app.wxss 全局类不作用于组件，需组件内自持；与 app.wxss .num-cell 同源，改一处须同步另一处） */
+.num-cell { flex:1; min-width:0; display:flex; flex-wrap:wrap; align-items:baseline; justify-content:center; gap:var(--sp-1); background:var(--bg-root); border-radius:var(--r-lg); padding:var(--sp-4) var(--sp-3); }
+.num-val { font-size:var(--fs-2xl); font-weight:var(--fw-bold); color:var(--text-primary); font-family:var(--font-serif); line-height:var(--lh-none); font-variant-numeric:tabular-nums; }
+.num-unit { font-size:var(--fs-tiny); color:var(--text-secondary); }
+.num-lbl { width:100%; text-align:center; font-size:var(--fs-tiny); color:var(--text-tertiary); margin-top:var(--sp-2); letter-spacing:var(--ls-wide); }
 
 /* 特别提醒：置信度告警 */
 .risk-wrap { margin:var(--sp-4) 0; }
 .risk-alerts { display:flex; flex-direction:column; gap:var(--sp-3); }
-.risk-title { font-size:var(--fs-caption); font-weight:var(--fw-bold); color:var(--red); margin-bottom:var(--sp-2); }
-.risk-item { font-size:var(--fs-caption); color:var(--text-primary); line-height:var(--lh-body); background:var(--missing-bg); border-radius:var(--r-sm); padding:var(--sp-3) var(--sp-4); }
+.risk-title { font-size:var(--fs-caption); font-weight:var(--fw-bold); color:var(--red-deep); margin-bottom:var(--sp-2); }
+.risk-item { font-size:var(--fs-base); color:var(--text-primary); line-height:var(--lh-body); background:var(--missing-bg); border-radius:var(--r-sm); padding:var(--sp-3) var(--sp-4); }
 .risk-name { color:var(--text-primary); font-weight:var(--fw-medium); }
-.risk-issue { color:var(--red); }
-/* UI 打磨：核对入口统一 pill（与章节卡 [编辑]/成员管理编辑同构），行内右对齐 */
-.risk-check { display:inline-block; font-size:var(--fs-caption); color:var(--accent-deep); background:var(--accent-dim); border-radius:var(--r-full); padding:var(--sp-1) var(--sp-4); margin-left:var(--sp-3); line-height:var(--lh-body); }
+.risk-issue { color:var(--red-deep); }
+/* UI 打磨：核对入口统一 pill（与章节卡 [编辑] 同构），行内右对齐；热区同 h1n-edit 伪元素外扩 */
+.risk-check { position:relative; display:inline-flex; align-items:center; font-size:var(--fs-caption); color:var(--accent-deep); background:var(--accent-dim); border-radius:var(--r-full); padding:var(--sp-1) var(--sp-4); margin-left:var(--sp-3); line-height:var(--lh-body); }
+.risk-check::after { content:''; position:absolute; left:-24rpx; right:-24rpx; top:50%; height:88rpx; transform:translateY(-50%); }
+.risk-check:active { opacity:0.6 }
 
-/* 附录保单卡片（按成员分组） */
+/* 附录保单卡片（二级分组：被保人 → 保司） */
 .pc-wrap { margin:var(--sp-4) 0; }
 .pc-group { margin-bottom:var(--sp-6); }
-.pc-group-name { font-size:var(--fs-caption); font-weight:var(--fw-bold); color:var(--accent-deep); margin-bottom:var(--sp-3); padding-left:var(--sp-3); border-left:4rpx solid var(--accent); }
+.pc-group-name { font-size:var(--fs-caption); font-weight:var(--fw-bold); color:var(--accent-deep); font-family:var(--font-serif); margin-bottom:var(--sp-3); padding-left:var(--sp-3); border-left:4rpx solid var(--accent); }
+/* 保司子组：小标题降一级（正文字色 + 细左边线），与被保人组名拉开层级 */
+.pc-subgroup { margin-bottom:var(--sp-4); }
+.pc-subgroup-name { font-size:var(--fs-tiny); font-weight:var(--fw-semi); color:var(--text-secondary); letter-spacing:var(--ls-wide); margin-bottom:var(--sp-2); padding-left:var(--sp-3); border-left:2rpx solid var(--border-accent); }
 .pc-card { background:var(--bg-input); border:1rpx solid var(--border); border-radius:var(--r-md); padding:var(--sp-5); margin-bottom:var(--sp-3); }
-.pc-card-top { display:flex; align-items:baseline; justify-content:space-between; gap:var(--sp-3); margin-bottom:var(--sp-2); }
-.pc-name { font-size:var(--fs-body); font-weight:var(--fw-semi); color:var(--text-primary); flex:1; min-width:0; }
-.pc-cat { font-size:var(--fs-tiny); color:var(--accent-deep); background:var(--accent-dim); border-radius:var(--r-full); padding:var(--sp-1) var(--sp-3); flex-shrink:0; }
-.pc-card-meta { font-size:var(--fs-caption); color:var(--text-secondary); font-variant-numeric:tabular-nums; }
-.pc-card-date { font-size:var(--fs-tiny); color:var(--text-tertiary); margin-top:var(--sp-2); }
+.pc-card:active { opacity:0.6 }
+.pc-card-top { display:flex; align-items:center; justify-content:space-between; gap:var(--sp-3); }
+.pc-name-wrap { display:flex; align-items:center; gap:var(--sp-2); flex:1; min-width:0; }
+
+.pc-name { font-size:var(--fs-body); font-weight:var(--fw-semi); color:var(--text-primary); min-width:0; }
+.pc-cat { font-size:var(--fs-tiny); color:var(--text-secondary); font-weight:var(--fw-normal); }
+.pc-top-right { display:flex; align-items:center; gap:var(--sp-2); flex-shrink:0; }
+.pc-status { font-size:var(--fs-tiny); padding:var(--sp-1) var(--sp-3); border-radius:var(--r-full); white-space:nowrap; flex-shrink:0; }
+.pc-status.pressable:active { opacity:0.6; }
+.pc-status--active { color:var(--ok-deep, #1a7f4f); background:var(--ok-dim, #e6f4ec); }
+.pc-status--lapsed { color:var(--amber-deep); background:var(--amber-dim); }
+.pc-status--surrendered { color:var(--text-secondary); background:var(--bg-input); }
+.pc-status--claim_terminated { color:var(--accent-deep); background:var(--accent-dim); }
+.pc-status--expired { color:var(--red); background:var(--red-dim); }
+.pc-status--cancelled { color:var(--text-secondary); background:var(--bg-input); }
+.pc-status--suspicious { color:var(--amber-deep); background:var(--amber-dim); }
+.pc-card--inactive { opacity:0.72; }
+
+/* 三行简写：横排数据行，无字段名（单位自带语义），分隔线区分产品行 */
+.pc-meta-row { font-size:var(--fs-caption); color:var(--text-secondary); font-variant-numeric:tabular-nums; margin-top:var(--sp-1); }
+.pc-meta-row:first-of-type { margin-top:var(--sp-3); padding-top:var(--sp-3); border-top:1rpx solid var(--border); }
+
+/* 章节前言（保障汇总缺失提示）：告警语义——浅红底 + 红字，与「特别提醒」risk-item 同构；
+   区别于中性灰注释 .md-note（当前无章节使用）。此前无样式定义，默认字号 32rpx 比正文还大 */
+.md-pre { font-size:var(--fs-base); color:var(--red-deep); line-height:var(--lh-body); margin:var(--sp-4) 0 0; padding:var(--sp-3) var(--sp-4); background:var(--red-dim); border-radius:var(--r-sm); }
 
 /* 章节内注释 */
 .md-note { font-size:var(--fs-tiny); color:var(--text-tertiary); margin-top:var(--sp-3); text-align:right; }
@@ -134,5 +178,5 @@
 /* 章节折叠（附录默认收起，编辑风折叠头） */
 .fold-hd { display:flex; align-items:center; justify-content:space-between; padding:var(--sp-5) var(--sp-1); margin-bottom:var(--sp-2); border-bottom:1rpx solid var(--border-accent); }
 .fold-title { font-size:var(--fs-lg); font-weight:var(--fw-bold); color:var(--text-primary); font-family:var(--font-serif); letter-spacing:var(--ls-wide); }
-.fold-arrow { font-size:var(--fs-caption); color:var(--accent-deep); padding:var(--sp-2) var(--sp-3); min-height:44rpx; display:flex; align-items:center; transition:transform var(--dur-base) var(--ease-out); }
+.fold-arrow { display:inline-flex; align-items:center; justify-content:center; min-height:88rpx; font-size:var(--fs-caption); color:var(--accent-deep); padding:var(--sp-2) var(--sp-3); box-sizing:border-box; transition:transform var(--dur-base) var(--ease-out); }
 .fold-hint { font-size:var(--fs-caption); color:var(--text-tertiary); text-align:center; padding:var(--sp-6) var(--sp-5); background:var(--bg-input); border-radius:var(--r-md); margin-top:var(--sp-3); }

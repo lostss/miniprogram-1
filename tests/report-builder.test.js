@@ -267,13 +267,16 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     expect(ch.find(x => x.key === 'appendix_policies')).toBeDefined()
   })
 
-  test('附录保单明细：按成员分组卡片（含展示字段）', () => {
+  test('附录保单明细：被保人→保司二级分组卡片（含展示字段）', () => {
     const ch = buildChapters(reportCustomer(), report)
     const pc = ch[5].customBlocks.find(b => b.t === 'policy_cards')
     expect(pc).toBeDefined()
     expect(pc.groups.length).toBe(1)
     expect(pc.groups[0].name).toBe('李阳勇')
-    const p = pc.groups[0].policies[0]
+    // 二级分组：保司子组（无 insurer 数据归「未知保司」）
+    expect(pc.groups[0].subgroups.length).toBe(1)
+    expect(pc.groups[0].subgroups[0].name).toBe('未知保司')
+    const p = pc.groups[0].subgroups[0].policies[0]
     expect(p.sum_display).toBe('100万')
     expect(p.premium_display).toBe('8000元')
     // 有效保单数从底部 note 提升至标题右侧 unit

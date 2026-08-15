@@ -48,6 +48,7 @@ module.exports = {
   writePoliciesBatch: policy.writePoliciesBatch,
   deletePolicy: policy.deletePolicy,
   updatePolicy: policy.updatePolicy,
+  changePolicyStatus: policy.changePolicyStatus,
   writeCashValue: policy.writeCashValue,
 
   // message-write

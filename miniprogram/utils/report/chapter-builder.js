@@ -21,6 +21,7 @@ var { normalizeFamilyData } = require('./data-normalizer')
 var { buildGapMatrix, buildCoverageMatrix } = require('./gap-engine')
 var { buildTimeline } = require('./timeline-builder')
 var { canonCat } = require('../thresholds')
+var { yuanToWan, fmtYuan } = require('../amount')
 var createBlock = require('../custom-blocks').create
 
 // 险种短名：卡片展示用（重疾险 → 重疾；寿险保留全称，'寿' 不可读）
@@ -33,15 +34,56 @@ function _shortCat(cat) {
   return s
 }
 
-// 金额展示：≥1万 → 'X万'（去尾 .0），否则 'X元'（WXML 不支持拼接，预处理）
+// 保单状态展示文案（与后端 policy-status.js 保持同构）
+const POLICY_STATUS_LABELS = {
+  active: '有效',
+  lapsed: '失效',
+  surrendered: '退保',
+  claim_terminated: '理赔终止',
+  expired: '到期终止',
+  cancelled: '退保',
+  suspicious: '数据异常'
+}
+
+
+// 金额展示：薄包装 amount.js fmtYuan（契约 2 位精度，消除 1/2 位漂移）；
+// 仅补"未知"语义（null/''/NaN → '未知'），0 是有效值显示 '0元'
 function _fmtAmount(v) {
-  var n = Number(v) || 0
-  if (n >= 10000) {
-    var wan = n / 10000
-    var x = Math.round(wan * 100) / 100
-    return (x === Math.floor(x) ? String(x) : String(x)) + '万'
-  }
-  return String(Math.round(n)) + '元'
+  if (v === null || v === undefined || v === '') return '未知'
+  var n = Number(v)
+  if (isNaN(n)) return '未知'
+  return fmtYuan(n)
+}
+
+// 展示行拼接：缺失项以「未知」占位（与 _fmtAmount 口径一致），有值项用给定文本；项间 ' · ' 分隔
+function _joinRow(items) {
+  return items.map(function(it) { return it.v ? it.text : '未知' }).join(' · ')
+}
+
+// 保障期限：OCR 文本（insurance_period）或对话数字（coverage_term，0=终身）——双字段并存兼容
+function _periodText(p) {
+  if (p.insurance_period) return String(p.insurance_period)
+  var ct = p.coverage_term
+  if (ct === 0 || ct === '0') return '终身'
+  if (ct) return String(ct) + '年'
+  return ''
+}
+
+// 一年期判定：insurance_period 文本「1年/一年(期)」或 coverage_term=1（^ 锚定防误匹配 21年 等）
+function _isOneYear(p) {
+  if (/^(1|一)年/.test(String(p.insurance_period || '').trim())) return true
+  var ct = p.coverage_term
+  return ct === 1 || ct === '1'
+}
+
+// 缴费年期：OCR 文本（payment_period）或对话数字（premium_term，0=趸交）；一年期产品固定「一次性」
+function _payTermText(p) {
+  if (_isOneYear(p)) return '一次性'
+  if (p.payment_period) return String(p.payment_period)
+  var pt = p.premium_term
+  if (pt === 0 || pt === '0') return '趸交'
+  if (pt) return '缴' + String(pt) + '年'
+  return ''
 }
 
 // 成员角色分组排序：长辈 → 父母 → 本人/配偶 → 子女
@@ -172,21 +214,45 @@ function buildChapters(family, report) {
   })
 
   // ======== ④ 缴费年历和关键节点 ========
-  // 设计稿决策：仅展示缴费期满/保障期满（排除每年缴费提醒 payment）
-  // 现价回本节点依赖 family.cashValues（getFamily 并行返回，见 dataQuery/family-detail.js）
-  var timeline = buildTimeline(policies, members, family.cashValues).filter(function(e) { return e.type !== 'payment' })
-  var timelineItems = timeline.map(function(e) {
-    var item = { y: e.y, type: e.type, soon: e.soon, label: e.label }
-    if (e.type === 'expiry') {
-      item.date = e.y + '年'
-      item.name = (e.label || '').replace(/（.+?）到期.*$/, '')
-      item.note = '需关注续保或替换'
-    } else {
-      item.date = e.y + '年'
-      item.name = (e.label || '').replace(/（.+?）缴完.*$/, '')
-      item.note = '缴费期满'
-    }
-    return item
+  // 设计稿决策：仅展示三种节点——保障期满/交费期满/现价保本（排除每年缴费提醒 payment）
+  // 结构：年份为第一层节点（时间轴行）；该年份下多款产品归类显示；
+  //       单产品同年多个节点以「/」分隔。产品分组键含被保人，防同产品跨被保人误合并。
+  // 现价保本节点依赖 family.cashValues（getFamily 并行返回，见 dataQuery/family-detail.js）
+  var NODE_TEXT = { expiry: '保障期满', paydone: '交费期满', breakeven: '现价保本' }
+  var timeline = buildTimeline(active, members, family.cashValues).filter(function(e) { return e.type !== 'payment' })
+  var byYear = {}
+  for (var ti = 0; ti < timeline.length; ti++) {
+    var ev = timeline[ti]
+    var prodKey = String(ev.label || '').replace(/(到期|缴完|现价回本)$/, '')
+    if (!byYear[ev.y]) byYear[ev.y] = {}
+    if (!byYear[ev.y][prodKey]) byYear[ev.y][prodKey] = []
+    byYear[ev.y][prodKey].push(ev)
+  }
+  var timelineItems = []
+  Object.keys(byYear).map(Number).sort(function(a, b) { return a - b }).forEach(function(yr) {
+    var prods = byYear[yr]
+    var policiesOfYr = Object.keys(prods).map(function(pk) {
+      var nodes = prods[pk]
+      // 同产品同年多节点：按类型固定顺序排列（保障期满→交费期满→现价保本）
+      nodes.sort(function(a, b) {
+        var order = { expiry: 0, paydone: 1, breakeven: 2 }
+        return order[a.type] - order[b.type]
+      })
+      return {
+        name: pk,
+        note: nodes.map(function(n) { return NODE_TEXT[n.type] }).join('/')
+      }
+    })
+    var allNodes = [].concat.apply([], Object.keys(prods).map(function(pk) { return prods[pk] }))
+    timelineItems.push({
+      label: yr + '年',
+      y: yr,
+      // dot 颜色（wxml 按 type 着色）：该年含保障期满用红（最需关注），其余绿
+      type: allNodes.some(function(n) { return n.type === 'expiry' }) ? 'expiry' : 'paydone',
+      soon: false,
+      date: yr + '年',
+      policies: policiesOfYr
+    })
   })
   ch.push({
     key: 'premium_timeline', title: '保障节点', num: '5',
@@ -204,33 +270,75 @@ function buildChapters(family, report) {
   }
 
   // ======== ⑦ 附录：保单明细 ========
+  // 二级分组：先按被保人、再按保险公司归类；保司缺失归「未知保司」
+  // 组名排序：被保人/保司均按名称排序
+  // 组内排序：保单号升序为主键（同号主险+附加险自然相邻），同号内按产品名，空保单号排最后
   var groups = []
   var byMember = {}
-  var sorted = [].concat(active).sort(function(a, b) {
+    // 附录展示所有非软删保单（含失效/退保/理赔终止/到期终止），并带状态标签；
+    // 保障汇总/缴费月历仍只使用 active（见 data-normalizer）
+    const displayPolicies = policies.filter(function(p) { return p.status !== 'deleted' })
+
+  var sorted = [].concat(displayPolicies).sort(function(a, b) {
+    var pa = String(a.policy_number || '')
+    var pb = String(b.policy_number || '')
+    if (!pa && pb) return 1
+    if (pa && !pb) return -1
+    if (pa && pb && pa !== pb) return pa.localeCompare(pb, 'zh')
     return String(a.product_name || '').localeCompare(String(b.product_name || ''), 'zh')
   })
   for (var i = 0; i < sorted.length; i++) {
     var p = sorted[i]
     var n = p.insured_name || '未归属'
-    if (!byMember[n]) byMember[n] = []
-    byMember[n].push({
+    var ins = p.insurer || '未知保司'
+    if (!byMember[n]) byMember[n] = {}
+    if (!byMember[n][ins]) byMember[n][ins] = []
+    var eff = (p.contract_effective_date || p.effective_date || '').substring(0, 10)
+    var sumD = _fmtAmount(p.sum_assured)
+    var premD = _fmtAmount(p.annual_premium)
+    var periodD = _periodText(p)
+    var payD = _payTermText(p)
+    // 三行简写：产品 / 保障信息 / 缴费信息，缺失项以「未知」占位（_joinRow）
+    var meta1 = _joinRow([
+      { v: eff, text: eff + '起' },
+      { v: sumD !== '未知', text: sumD },
+      { v: periodD, text: periodD }
+    ])
+    var meta2 = _joinRow([
+      { v: premD !== '未知', text: premD + '/年' },
+      { v: payD, text: payD }
+    ])
+    byMember[n][ins].push({
       policy_id: p.id || p._id || '',
       product_name: p.product_name || '未知产品',
       category: _shortCat(canonCat(p.insurance_category || '其他')),
+        status: p.status || 'active',
+        status_label: POLICY_STATUS_LABELS[p.status || 'active'] || (p.status || '有效'),
+
       sum_assured: p.sum_assured || 0,
       annual_premium: p.annual_premium || 0,
-      effective_date: (p.contract_effective_date || p.effective_date || '').substring(0, 10),
-      sum_display: _fmtAmount(p.sum_assured || 0),
-      premium_display: _fmtAmount(p.annual_premium || 0)
+      effective_date: eff,
+      sum_display: sumD,
+      premium_display: premD,
+      period_display: periodD,
+      payment_display: payD,
+      meta1: meta1,
+      meta2: meta2
     })
   }
-  Object.keys(byMember).forEach(function(n) { groups.push({ name: n, policies: byMember[n] }) })
+  Object.keys(byMember).sort(function(a, b) { return a.localeCompare(b, 'zh') }).forEach(function(n) {
+    var subgroups = []
+    Object.keys(byMember[n]).sort(function(a, b) { return a.localeCompare(b, 'zh') }).forEach(function(ins) {
+      subgroups.push({ name: ins, policies: byMember[n][ins] })
+    })
+    groups.push({ name: n, subgroups: subgroups })
+  })
   // 附录不作为编号章节（无 num），仅保留标题 + 保单卡片
   ch.push({
     key: 'appendix_policies', title: '附录：保单明细',
     customBlocks: [createBlock('policy_cards', { groups: groups })],
     // 有效保单数提升至标题右侧（unit 字段渲染于标题旁，原 note 在章底部）
-    unit: '有效保单 ' + policyCount + ' 份'
+    unit: '有效 ' + policyCount + ' 份 / 共 ' + displayPolicies.length + ' 份'
   })
 
   return ch

@@ -58,6 +58,8 @@ describe('buildBatchExtractionPrompt', () => {
     expect(systemPrompt).toContain('JSON 数组')
     expect(systemPrompt).toContain('idx')
     expect(systemPrompt).toContain('单张图失败不影响其他图')
+    // 保险公司简称契约与单图 prompt 共享（CORE_CONSTRAINTS 单一事实源）
+    expect(systemPrompt).toContain('品牌简称')
   })
 
   test('systemPrompt 包含输入特征说明（OCR表格语义还原）', () => {

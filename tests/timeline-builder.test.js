@@ -35,7 +35,7 @@ describe('buildTimeline 现价回本节点', () => {
     const be = events.find(e => e.type === 'breakeven')
     expect(be).toBeDefined()
     expect(be.y).toBe(2027) // 2026 + (2-1)
-    expect(be.label).toContain('现价=已缴保费')
+    expect(be.label).toContain('现价回本')
   })
 
   test('已回本（自然年 ≤ 今年）→ 不显示', () => {

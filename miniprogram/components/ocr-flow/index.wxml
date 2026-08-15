@@ -61,13 +61,17 @@
             <text>识别异常 · {{ocrMask.procError.length}}份</text>
             <text class="proc-retry-all pressable" bindtap="onProcRetryAll">{{ocrMask.procBusy ? '重试中...' : '全部重试'}}</text>
           </view>
-          <view class="proc-card proc-card--err" wx:for="{{ocrMask.procError}}" wx:key="fileId" data-fileid="{{item.fileId}}" data-src="{{item.thumb}}" catchtap="onProcPreview">
+          <view class="proc-card proc-card--err" wx:for="{{ocrMask.procError}}" wx:key="fileId" data-fileid="{{item.fileId}}" catchtap="onProcManualAdd">
+            <!-- 点击缩略图才展开大图（catchtap 阻止冒泡到卡片，卡片点击=展开空表单编辑） -->
             <image class="proc-thumb" wx:if="{{item.thumb}}" src="{{item.thumb}}" mode="aspectFill" data-src="{{item.thumb}}" catchtap="onProcPreview" />
             <view class="proc-info">
-              <text class="proc-err">{{item.error}}</text>
+              <!-- 失败原因横滚：单行横向滚动展示完整文案（原 ellipsis 截断空间不足） -->
+              <scroll-view class="proc-err-scroll" scroll-x enhanced show-scrollbar="{{false}}">
+                <text class="proc-err">{{item.error}}</text>
+              </scroll-view>
             </view>
             <view class="proc-side">
-              <text class="proc-manual-btn pressable" data-fileid="{{item.fileId}}" catchtap="onProcManualAdd">手动录入</text>
+              <text class="proc-ignore-btn pressable" data-fileid="{{item.fileId}}" catchtap="onProcIgnore">移除</text>
               <text class="proc-retry-btn pressable {{item.retrying ? 'is-busy' : ''}}" data-fileid="{{item.fileId}}" catchtap="onProcRetryOne">{{item.retrying ? '重试中' : '重试'}}</text>
             </view>
           </view>
@@ -75,7 +79,7 @@
       </scroll-view>
       <view class="ocr-actions-row">
         <button class="ocr-modify-btn pressable" catchtap="onProcDiscardAll" aria-label="丢弃全部结果">全部放弃</button>
-        <button class="ocr-confirm-btn pressable {{ocrMask.confirming ? 'is-loading' : ''}}" bindtap="onProcConfirm" disabled="{{ocrMask.confirming || ocrMask.procBusy}}" aria-label="确认全部保单">{{ocrMask.confirming ? '保存中...' : '全部确认'}}</button>
+        <button class="ocr-confirm-btn pressable {{ocrMask.confirming ? 'is-loading' : ''}}" bindtap="onProcConfirm" disabled="{{ocrMask.confirming || ocrMask.procBusy}}" aria-label="确认全部保单">{{ocrMask.confirming ? '保存中...' : (ocrMask.procError.length > 0 ? '智能确认' : '全部确认')}}</button>
       </view>
     </block>
     <!-- 写入中 -->
@@ -148,11 +152,11 @@
         <view class="role-row" wx:for="{{ocrMask.roleList}}" wx:key="memberId">
           <text class="role-name">{{item.name}}</text>
           <view class="role-opts">
-            <text class="role-opt {{item.role === '本人' ? 'role-opt--on' : ''}} {{item.conflict['本人'] ? 'role-opt--off' : ''}}" data-idx="{{index}}" data-role="本人" bindtap="onRolePick">本人<text class="role-opt-holder" wx:if="{{item.conflict['本人']}}">({{item.conflict['本人']}})</text></text>
-            <text class="role-opt {{item.role === '配偶' ? 'role-opt--on' : ''}} {{item.conflict['配偶'] ? 'role-opt--off' : ''}}" data-idx="{{index}}" data-role="配偶" bindtap="onRolePick">配偶<text class="role-opt-holder" wx:if="{{item.conflict['配偶']}}">({{item.conflict['配偶']}})</text></text>
-            <text class="role-opt {{item.role === '子女' ? 'role-opt--on' : ''}}" data-idx="{{index}}" data-role="子女" bindtap="onRolePick">子女</text>
-            <text class="role-opt {{item.role === '父母' ? 'role-opt--on' : ''}}" data-idx="{{index}}" data-role="父母" bindtap="onRolePick">父母</text>
-            <text class="role-opt {{item.role === '其他' ? 'role-opt--on' : ''}}" data-idx="{{index}}" data-role="其他" bindtap="onRolePick">其他</text>
+            <text class="role-opt {{item.role === '本人' ? 'role-opt--on' : ''}} {{item.conflict['本人'] ? 'role-opt--off' : ''}}" data-idx="{{index}}" data-role="本人" bindtap="onRolePick" aria-label="将{{item.name}}设为本人">本人<text class="role-opt-holder" wx:if="{{item.conflict['本人']}}">({{item.conflict['本人']}})</text></text>
+            <text class="role-opt {{item.role === '配偶' ? 'role-opt--on' : ''}} {{item.conflict['配偶'] ? 'role-opt--off' : ''}}" data-idx="{{index}}" data-role="配偶" bindtap="onRolePick" aria-label="将{{item.name}}设为配偶">配偶<text class="role-opt-holder" wx:if="{{item.conflict['配偶']}}">({{item.conflict['配偶']}})</text></text>
+            <text class="role-opt {{item.role === '子女' ? 'role-opt--on' : ''}}" data-idx="{{index}}" data-role="子女" bindtap="onRolePick" aria-label="将{{item.name}}设为子女">子女</text>
+            <text class="role-opt {{item.role === '父母' ? 'role-opt--on' : ''}}" data-idx="{{index}}" data-role="父母" bindtap="onRolePick" aria-label="将{{item.name}}设为父母">父母</text>
+            <text class="role-opt {{item.role === '其他' ? 'role-opt--on' : ''}}" data-idx="{{index}}" data-role="其他" bindtap="onRolePick" aria-label="将{{item.name}}设为其他">其他</text>
           </view>
         </view>
       </scroll-view>
@@ -165,35 +169,5 @@
   </view>
 </view>
 
-<!-- 编辑 sheet -->
-<view class="ocr-sheet-mask" wx:if="{{ocrSheet.visible}}" bindtap="onSheetClose" catchtouchmove="onMaskTouchMove"></view>
-<view class="ocr-sheet {{ocrSheet.visible ? 'ocr-sheet--show' : ''}}" catchtouchmove="onMaskTouchMove">
-  <view class="ocr-sheet-head">
-    <text class="ocr-sheet-title">{{ocrSheet.title || '编辑保单信息'}}</text>
-    <view class="ocr-sheet-close pressable" bindtap="onSheetClose"><image class="ocr-sheet-close-icon" src="/images/close.svg" mode="aspectFit" /></view>
-  </view>
-  <scroll-view class="ocr-sheet-body" scroll-y>
-    <block wx:for="{{ocrSheet.fields}}" wx:key="key">
-      <view class="ocr-sheet-group-title" wx:if="{{item.isGroup}}">{{item.label}}</view>
-      <view class="ocr-sheet-field" wx:else>
-        <view class="ocr-sheet-label-row">
-          <text class="ocr-sheet-label">{{item.label}}<text wx:if="{{item.required}}" class="req">*</text></text>
-          <text class="ocr-sheet-warn" wx:if="{{item.tone === 'low' || item.tone === 'mid'}}">⚠️</text>
-        </view>
-        <!-- UI 审计 交互 M1：日期字段走原生 date picker（与 edit-sheet 一致，替代手输 YYYY-MM-DD） -->
-        <picker wx:if="{{item.type === 'date'}}" mode="date" value="{{item.value}}" start="1900-01-01" end="2099-12-31" data-fi="{{index}}" bindchange="onSheetDateChange" aria-label="{{item.label}}">
-          <view class="ocr-sheet-input bg-{{item.tone}} ocr-sheet-picker">
-            <text wx:if="{{item.value}}" class="ocr-sheet-picker-text">{{item.value}}</text>
-            <text wx:else class="ocr-sheet-picker-placeholder">请选择日期</text>
-            <text class="ocr-sheet-picker-arrow">▾</text>
-          </view>
-        </picker>
-        <input wx:else class="ocr-sheet-input bg-{{item.tone}}" value="{{item.value}}" data-key="{{item.key}}" data-fi="{{index}}" type="{{item.type || 'text'}}" bindinput="onSheetInput" placeholder="请输入{{item.label}}" />
-      </view>
-    </block>
-  </scroll-view>
-  <view class="ocr-sheet-actions">
-    <button class="ocr-sheet-cancel pressable" bindtap="onSheetClose">取消</button>
-    <button class="ocr-sheet-save pressable" bindtap="onSheetConfirm">保存</button>
-  </view>
-</view>
+<!-- 编辑 sheet：复用统一 edit-sheet 组件（查看态起步 → [编辑] 切编辑态 → [保存]；与报告页保单明细 sheet 完全复用） -->
+<edit-sheet visible="{{ocrSheet.visible}}" title="{{ocrSheet.title}}" fields="{{ocrSheet.fields}}" mode="{{ocrSheet.mode}}" bind:save="onEditSheetSave" bind:close="onEditSheetClose" />
