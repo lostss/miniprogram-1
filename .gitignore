@@ -79,6 +79,11 @@ rules/
 .gemini/
 .qwen/
 .github/copilot-instructions.md
+# 各 IDE 的 MCP 接入配置（CloudBase AI ToolKit 生成，env.INTEGRATION_IDE 标明来源 IDE）
+.codex/
+.iflow/
+.vscode/mcp.json
+.vscode/settings.json
 
 # 历史审计/扫描产物（一次性；结论已落进代码、质量门错误库与提交历史）
 audit-report.html
