@@ -13,9 +13,11 @@ Page({
   },
   // UI 审计 F-S1：loading 守卫改为请求 ID 追踪——in-flight 时新搜索不再被静默丢弃
   // （原 if (loading) return 导致输入"ab"时仍显示"a"的结果；旧请求结果由 seq 校验丢弃）
+  // 客户列表审计 P1-3：静默刷新——内存已有列表（含删除本地 filter 后）不闪骨架屏，请求完成再更新；无数据才骨架屏
   _fetch() {
     const seq = (this._reqSeq = (this._reqSeq || 0) + 1)
-    this.setData({ loading: true })
+    if (this.data.families && this.data.families.length) this.setData({ loading: false })
+    else this.setData({ loading: true })
     const action = this.data.keyword ? 'searchFamilies' : 'listFamilies'
     const params = this.data.keyword ? { keyword: this.data.keyword } : {}
     return api(action, params)
@@ -71,7 +73,9 @@ Page({
       familyId: c._id,
       name: c.name || c.family_name || '',
       onSuccess: () => {
-        this.setData({ removingId: c._id })
+        // 与首页同构：删除后本地先移除（刷新失败/骨架屏不残留已删家庭），后台刷新收尾
+        const list = (this.data.families || []).filter(x => x._id !== c._id)
+        this.setData({ removingId: c._id, families: list })
         setTimeout(() => {
           this._fetch()
           this.setData({ removingId: '' })

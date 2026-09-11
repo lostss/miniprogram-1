@@ -69,9 +69,20 @@ function buildPolicyFromExtract(products, contractBasic, conf) {
   }))
 }
 
+// 现价表片段拦截（2026-09-09）：单独上传的现价表需年度自 1 起连续且行数达标，
+// 否则视为截图残留片段不提取（提示词第零步的确定性兜底）
+const CASH_VALUE_MIN_ROWS = 5
+function _isCashValueComplete(cvArr) {
+  if (!Array.isArray(cvArr) || cvArr.length < CASH_VALUE_MIN_ROWS) return false
+  for (let i = 0; i < cvArr.length; i++) {
+    if (Number(cvArr[i].y) !== i + 1) return false
+  }
+  return true
+}
+
 /**
  * PolicyExtractor.extractOne — AI 原始响应 → Policy 对象（深模块，R2 候选 1）
- * 单图路径（aiPhase）与批量单图路径（aiExtractBatchPhase）共用同一转换，杜绝字段漂移。
+ * 单图路径（aiPhase）唯一转换入口，杜绝字段漂移。
  * 内部：aiOverall 兜底 → calcConfidence → buildPolicyFromExtract → cashValueData
  * @param {object} extractRes - AI 解析结果（{ result, document_type, data, cash_value_data, message }）
  * @param {array} ocrConfInfo - OCR 字符级置信度
@@ -92,12 +103,20 @@ function extractOne(extractRes, ocrConfInfo) {
 
   const { fieldConf, overallConf, ocrReliable, autoConfirmed } = calcConfidence(ocrConfInfo, aiFieldConf, aiOverall)
   const products = data.products || []
-  const docType = extractRes.document_type || 'policy'
+  // 保留 AI 原始判定：mixed 需同时走"保单构建"与"现价表提取"两条路，
+  // 而 docType 最终要降级为 policy（同图以保单主体为主），故先存原始值
+  const rawDocType = extractRes.document_type || 'policy'
   const policies = buildPolicyFromExtract(products, contractBasic, { overallConf, fieldConf, ocrReliable, autoConfirmed })
 
-  // 现价表数据提取（document_type=cash_value 或 mixed）
+  // 现价表数据提取（document_type = cash_value 或 mixed）
+  // 2026-09-11 调整：mixed 不再"无条件丢弃现价表"。原策略（2026-09-09 片段拦截）为防
+  // 保单页脚的残留现价表被当成有效表入库，采取了"宁可丢也不错收"的一刀切——代价是真表被误杀：
+  // 保单正页与完整现价表同屏（PDF 连续截图很常见）时 AI 会判 mixed → 现价表被丢弃 →
+  // 报告「现价/回本」列永久显示 '-'、回本节点不生成，且没有二次补偿路径。
+  // 现改为 cash_value 与 mixed 走同一标准：AI 判"完整现价表" + 代码完整性阈值（年度自 1 起
+  // 连续、行数 ≥ CASH_VALUE_MIN_ROWS）双满足才收。残留片段仍会被该阈值拦下，原有防线未放松。
   let cashValueData = null
-  if ((docType === 'cash_value' || docType === 'mixed') && extractRes.cash_value_data) {
+  if ((rawDocType === 'cash_value' || rawDocType === 'mixed') && extractRes.cash_value_data) {
     const cvd = extractRes.cash_value_data
     const hi = cvd.header_info || {}
     const cvArr = (cvd.cash_values || []).map(cv => {
@@ -105,15 +124,19 @@ function extractOne(extractRes, ocrConfInfo) {
       if (cv.n) row.n = cv.n
       return row
     })
-    cashValueData = {
-      product_name: hi.product_name || (products.length > 0 ? products[0].product_name : '') || '',
-      insured_name: hi.insured_name || contractBasic.insured_name || '',
-      policy_number: hi.policy_number || contractBasic.policy_number || '',
-      insurance_type: hi.insurance_type || '',
-      cash_values: cvArr,
-      overall_confidence: typeof cvd.overall_confidence === 'number' ? cvd.overall_confidence : overallConf
+    if (_isCashValueComplete(cvArr)) {
+      cashValueData = {
+        product_name: hi.product_name || (products.length > 0 ? products[0].product_name : '') || '',
+        insured_name: hi.insured_name || contractBasic.insured_name || '',
+        policy_number: hi.policy_number || contractBasic.policy_number || '',
+        insurance_type: hi.insurance_type || '',
+        cash_values: cvArr,
+        overall_confidence: typeof cvd.overall_confidence === 'number' ? cvd.overall_confidence : overallConf
+      }
     }
   }
+  // mixed：同图以保单主体为主 → docType 降级为 policy（影响下游分组与展示，保持历史行为）
+  const docType = rawDocType === 'mixed' ? 'policy' : rawDocType
   return { success: true, policies: policies, cashValueData: cashValueData, docType: docType, autoConfirmed: autoConfirmed, overallConf: overallConf }
 }
 
@@ -129,15 +152,20 @@ function extractOne(extractRes, ocrConfInfo) {
  * @returns {{ success: boolean, policiesCount: number, policies?: array, error?: string, error_code?: string }}
  */
 // ---- 拆分接口：OCR 阶段（可并发，无 429 风险） ----
-async function ocrPhase({ cloud, fileId, openid, familyId }) {
+// tempFileURL 可选：调用方已批量换取临时链接时传入，跳过单张 getTempFileURL（省 N-1 次 API 往返）
+async function ocrPhase({ cloud, fileId, openid, familyId, tempFileURL }) {
   const t0 = Date.now()
-  const tempRes = await cloud.getTempFileURL({ fileList: [fileId] })
-  const tempFile = tempRes.fileList && tempRes.fileList[0]
-  if (!tempFile || !tempFile.tempFileURL) {
-    throw new Error('获取图片临时链接失败')
+  let url = tempFileURL
+  if (!url) {
+    const tempRes = await cloud.getTempFileURL({ fileList: [fileId] })
+    const tempFile = tempRes.fileList && tempRes.fileList[0]
+    if (!tempFile || !tempFile.tempFileURL) {
+      throw new Error('获取图片临时链接失败')
+    }
+    url = tempFile.tempFileURL
   }
   const t1 = Date.now()
-  const { text: ocrText, confs: ocrConfInfo, error_code: ocrErrorCode } = await ocrRecognize(tempFile.tempFileURL)
+  const { text: ocrText, confs: ocrConfInfo, error_code: ocrErrorCode } = await ocrRecognize(url)
   const t2 = Date.now()
   return { ocrText, ocrConfInfo, ocrErrorCode, t0, t1, t2, fileId }
 }
@@ -206,135 +234,8 @@ async function aiPhase({ ocrText, ocrConfInfo, ocrErrorCode, fileId, t0, t1, t2,
   return { success: true, policiesCount: newPolicies.length, policies: newPolicies, document_type: docType, cashValueData, tokens: tokens || {} }
 }
 
-// ---- 批量 AI 提取（aiExtractBatch：batch prompt 单次调用，前端分流后仅服务单图） ----
-const { parseAIJSON: _parseBatchJSON } = require('./parse-ai-json')
-const { is429 } = require('./ai-error')
+// ---- 批量 AI 提取已收敛（2026-08-30）----
+// aiExtractBatch 单图路径统一走 aiPhase（DeepSeek 直连），批量拼接编排（_callBatchAI/aiExtractBatchPhase）已删除。
+// 备份文件已随 docs 归档清理（2026-09-04）；原实现见 git 历史。
 
-/**
- * 单次批量 AI 调用（不拆分）
- * @returns {{ aiResponse, tokens, aiCallCount }}
- */
-async function _callBatchAI(ocrResults, deps) {
-  const { buildBatchExtractionPrompt, safeCallChat, callChat, cloud, db, openid, familyId } = deps
-  const { AI } = require('./config')
-  // 用户决策（2026-08）：AI 识别失败重试无论张数均走 DeepSeek 直连
-  // （DeepSeek 并发 2500 更稳，避免 TokenHub hy3 排队/限流下重试继续失败）
-  // ——单图路径（aiExtractBatch）首次仍走 hy3，重试切 DeepSeek；多图路径本就全走 DeepSeek
-  const { callChatDirect } = require('./ai-client')
-  const { systemPrompt, userPrompt } = buildBatchExtractionPrompt(ocrResults)
-  const messages = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: userPrompt }
-  ]
-  const sessionId = 'ocr_batch_' + Date.now().toString(36)
-
-  // AI 返回空 content（已知问题）时启用 1 次重试；重试走 DeepSeek 直连
-  const maxAttempts = 2
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    let res
-    try {
-      res = await safeCallChat(
-        messages, attempt === 1 ? callChat : callChatDirect,
-        { cloud, db, openid, familyId, sessionId, traceId: deps.traceId, model: AI.OCR_MODEL, action: 'ocr_extract_batch', skipInjection: true, skipOutputAudit: true, skipContentSafety: true },
-        // 不使用 response_format: json_object（DeepSeek JSON 模式有概率返回空 content）
-        // 改用普通模式 + prompt 严格约束 JSON 输出
-        // 不传 prompt_cache_key：CloudBase SDK 路径不支持客户端缓存控制，固定键+内容多变反而反复写缓存
-        { maxTokens: AI.OCR_BATCH_MAX_TOKENS, temperature: AI.OCR_BATCH_TEMPERATURE, timeoutMs: AI.OCR_BATCH_TIMEOUT }
-      )
-    } catch (e) {
-      // 429 定位：兼容 SDK 错误多种结构（e.response / e.statusCode / e.data / e.headers），
-      // 捕获 TokenHub 具体限流码（429001 并发 / 429002 RPM / 429003 TPM）与 Retry-After 头
-      const status = (e && ((e.response && (e.response.status || e.response.statusCode)) || e.statusCode || e.status)) || null
-      const body = (e && (e.data || (e.response && e.response.data))) || null
-      const headers = (e && (e.headers || (e.response && e.response.headers))) || null
-      console.error('[ocr-core] _callBatchAI AI调用失败:', {
-        message: e && e.message,
-        code: e && e.code,
-        status: status,
-        errorCode: (body && body.error && (body.error.code || body.error.upstream_code)) || null,
-        retryAfter: (headers && headers['retry-after']) || null,
-        responseData: body ? JSON.stringify(body).substring(0, 500) : null,
-        requestId: (e && e.requestId) || null,
-        reqChars: ocrResults.reduce((s, r) => s + (r.ocrText || '').length, 0)
-      })
-      if (is429(e)) {
-        const err = new Error('AI服务繁忙(429)')
-        err.code = '429'
-        throw err
-      }
-      // ai_empty 重试（DeepSeek JSON 模式已知问题）
-      if (e && e.code === 'ai_empty' && attempt < maxAttempts) {
-        console.warn('[ocr-core] _callBatchAI ai_empty, 重试 attempt ' + (attempt + 1))
-        await new Promise(r => setTimeout(r, 500))
-        continue
-      }
-      throw e
-    }
-
-    const parsed = _parseBatchJSON(res.text)
-    // 兼容 AI 返回格式（R2 候选 2：前端分流后 aiExtractBatch 仅服务单图，object 包裹数组分支已删除）：
-    //   1. [{...}] — 标准数组
-    //   2. {"idx":1, "document_type":"policy", ...} — 单张图时 AI 直接返回单个对象，包装为单元素数组
-    let arr = parsed
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      arr = (parsed.idx != null) && (parsed.document_type || parsed.result) ? [parsed] : null
-    }
-    if (!Array.isArray(arr)) {
-      console.error('[ocr-core] _callBatchAI ai_format: 原始返回前800字符=', (res.text || '').substring(0, 800))
-      console.error('[ocr-core] _callBatchAI ai_format: parsed=', JSON.stringify(parsed).substring(0, 300))
-      const err = new Error('ai_format')
-      err.code = 'ai_format'
-      throw err
-    }
-    return { aiResponse: arr, tokens: res.usage || {}, aiCallCount: attempt }
-  }
-  // 安全兜底（正常流程不可达：循环内要么 return 要么 throw）
-  throw new Error('ai_batch_failed')
-}
-
-/**
- * 批量 AI 提取编排（单图收敛，R2 候选 2）
- * 前端分流后 aiExtractBatch 仅服务 1 张图（>1 张走 aiExtractParallel）：
- * 保留 batch prompt（JSON 数组契约）调用方式，结果经 PolicyExtractor.extractOne 转换。
- * @param {Array} ocrResults - [{ fileId, ocrText, ocrConfInfo, ... }]（长度恒为 1）
- * @param {object} deps - { cloud, db, openid, familyId, buildBatchExtractionPrompt, safeCallChat, callChat, AI_TIMEOUT }
- * @returns {{ results, totalDurationMs, splitUsed, aiCallCount, tokens, successCount, failCount }}
- */
-async function aiExtractBatchPhase(ocrResults, deps) {
-  const t0 = Date.now()
-  const ocr = ocrResults[0]
-  try {
-    const { aiResponse, tokens, aiCallCount } = await _callBatchAI(ocrResults, deps)
-    const item = aiResponse[0]
-    if (!item) {
-      const err = new Error('ai_format')
-      err.code = 'ai_format'
-      throw err
-    }
-    const ex = extractOne(item, ocr.ocrConfInfo)
-    const t1 = Date.now()
-    if (ex.success) {
-      return {
-        results: [{ idx: 1, fileId: ocr.fileId, success: true, policies: ex.policies, cashValueData: ex.cashValueData, documentType: ex.docType, tokens: tokens }],
-        totalDurationMs: t1 - t0, splitUsed: false, aiCallCount: aiCallCount, tokens: tokens, successCount: 1, failCount: 0
-      }
-    }
-    return {
-      results: [{ idx: 1, fileId: ocr.fileId, success: false, error: ex.error, errorCode: ex.errorCode }],
-      totalDurationMs: t1 - t0, splitUsed: false, aiCallCount: aiCallCount, tokens: tokens, successCount: 0, failCount: 1
-    }
-  } catch (e) {
-    const { classifyAIError } = require('./ai-error')
-    const cls = classifyAIError(e)
-    // S3-1 修复：保留 CHAT_TIMEOUT / ai_empty 区分，与 aiPhase 错误码映射对称
-    // 原实现把 CHAT_TIMEOUT 和 ai_empty 统统压成 ai_batch_failed，前端无法显示"AI服务超时"或"AI返回空"
-    const errorCode = ['ai_format', 'ai_empty', 'CHAT_TIMEOUT', '429'].includes(cls) ? cls : 'ai_batch_failed'
-    const t1 = Date.now()
-    return {
-      results: [{ idx: 1, fileId: ocr.fileId, success: false, error: (e && e.message) || 'AI异常', errorCode: errorCode }],
-      totalDurationMs: t1 - t0, splitUsed: false, aiCallCount: 1, tokens: {}, successCount: 0, failCount: 1
-    }
-  }
-}
-
-module.exports = { ocrPhase, aiPhase, aiExtractBatchPhase, matchPoliciesToMembers, buildPolicyFromExtract, extractOne, _toNum }
+module.exports = { ocrPhase, aiPhase, matchPoliciesToMembers, buildPolicyFromExtract, extractOne, _toNum }

@@ -13,6 +13,8 @@
 const { yuanToWan, wanToYuan } = require('./amount')
 const ROLE_OPTIONS = ['本人', '配偶', '子女', '父母', '其他']
 const CATEGORY_OPTIONS = ['重疾险', '医疗险', '意外险', '寿险', '年金', '其他']
+// 缴费方式选项（对齐 DB policies.payment_method）
+const PAYMENT_METHOD_OPTIONS = ['趸交', '年交', '月交', '季交', '半年交']
 // 保单状态：业务员可手动选择的有效/失效/退保/理赔终止；到期终止由系统自动判断，不进入手选
 const POLICY_STATUS_OPTIONS = ['有效', '失效', '退保', '理赔终止']
 const POLICY_STATUS_LABEL_TO_VALUE = {
@@ -44,13 +46,14 @@ function _memberFields(member) {
   ]
 }
 
-// 财务字段（家庭级聚合：收入=成员求和，负债=debt.amount，支出=financial_snapshot.fixed_expense）
+// 财务字段（家庭级：收入/负债/支出均取家庭财务源——finances 唯一真相源经 financial_snapshot/family_income 组装）
+// 2026-09-06 修复：收入回显曾用"成员个人收入求和"，致对话/表单录入的家庭收入在弹窗与报告中显示旧值
 function _financialFields(family) {
   const cu = family || {}
   const da = (cu.debt && cu.debt.amount) || 0
-  const ms = cu.members || []
-  const ic = ms.reduce((s, m) => s + (m.income || 0), 0)
   const fs = cu.financial_snapshot || {}
+  const famInc = cu.family_income != null ? Number(cu.family_income) : (fs.income != null ? Number(fs.income) : 0)
+  const ic = famInc > 0 ? famInc : 0
   const ex = fs.fixed_expense || 0
   return [
     { key: 'income', label: '家庭年收入(万)', value: String(ic), placeholder: '如80', type: 'number', pattern: '^\\d+(\\.\\d+)?$', patternMsg: '请输入数字' },
@@ -69,12 +72,22 @@ function _policyFields(p) {
     if (c == null || c >= 0.95) return ''
     return c >= 0.8 ? 'mid' : 'low'
   }
-  function tone(key) { return toneOf(fc[key] != null ? fc[key] : overall) }
+  // 数据异常（suspicious）保单：核心异常字段强制低置信底色 + ⚠️，引导用户定位问题
+  // 异常判定与 calcStatus 同构：保额=0 但保费>0（suspicious 状态由写入层落库，这里按状态+数据双保险）
+  const isSuspicious = p.status === 'suspicious' || ((!p.sum_assured || p.sum_assured === 0) && p.annual_premium > 0)
+  function tone(key) {
+    const t = toneOf(fc[key] != null ? fc[key] : overall)
+    if (t) return t
+    if (isSuspicious && key === 'sum_assured') return 'low'
+    return ''
+  }
   // UI 审计 A-S4：激活 edit-sheet 校验能力（产品名称必填 + 数值字段 pattern）
   // 信息分组（与识别卡片 sheet 分组结构一致：基础/人员/缴费/保障，保留置信度 tone 底色）
   const groups = [
       { title: '状态信息', fields: [
         { key: 'status', label: '保单状态', value: POLICY_STATUS_VALUE_TO_LABEL[p.status] || '有效', placeholder: '请选择', type: 'selector', options: POLICY_STATUS_OPTIONS },
+        // 用户决策（2026-08-30）：改失效/退保/理赔终止必须填写失效日期（validate 校验必填）
+        { key: 'status_effective_date', label: '失效日期', value: p.status_effective_date || '', placeholder: 'YYYY-MM-DD', type: 'date' },
         { key: 'status_reason', label: '变更原因', value: p.status_reason || '', placeholder: '选填，如客户退保' }
       ] },
 
@@ -91,12 +104,13 @@ function _policyFields(p) {
       { key: 'beneficiary_name', label: '受益人', value: p.beneficiary_name || '', placeholder: '姓名', tone: tone('beneficiary_name') }
     ] },
     { title: '缴费信息', fields: [
-      { key: 'annual_premium', label: '年缴保费(元)', value: p.annual_premium ? String(p.annual_premium) : '', placeholder: '如8000', type: 'number', tone: tone('annual_premium'), required: true, pattern: '^\\d+(\\.\\d+)?$', patternMsg: '请输入数字' },
-      { key: 'premium_term', label: '缴费期限(年)', value: p.premium_term ? String(p.premium_term) : '', placeholder: '如20', type: 'number', tone: tone('premium_term'), required: true, pattern: '^\\d+(\\.\\d+)?$', patternMsg: '请输入数字' }
+      { key: 'payment_method', label: '缴费方式', value: p.payment_method || '', placeholder: '请选择', type: 'selector', options: PAYMENT_METHOD_OPTIONS, tone: tone('payment_method') },
+      { key: 'payment_period', label: '缴费期限', value: p.payment_period || '', placeholder: '如20年/交至60岁/月交', type: 'text', tone: tone('payment_period') },
+      { key: 'annual_premium', label: '年缴保费(元)', value: p.annual_premium ? String(p.annual_premium) : '', placeholder: '如8000', type: 'number', tone: tone('annual_premium'), required: true, pattern: '^\\d+(\\.\\d+)?$', patternMsg: '请输入数字' }
     ] },
     { title: '保障信息', fields: [
       { key: 'sum_assured', label: '保额(万)', value: p.sum_assured ? String(Math.round(yuanToWan(p.sum_assured))) : '', placeholder: '如200', type: 'number', tone: tone('sum_assured'), required: true, pattern: '^\\d+(\\.\\d+)?$', patternMsg: '请输入数字' },
-      { key: 'coverage_term', label: '保障期限(年)', value: p.coverage_term ? String(p.coverage_term) : '', placeholder: '如终身填99', type: 'number', tone: tone('coverage_term'), required: true, pattern: '^\\d+(\\.\\d+)?$', patternMsg: '请输入数字' }
+      { key: 'insurance_period', label: '保障期间', value: p.insurance_period || '', placeholder: '如终身/30年/至70岁/90天', type: 'text', tone: tone('insurance_period') }
     ] }
   ]
   const out = []
@@ -133,7 +147,7 @@ function buildEditConfig(opts) {
   }
   if (mode === 'policy') {
     return {
-      title: '编辑保单' + ((member && member.product_name) || ''),
+      title: ((member && member.product_name) || '编辑保单'),
       _editMode: 'policy',
       _editMemberIdx: (member && (member.policy_id || member.id || member._id)) || '',
       editFields: _policyFields(member || {})
@@ -177,6 +191,11 @@ function validate(mode, vals) {
       if (isNaN(a) || a < 0) return { ok: false, msg: '保费须为非负数' }
     }
     if (vals.effective_date && !/^\d{4}-\d{2}-\d{2}$/.test(vals.effective_date)) return { ok: false, msg: '生效日期格式 YYYY-MM-DD' }
+    // 用户决策（2026-08-30）：状态改为失效/退保/理赔终止时必须填写失效日期
+    if (vals.status && vals.status !== '有效') {
+      if (!vals.status_effective_date) return { ok: false, msg: '请填写失效日期' }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(vals.status_effective_date)) return { ok: false, msg: '失效日期格式 YYYY-MM-DD' }
+    }
     return { ok: true }
   }
   if (mode === 'member' || mode === 'addMember') {
@@ -220,21 +239,30 @@ function buildUpdateData(mode, vals, family, editMemberIdx) {
   }
   if (mode === 'policy') {
     // updatePolicy 的 data 载荷（familyId/policyId 由调用方附加）
+    // P1-F1 修复（2026-09-05）：可选字段"清空"须真实发送——服务端 POLICY_EDITABLE 支持写空串；
+    // 原 `!== ''` 门控把用户清空静默丢弃 → 提示成功但 DB 仍旧值，下次渲染"复原"
     const data = {}
-    if (vals.product_name !== undefined && vals.product_name !== '') data.product_name = vals.product_name
-    if (vals.insurance_category !== undefined && vals.insurance_category !== '') data.insurance_category = vals.insurance_category
-    if (vals.insured_name !== undefined && vals.insured_name !== '') data.insured_name = vals.insured_name
-    if (vals.policyholder_name !== undefined && vals.policyholder_name !== '') data.policyholder_name = vals.policyholder_name
-    if (vals.beneficiary_name !== undefined && vals.beneficiary_name !== '') data.beneficiary_name = vals.beneficiary_name
-    if (vals.sum_assured !== undefined && vals.sum_assured !== '') data.sum_assured = wanToYuan(vals.sum_assured)
-    if (vals.annual_premium !== undefined && vals.annual_premium !== '') data.annual_premium = Number(vals.annual_premium)
-    if (vals.premium_term !== undefined && vals.premium_term !== '') data.premium_term = Number(vals.premium_term)
-    if (vals.coverage_term !== undefined && vals.coverage_term !== '') data.coverage_term = Number(vals.coverage_term)
-    if (vals.policy_number !== undefined && vals.policy_number !== '') data.policy_number = vals.policy_number
-    if (vals.insurer !== undefined && vals.insurer !== '') data.insurer = vals.insurer
-    if (vals.effective_date) data.effective_date = vals.effective_date
-      if (vals.status && POLICY_STATUS_LABEL_TO_VALUE[vals.status]) data.status = POLICY_STATUS_LABEL_TO_VALUE[vals.status]
-      if (vals.status_reason !== undefined && vals.status_reason !== '') data.status_reason = vals.status_reason
+    if (vals.product_name !== undefined && vals.product_name !== '') data.product_name = vals.product_name // 必填（validate 已拦空）
+    if (vals.insurance_category !== undefined) data.insurance_category = vals.insurance_category
+    if (vals.insured_name !== undefined) data.insured_name = vals.insured_name
+    if (vals.policyholder_name !== undefined) data.policyholder_name = vals.policyholder_name
+    if (vals.beneficiary_name !== undefined) data.beneficiary_name = vals.beneficiary_name
+    // 金额：清空 → 发空串（服务端保留空语义）；非空保持换算/数字化
+    if (vals.sum_assured !== undefined) data.sum_assured = vals.sum_assured === '' ? '' : wanToYuan(vals.sum_assured)
+    if (vals.annual_premium !== undefined) data.annual_premium = vals.annual_premium === '' ? '' : Number(vals.annual_premium)
+    if (vals.payment_method !== undefined) data.payment_method = vals.payment_method
+    if (vals.payment_period !== undefined) data.payment_period = vals.payment_period
+    if (vals.insurance_period !== undefined) data.insurance_period = vals.insurance_period
+    if (vals.policy_number !== undefined) data.policy_number = vals.policy_number
+    if (vals.insurer !== undefined) data.insurer = vals.insurer
+    // 2026-09-11：与上方字段同规则——可选字段"清空"须真实发送。
+    // 服务端 POLICY_EDITABLE 含 effective_date / status_effective_date，且 updatePolicy 对
+    // effective_date 的格式校验显式放行空串（v !== '' 短路），故空串可安全落库。
+    // 原 truthy 门控把用户清空静默丢弃 → 提示保存成功但 DB 仍旧值，下次打开"复原"
+    if (vals.effective_date !== undefined) data.effective_date = vals.effective_date
+    if (vals.status && POLICY_STATUS_LABEL_TO_VALUE[vals.status]) data.status = POLICY_STATUS_LABEL_TO_VALUE[vals.status]
+    if (vals.status_effective_date !== undefined) data.status_effective_date = vals.status_effective_date
+    if (vals.status_reason !== undefined) data.status_reason = vals.status_reason
 
     return { updatePolicy: { policyId: editMemberIdx || '', data: data } }
   }
@@ -267,4 +295,4 @@ function buildUpdateData(mode, vals, family, editMemberIdx) {
   return {}
 }
 
-module.exports = { buildEditConfig, validate, buildUpdateData, ROLE_OPTIONS, CATEGORY_OPTIONS, POLICY_STATUS_OPTIONS, POLICY_STATUS_LABEL_TO_VALUE, POLICY_STATUS_VALUE_TO_LABEL }
+module.exports = { buildEditConfig, validate, buildUpdateData, ROLE_OPTIONS, CATEGORY_OPTIONS, PAYMENT_METHOD_OPTIONS, POLICY_STATUS_OPTIONS, POLICY_STATUS_LABEL_TO_VALUE, POLICY_STATUS_VALUE_TO_LABEL }

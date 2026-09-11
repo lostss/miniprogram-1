@@ -13,10 +13,10 @@
 .msg-row.assistant { text-align:left }
 .msg-row.user { text-align:right }
 
-/* UI 打磨：AI 左线 3→4rpx + accent 实色（原 accent-muted 过弱），提升长对话可扫读性 */
-.ai-msg { display:block; width:100%; font-size:var(--fs-body); line-height:var(--lh-loose); color:var(--text-primary); text-align:left; box-sizing:border-box; animation:fadeIn var(--dur-base) var(--ease-out); border-left:4rpx solid var(--accent); padding-left:var(--sp-5) }
-/* 错误提示审计 #7：AI 错误消息独立视觉（区别于正常回复） */
-.ai-msg--err { border-left-color:var(--red); background:var(--red-dim); border-radius:var(--r-md); padding:var(--sp-4) var(--sp-5); border-left-width:6rpx }
+/* UX-3 修复：AI 气泡格式（浅色背景 + 左上角小圆角，与 thinking-bubble 一致，与用户气泡右上角小圆角对称） */
+.ai-msg { display:block; max-width:88%; font-size:var(--fs-body); line-height:var(--lh-loose); color:var(--text-primary); text-align:left; box-sizing:border-box; animation:fadeIn var(--dur-base) var(--ease-out); background:var(--bg-card); border-radius:6rpx 18rpx 18rpx 18rpx; padding:var(--sp-4) var(--sp-5) }
+/* 错误提示审计 #7：AI 错误消息独立视觉（红色调背景区别于正常回复） */
+.ai-msg--err { background:var(--red-dim) }
 .ai-msg-time { font-size:var(--fs-tiny); color:var(--text-disabled); margin-top:var(--sp-2); line-height:var(--lh-none); }
 
 /* UI 打磨：气泡入场去回弹缓动（与 ai-msg fadeIn 统一） */
@@ -24,29 +24,40 @@
 /* UI 审计 #②：用户气泡 accent 白字 2.24:1 不达标，改深色文字（7.62:1） */
 .bubble.user { background:var(--accent); color:var(--btn-text-on-accent); border-radius:18rpx 6rpx 18rpx 18rpx; }
 
-.retry-btn { display:inline-flex; align-items:center; justify-content:center; min-height:88rpx; margin-top:var(--sp-3); padding:var(--sp-2) var(--sp-5); border:1rpx solid var(--accent-muted); border-radius:var(--r-full); font-size:var(--fs-caption); color:var(--accent-deep); background:transparent }
+.retry-btn { display:inline-flex; align-items:center; justify-content:center; margin-top:var(--sp-3); padding:var(--sp-2) var(--sp-5); border:1rpx solid var(--accent-muted); border-radius:var(--r-full); font-size:var(--fs-caption); color:var(--accent-deep); background:transparent }
 .retry-btn:active { opacity:0.6 }
-.sug-bar { display:flex; flex-wrap:wrap; gap:var(--sp-3); margin-top:var(--sp-5) }
-.sug-chip { display:inline-flex; align-items:center; justify-content:center; min-height:88rpx; padding:var(--sp-3) var(--sp-5); background:var(--accent-dim); border-radius:var(--r-full); font-size:var(--fs-caption); color:var(--accent-deep); letter-spacing:var(--ls-wide); }
-.sug-chip:active { background:var(--accent-glow); }
 
-/* UI 打磨：thinking/streaming 左线同步 ai-msg（4rpx + accent 实色） */
-.thinking-row { min-height:44rpx; display:flex; align-items:center; padding-left:var(--sp-5); border-left:4rpx solid var(--accent); }
+/* 默认执行+撤销（②）：执行结果 + 撤销按钮 */
+.undo-bar { margin-top:var(--sp-5); display:flex; flex-direction:column; gap:var(--sp-3); }
+.undo-item { display:flex; align-items:center; justify-content:space-between; gap:var(--sp-4); background:var(--accent-dim); border-radius:var(--r-md); padding:var(--sp-3) var(--sp-5); }
+.undo-text { font-size:var(--fs-caption); color:var(--accent-deep); flex:1; }
+.undo-btn { flex-shrink:0; display:inline-flex; align-items:center; justify-content:center; padding:var(--sp-2) var(--sp-5); border:1rpx solid var(--accent); border-radius:var(--r-full); font-size:var(--fs-caption); color:var(--accent-deep); background:transparent; }
+.undo-btn:active { opacity:0.6 }
 
-/* UI 审计 状态 S2：流式生成指示 + 停止按钮 */
-.streaming-row { display:flex; align-items:center; justify-content:space-between; padding:var(--sp-3) var(--sp-5); border-left:4rpx solid var(--accent); margin-top:var(--sp-2); }
+/* AI 处理中占位：气泡样式（无边框线，背景色即可区分气泡；与用户气泡 bubble.user 视觉语言一致） */
+.thinking-bubble { display:inline-flex; align-items:center; gap:var(--sp-3); padding:var(--sp-4) var(--sp-5); background:var(--bg-card); border-radius:6rpx 18rpx 18rpx 18rpx; max-width:82%; box-sizing:border-box; animation:fadeUp var(--dur-slow) var(--ease-out) }
+.thinking-bubble .thinking-dots { padding:0 }
 .streaming-text { font-size:var(--fs-caption); color:var(--text-tertiary); }
-.stop-generate { display:inline-flex; align-items:center; justify-content:center; min-height:88rpx; font-size:var(--fs-caption); color:var(--accent-deep); border:1rpx solid var(--border-accent); border-radius:var(--r-full); padding:var(--sp-1) var(--sp-4); }
-.stop-generate:active { background:var(--bg-input); }
-/* P0修复1: B处理行内三点+文案组合在左侧 */
-.processing-left { display:flex; align-items:center; gap:var(--sp-3); }
-.processing-left .thinking-dots { padding:0; }
+
+/* 确认卡（单通道 v10：写入成员/财务/保单类工具待代理人确认） */
+.confirm-card { margin-top:var(--sp-5); display:flex; flex-direction:column; gap:var(--sp-4); }
+.confirm-card-item { background:var(--bg-card); border:1rpx solid var(--border); border-left:6rpx solid var(--accent); border-radius:var(--r-lg); padding:var(--sp-4) var(--sp-5); display:flex; flex-direction:column; gap:var(--sp-3); }
+.confirm-card-head { display:flex; align-items:center; justify-content:space-between; }
+.confirm-card-target { font-size:var(--fs-base); font-weight:var(--fw-semi); color:var(--text-primary); }
+.confirm-card-badge { font-size:var(--fs-tiny); color:var(--accent-deep); background:var(--accent-dim); border-radius:var(--r-full); padding:var(--sp-1) var(--sp-4); letter-spacing:var(--ls-wide); }
+.confirm-card-summary { font-size:var(--fs-base); line-height:var(--lh-body); color:var(--text-secondary); word-break:break-all; }
+.confirm-card-actions { display:flex; justify-content:flex-end; gap:var(--sp-3); }
+.confirm-btn { display:inline-flex; align-items:center; justify-content:center; min-width:120rpx; padding:var(--sp-3) var(--sp-6); border-radius:var(--r-full); font-size:var(--fs-caption); letter-spacing:var(--ls-wide); }
+.confirm-btn--cancel { background:transparent; border:1rpx solid var(--border); color:var(--text-tertiary); }
+.confirm-btn--cancel:active { background:var(--bg-input); }
+.confirm-btn--ok { background:var(--accent); color:var(--btn-text-on-accent); }
+.confirm-btn--ok:active { opacity:0.7; }
 
 /* 空态引导 */
 .msg-empty { display:flex; flex-direction:column; gap:var(--sp-4); padding:var(--sp-8) var(--sp-5) var(--sp-6); align-items:flex-start; }
 .msg-empty-title { font-size:var(--fs-base); color:var(--text-primary); font-family:var(--font-serif); letter-spacing:var(--ls-wide); }
 .msg-empty-sub { font-size:var(--fs-tiny); color:var(--text-tertiary); letter-spacing:var(--ls-wide); margin-top:calc(var(--sp-4) * -1); }
-.msg-empty-chip { display:inline-flex; align-items:center; justify-content:center; min-height:88rpx; font-size:var(--fs-base); color:var(--text-secondary); background:var(--bg-card); border:1rpx solid var(--border); border-radius:var(--r-full); padding:var(--sp-2) var(--sp-5); }
+.msg-empty-chip { display:inline-flex; align-items:center; justify-content:center; font-size:var(--fs-base); color:var(--text-secondary); background:var(--bg-card); border:1rpx solid var(--border); border-radius:var(--r-full); padding:var(--sp-2) var(--sp-5); }
 .msg-empty-chip:active { opacity:0.6 }
 .thinking-dots { display:flex; gap:var(--sp-2); padding:var(--sp-2) 0; opacity:0; animation:dotFadeIn var(--dur-base) var(--ease-out) .1s forwards }
 .thinking-dot { width:10rpx; height:10rpx; border-radius:50%; background:var(--accent); animation:dotBounce 1.4s var(--ease-out) infinite }

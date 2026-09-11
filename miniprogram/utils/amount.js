@@ -22,7 +22,7 @@ function fmtYuan(v) {
   if (isNaN(n)) return String(v)
   if (n >= WAN) {
     const x = Math.round(n / 100) / 100
-    return `${Number.isInteger(x) ? x : x}万`
+    return `${x}万`
   }
   return `${n}元`
 }

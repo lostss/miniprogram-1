@@ -84,4 +84,40 @@ describe('queryMessages (via dataQuery) 云函数', function() {
       expect(res.data.messages).toEqual([])
     })
   })
+
+  // 回归：历史消息恢复确认卡（2026-08-29 线上缺失——queryMessages 漏映射 pending_confirms，
+  // 导致重新进入对话看不到历史确认卡；history-store 依赖该字段渲染 pendingConfirms）
+  test('返回消息保留 pending_confirms（确认卡历史恢复）', function() {
+    const pc = [
+      { pendingId: 'write_updateFinances_abc123', action: 'CONFIRM', type: 'write_confirm', toolName: 'updateFinances', summary: '年收入:350,000元', target: '家庭财务' },
+      { pendingId: 'write_updateFinances_abc123', action: 'KEEP', type: 'write_confirm', toolName: 'updateFinances', summary: '年收入:350,000元', target: '家庭财务' }
+    ]
+    mockMessages = [
+      { role: 'assistant', content: '已为您生成确认卡', pending_confirms: pc, timestamp: 3 }
+    ]
+    return dataQuery.main({ action: 'queryMessages', familyId: 'fam_001', mode: 'latest' }).then(function(res) {
+      expect(res.code).toBe(200)
+      expect(res.data.messages[0].pending_confirms).toEqual(pc)
+      expect(res.data.messages[0].pending_confirms[0].action).toBe('CONFIRM')
+    })
+  })
+
+  test('无确认卡的消息返回空数组', function() {
+    mockMessages = [{ role: 'assistant', content: '普通回复', timestamp: 1 }]
+    return dataQuery.main({ action: 'queryMessages', familyId: 'fam_001', mode: 'latest' }).then(function(res) {
+      expect(res.code).toBe(200)
+      expect(res.data.messages[0].pending_confirms).toEqual([])
+    })
+  })
+
+  // P1-L1（2026-09-05）：undoOps 随消息回读——历史恢复撤销入口（此前白名单漏该键 → 按钮永不出现）
+  test('返回消息保留 undoOps（历史恢复撤销按钮）', function() {
+    mockMessages = [
+      { role: 'assistant', content: '已更新家庭财务', undoOps: [{ opId: 'ud_1', summary: '已更新家庭财务', ttlSec: 300 }], timestamp: 4 }
+    ]
+    return dataQuery.main({ action: 'queryMessages', familyId: 'fam_001', mode: 'latest' }).then(function(res) {
+      expect(res.code).toBe(200)
+      expect(res.data.messages[0].undoOps).toEqual([{ opId: 'ud_1', summary: '已更新家庭财务', ttlSec: 300 }])
+    })
+  })
 })

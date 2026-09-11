@@ -11,6 +11,29 @@
 const { CtxCache } = require('../cloudfunctions/conversationAI/ctx-cache')
 
 describe('CtxCache', () => {
+  describe('invalidateByPrefix（P1 query 缓存批量失效）', () => {
+    test('命中前缀的 key 全部删除，其他保留', () => {
+      const c = new CtxCache({ ttlMs: 60000, maxSize: 10 })
+      c.set('fam:op:queryPolicies:{}', 'a')
+      c.set('fam:op:queryMembers:{}', 'b')
+      c.set('fam:op:queryFacts:{"predicate":"职业"}', 'c')
+      c.set('fam:op2:queryPolicies:{}', 'd') // 不同 openid，不应被删
+      c.invalidateByPrefix('fam:op:')
+      expect(c.get('fam:op:queryPolicies:{}')).toBeUndefined()
+      expect(c.get('fam:op:queryMembers:{}')).toBeUndefined()
+      expect(c.get('fam:op:queryFacts:{"predicate":"职业"}')).toBeUndefined()
+      expect(c.get('fam:op2:queryPolicies:{}')).toBe('d')
+      expect(c.size).toBe(1)
+    })
+
+    test('空前缀不误删', () => {
+      const c = new CtxCache({ ttlMs: 60000, maxSize: 10 })
+      c.set('k1', 'v1')
+      c.invalidateByPrefix('')
+      expect(c.size).toBe(1)
+    })
+  })
+
   describe('basic get/set', () => {
     test('set 后 get 返回 value', () => {
       const c = new CtxCache({ ttlMs: 1000, maxSize: 10 })

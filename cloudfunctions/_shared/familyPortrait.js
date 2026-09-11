@@ -166,7 +166,7 @@ function buildPortrait(members, facts) {
       policies: owned.map(l => {
         const pol = policies.find(p => p.id === l.policyId)
         return pol
-          ? { name: pol.name, category: pol.category, amount: pol.sumAssured, status: pol.status, expiryInfo: pol.expiryInfo, paymentPeriod: (pol.attrs['缴费期'] || {}).value || '', orphan: false, confidence: pol.confidence }
+          ? { name: pol.name, category: pol.category, amount: pol.sumAssured, status: pol.status, expiryInfo: pol.expiryInfo, paymentPeriod: (pol.attrs['缴费期'] || {}).value || '', premium: (pol.attrs['年缴保费'] || {}).value || '', effectiveDate: (pol.attrs['生效日'] || {}).value || '', orphan: false, confidence: pol.confidence }
           : { name: l.name, category: _inferCategory(l.name), amount: '', status: 'unknown', orphan: true, confidence: l.confidence || 0 }
       }),
       coverage
@@ -210,14 +210,21 @@ function renderPortraitMarkdown(portrait, { compact = false } = {}) {
         return `${dim}:${t}`
       }).join(' ')
       lines.push(`- 保障覆盖：${cov}`)
-      // P0：compact 补保单明细摘要（AI 流式阶段需能回答"家里有什么保单"；按成员截断 4 条防 token 膨胀）
+      // P0：compact 补保单明细摘要（AI 流式阶段需能回答"家里有什么保单/年缴保费/何时生效"）
+      // 截断分档：≤4 完整摘要（含保费/生效日）；>4 只列全部保单名（防隐形保单，token 仍可控）
       if (mp.policies.length) {
-        const polSum = mp.policies.slice(0, 4).map(p => {
-          const st = p.status === 'active' ? '有效' : p.status === 'expired' ? '已失效' : '待确认'
-          const amt = p.amount ? (typeof p.amount === 'number' ? p.amount + '万' : p.amount) : '待确认'
-          return `${p.name || '待确认'}(${p.category || '待确认'},${amt},${st})`
-        }).join(' ')
-        lines.push(`- 已有保障：${polSum}${mp.policies.length > 4 ? ` 等${mp.policies.length}份` : ''}`)
+        if (mp.policies.length <= 4) {
+          const polSum = mp.policies.map(p => {
+            const st = p.status === 'active' ? '有效' : p.status === 'expired' ? '已失效' : '待确认'
+            const amt = p.amount ? (typeof p.amount === 'number' ? p.amount + '万' : p.amount) : '待确认'
+            const prem = p.premium ? `,保费${p.premium}` : ''
+            const eff = p.effectiveDate ? `,生效${p.effectiveDate}` : ''
+            return `${p.name || '待确认'}(${p.category || '待确认'},${amt}${prem}${eff},${st})`
+          }).join(' ')
+          lines.push(`- 已有保障：${polSum}`)
+        } else {
+          lines.push(`- 已有保障（${mp.policies.length}份）：${mp.policies.map(p => p.name || '待确认').join('、')}`)
+        }
       }
       continue
     }

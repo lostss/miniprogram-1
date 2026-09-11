@@ -51,6 +51,24 @@ describe('validateArgs', () => {
     expect(r.errors[0]).toContain('confidence')
   })
 
+  test('未知字段（如提示词诱导的 policy_id，schema 实为 policyId）→ 校验失败，防静默透传 404', () => {
+    const def = {
+      type: 'function',
+      function: {
+        name: 'updatePolicy',
+        parameters: {
+          type: 'object',
+          properties: { policyId: { type: 'string' } },
+          required: []
+        }
+      }
+    }
+    const r = validateArgs('updatePolicy', { policy_id: 'pol_1' }, [def])
+    expect(r.ok).toBe(false)
+    expect(r.errors[0]).toContain('policy_id')
+    expect(r.errors[0]).toContain('policyId')
+  })
+
   test('未注册工具 → 放行（交由 dispatch 拒绝）', () => {
     const r = validateArgs('unknownTool', {}, [addFactDef])
     expect(r.ok).toBe(true)

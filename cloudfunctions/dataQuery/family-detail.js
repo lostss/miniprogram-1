@@ -8,7 +8,7 @@
  */
 const { loadFamilyView } = require('./_shared/familyView')
 const { loadActivePolicies } = require('./_shared/policy-read')
-const { loadCashValues } = require('./_shared/cash-value-read')
+const { loadCashValues, loadUnmatchedCashValues } = require('./_shared/cash-value-read')
 const { toReadReport } = require('./_shared/report-fields')
 const { wrapError } = require('./_shared/errorHandler')
 
@@ -21,16 +21,19 @@ async function getFamilyDetail(db, openid, event) {
     // loadFamilyView（内部 3 集合并行）与 policies 查询并行，省一次串行往返
     // 架构审计第 16 轮候选 #1：policies 读取走 loadActivePolicies 接缝，
     // 集中 _openid 注入 + 过滤 deleted + ensureStatusBatch 三件套
-    const [family, policies, cashValues] = await Promise.all([
+    const [family, policies, cashValues, unmatchedCashValues] = await Promise.all([
       loadFamilyView(db, openid, familyId),
       loadActivePolicies(db, familyId, openid),
-      loadCashValues(db, familyId, openid)
+      loadCashValues(db, familyId, openid),
+      // 2026-09-11：孤儿现价表（自动匹配未中）——报告页据此展示「待关联」入口
+      loadUnmatchedCashValues(db, familyId, openid)
     ])
     if (!family) return { code: 404, msg: '家庭不存在或无权访问' }
 
     family.policies = policies
     // 现价表（保障节点回本计算用：policy_id + cash_values[{y,v}]）
     family.cashValues = cashValues
+    family.unmatchedCashValues = unmatchedCashValues
 
     // 报告对象（families.last_* → report.{portrait,review,...}）
     family.report = toReadReport(family)

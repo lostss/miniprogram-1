@@ -53,6 +53,24 @@ function parseExpiry(insurancePeriod, effectiveDate, age) {
     return { year: ry, date: new Date(ry, rm, rd), label: '至' + ry + '-' + (rm + 1) + '-' + rd }
   }
 
+  // 「90天」「180日」— 短期限：生效日起算 N 天（精确到日）
+  var dayMatch = text.match(/^(\d+)\s*(?:天|日)/)
+  if (dayMatch) {
+    var nd = parseInt(dayMatch[1], 10)
+    var dd2 = new Date(eff)
+    dd2.setDate(dd2.getDate() + nd)
+    return { year: dd2.getFullYear(), date: dd2, label: text }
+  }
+
+  // 「12个月」「6个月」— 短期限：生效日起算 N 个月（精确到月）
+  var monMatch = text.match(/^(\d+)\s*个月/)
+  if (monMatch) {
+    var nm = parseInt(monMatch[1], 10)
+    var dm2 = new Date(eff)
+    dm2.setMonth(dm2.getMonth() + nm)
+    return { year: dm2.getFullYear(), date: dm2, label: text }
+  }
+
   // 「30年」「20年」— 数字+年（仅匹配纯数字+年，不含噪声前缀）
   var yearMatch = text.match(/^(\d+)\s*年/)
   if (yearMatch) {

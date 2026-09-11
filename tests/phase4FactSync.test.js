@@ -43,12 +43,7 @@ jest.mock('wx-server-sdk', function () {
   }
 })
 
-jest.mock('../cloudfunctions/dataWrite/_shared/ai-gateway', function () {
-  return { safeCallChat: jest.fn(function () { return Promise.resolve({ text: '{"members":[]}', usage: {}, logId: null }) }), safeCallThink: jest.fn() }
-})
-jest.mock('../cloudfunctions/dataWrite/_shared/ai-client', function () {
-  return { callChat: jest.fn(function () { return Promise.resolve({ text: '{}', usage: {} }) }), callAIWithRetry: jest.fn(function () { return Promise.resolve({ text: '{}', usage: {} }) }), callHunyuan: jest.fn(function () { return Promise.resolve({ text: '{}', usage: {} }) }) }
-})
+
 jest.mock('../cloudfunctions/dataWrite/_shared/config', function () {
   return {
     AI_TIMEOUT: { OCR: 20000, CHAT: 30000 },
@@ -70,19 +65,6 @@ describe('Phase 4 fact→members / source', function () {
   beforeEach(function () {
     mockStore = { families: [], members: [], facts: [], agent_logs: [], operation_logs: [] }
     mockStore.families.push({ _id: 'f1', _openid: 'mock_openid', members: [{ member_id: 'm1', name: '张三' }], engagement_stage: 'profiling' })
-  })
-
-  test('A1：表单标准字段写入的 fact source=user_form', function () {
-    seedMember()
-    return dataWrite.main({
-      action: 'submitProfiling', familyId: 'f1',
-      members: [{ memberId: 'm1', name: '张三', standardFields: [{ key: 'health', value: '高血压' }] }]
-    }).then(function (res) {
-      expect(res.code).toBe(200)
-      var healthFact = mockStore.facts.find(function (f) { return f.predicate === '健康异常' })
-      expect(healthFact).toBeTruthy()
-      expect(healthFact.source).toBe('user_form')
-    })
   })
 
   test('反向同步：对话高置信度 健康异常→members.health', function () {

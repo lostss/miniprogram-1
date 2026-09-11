@@ -1,6 +1,7 @@
 /**
  * login 云函数单元测试
- * 测试：参数校验、devMode 静默登录、手机号登录、新建/更新代理人
+ * 方案 A（个人主体）：openid 静默登录——微信唯一身份即账号，无需手机号授权
+ * 测试：参数校验、新建/更新代理人、异常兜底
  */
 
 var mockCols = {}
@@ -36,14 +37,7 @@ jest.mock('wx-server-sdk', function() {
     }),
     getWXContext: jest.fn(function() {
       return { OPENID: 'mock_openid', APPID: 'mock_appid' }
-    }),
-    openapi: {
-      phonenumber: {
-        getPhoneNumber: jest.fn(function() {
-          return Promise.resolve({ phoneInfo: { phoneNumber: '13800138000' } })
-        })
-      }
-    }
+    })
   }
   return mock
 })
@@ -77,106 +71,46 @@ describe('login 云函数', function() {
     })
   })
 
-  describe('devMode', function() {
-
-    test('devMode 创建新用户', function() {
-      // agents 查询返回空，触发新建
-      return login.main({ devMode: true }).then(function(res) {
-        expect(res.code).toBe(200)
-        expect(res.msg).toContain('调试登录成功')
-        expect(res.data.nickname).toBe('开发测试')
-        expect(res.data.role).toBe('trial')
-        expect(res.data.plan).toBe('trial')
-      })
+  test('openid 登录创建新用户', function() {
+    // agents 查询返回空，触发新建
+    return login.main({}).then(function(res) {
+      expect(res.code).toBe(200)
+      expect(res.msg).toContain('登录成功')
+      expect(res.data.openid).toBe('mock_openid')
+      expect(res.data.agent_id).toBe('new_agent')
+      expect(res.data.nickname).toBe('新用户')
+      expect(res.data.role).toBe('trial')
+      expect(res.data.plan).toBe('trial')
+      expect(res.data.phone).toBe('')
     })
-
-    test('devMode 更新已有用户', function() {
-      mockCols['agents'].where.mockReturnValue({
-        limit: jest.fn(function() { return { get: jest.fn(function() { return Promise.resolve({ data: [{ _id: 'agent_001', nickname: '已有用户', role: 'basic', plan: 'basic' }] }) }) } })
-      })
-
-      return login.main({ devMode: true }).then(function(res) {
-        expect(res.code).toBe(200)
-        expect(res.data.nickname).toBe('已有用户')
-        expect(mockTmDoc.update).toHaveBeenCalled()
-      })
-    })
-
-    test('devMode 异常返回 500', function() {
-      mockCols['agents'].where.mockImplementation(function() {
-        throw new Error('DB error')
-      })
-
-      return login.main({ devMode: true }).then(function(res) {
-        expect(res.code).toBe(500)
-        expect(res.msg).toContain('调试登录失败')
-      })
-    })
-
   })
 
-  describe('手机号登录', function() {
-
-    test('缺少 code 返回 400', function() {
-      return login.main({}).then(function(res) {
-        expect(res.code).toBe(400)
-        expect(res.msg).toContain('登录code')
-      })
+  test('openid 登录更新已有用户', function() {
+    // M-1 修复后登录走 writeSeam.silentUpdateDoc：先 where(_id + _openid).get() 校验归属，再 doc().update()
+    var existingAgent = { _id: 'agent_001', _openid: 'mock_openid', phone: 'dev_000001', nickname: '已有用户', role: 'basic', plan: 'basic' }
+    mockCols['agents'].where.mockReturnValue({
+      limit: jest.fn(function() { return { get: jest.fn(function() { return Promise.resolve({ data: [existingAgent] }) }) } }),
+      get: jest.fn(function() { return Promise.resolve({ data: [existingAgent] }) })
     })
 
-    test('手机号登录创建新代理人', function() {
-      var cloud = require('wx-server-sdk')
-      cloud.openapi.phonenumber.getPhoneNumber.mockResolvedValue({
-        phoneInfo: { phoneNumber: '13912345678' }
-      })
-      // agents 查询返回空（默认已是空）
+    return login.main({}).then(function(res) {
+      expect(res.code).toBe(200)
+      expect(res.data.agent_id).toBe('agent_001')
+      expect(res.data.nickname).toBe('已有用户')
+      expect(res.data.phone).toBe('dev_000001')
+      expect(mockTmDoc.update).toHaveBeenCalled()
+    })
+  })
 
-      return login.main({ code: 'mock_code' }).then(function(res) {
-        expect(res.code).toBe(200)
-        expect(res.msg).toContain('登录成功')
-        expect(res.data.phone).toBe('13912345678')
-      })
+  test('登录异常返回 500', function() {
+    mockCols['agents'].where.mockImplementation(function() {
+      throw new Error('DB error')
     })
 
-    test('手机号登录更新已有代理人', function() {
-      var cloud = require('wx-server-sdk')
-      cloud.openapi.phonenumber.getPhoneNumber.mockResolvedValue({
-        phoneInfo: { phoneNumber: '13800138000' }
-      })
-      // agents 查询返回已有记录
-      mockCols['agents'].where.mockReturnValue({
-        limit: jest.fn(function() { return { get: jest.fn(function() { return Promise.resolve({ data: [{ _id: 'agent_001', phone: '13800138000', nickname: '老用户' }] }) }) } })
-      })
-
-      return login.main({ code: 'mock_code' }).then(function(res) {
-        expect(res.code).toBe(200)
-        expect(res.data.agent_id).toBe('agent_001')
-        expect(mockTmDoc.update).toHaveBeenCalled()
-      })
+    return login.main({}).then(function(res) {
+      expect(res.code).toBe(500)
+      expect(res.msg).toContain('登录失败')
     })
-
-    test('手机号获取失败返回 400', function() {
-      var cloud = require('wx-server-sdk')
-      cloud.openapi.phonenumber.getPhoneNumber.mockResolvedValue({
-        phoneInfo: {}
-      })
-
-      return login.main({ code: 'mock_code' }).then(function(res) {
-        expect(res.code).toBe(400)
-        expect(res.msg).toContain('手机号获取失败')
-      })
-    })
-
-    test('登录异常返回 500', function() {
-      var cloud = require('wx-server-sdk')
-      cloud.openapi.phonenumber.getPhoneNumber.mockRejectedValue(new Error('API error'))
-
-      return login.main({ code: 'mock_code' }).then(function(res) {
-        expect(res.code).toBe(500)
-        expect(res.msg).toContain('登录失败')
-      })
-    })
-
   })
 
 })

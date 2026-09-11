@@ -36,14 +36,41 @@ async function checkRateLimit(db, openid) {
   return { allowed: true }
 }
 
+// ---- 月度 token 配额（用户级）----
+// agents.token_used_monthly 由 ai-gateway 在每次 AI 调用成功后原子累加（只加不减），
+// 此处仅读取比较。limit<=0、未建档或 DB 不可用时默认放行（配额缺失不阻断业务）。
+async function checkMonthlyQuota(db, openid) {
+  if (!db || !openid || typeof db.collection !== 'function') return { allowed: true }
+  try {
+    // M-2 修复：agents 表 openid 即逻辑唯一键，但注入 _openid 兜底防止历史数据缺 _openid 时跨用户读取
+    const r = await db.collection('agents').where({ openid, _openid: openid }).limit(1).get()
+    const agent = r && r.data && r.data[0]
+    if (!agent) return { allowed: true }
+    const limit = Number(agent.token_monthly_limit) || 0
+    if (limit <= 0) return { allowed: true }
+    const used = Number(agent.token_used_monthly) || 0
+    if (used >= limit) return { allowed: false, reason: '本月 AI 用量已达上限' }
+  } catch (e) { console.error('[guard] checkMonthlyQuota 查询失败:', e.message) }
+  return { allowed: true }
+}
+
 // ---- 输出审计 ----
 
 // 禁止的赔付/收益承诺模式
+// 2026-09-10 修复误伤（线上事故）：原第 4 条为裸词 /(稳赚|保本|兜底|包赔)/，而「兜底」「保本」
+// 在保险业务中是中性表述（"寿险需求按家庭年收入兜底估算""保本型年金"）。报告上下文含收入兜底口径时，
+// AI 复述该口径 → 命中裸词 → auditOutput 把**整份报告 JSON 替换成一句拒答文案** → 必然解析失败，
+// 重试同样被拦（23:20 事故：两次 output 2218/1846 tokens 全部丢弃，前端提示"分析失败"）。
+// 现改为仅在构成"承诺"语境时拦截，保留合规能力、消除对业务中性词的误伤。
 const FORBIDDEN_CLAIMS = [
   /(保证|肯定|一定|100%|必定|绝对)(能|可以|会)?\s*(赔付|赔偿|理赔|报销|拿到|获赔)/,
   /(保证|承诺|确保|锁定)\s*(收益|回报|利率|分红)/,
   /年(化)?收益[率达]?\s*[\d.]+%?/,
-  /(稳赚|保本|兜底|包赔)/,
+  // 取舍：「保本」保留裸词拦截（监管上保险产品不得宣传保本，含"保本理财/保本型"话术）；
+  // 「兜底」仅在承诺语境拦截——"按家庭年收入兜底估算"是业务中性口径，裸词拦会把正常报告整体判违规
+  /(稳赚|包赔|保本)/,
+  /(保证|承诺|确保|锁定)\s*(兜底|兑付|不亏)/,
+  /兜底\s*(赔付|理赔|收益|回报|兑付|不亏)/,
   /(每年|到期)?\s*(最高|最少|至少)\s*(可拿|可得|可领|可获)/,
 ]
 
@@ -64,6 +91,8 @@ function auditOutput(text) {
       return {
         pass: false,
         reason: '回复包含禁止的赔付/收益承诺，已被拦截',
+        // 2026-09-10：带上命中规则，便于 warn 模式/日志定位是哪条正则误伤（原先只有笼统 reason）
+        matchedRule: rule.source,
         text: '抱歉，作为AI助手我不能提供赔付或收益承诺相关的回答。'
       }
     }
@@ -83,4 +112,4 @@ function auditOutput(text) {
   return { pass: true, text: clean }
 }
 
-module.exports = { sanitize, detectInjection, detectConfusables, checkRateLimit, auditOutput }
+module.exports = { sanitize, detectInjection, detectConfusables, checkRateLimit, checkMonthlyQuota, auditOutput }

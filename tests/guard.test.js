@@ -2,7 +2,7 @@
  * guard.js 安全模块纯函数测试
  * RED phase — sanitize, detectConfusables, detectInjection, auditOutput
  */
-const { sanitize, detectConfusables, detectInjection, auditOutput } = require('../cloudfunctions/_shared/guard')
+const { sanitize, detectConfusables, detectInjection, auditOutput, checkMonthlyQuota } = require('../cloudfunctions/_shared/guard')
 
 describe('sanitize', () => {
   test('空输入返回空串', () => {
@@ -155,5 +155,47 @@ describe('auditOutput', () => {
   test('稳赚/保本拦截', () => {
     expect(auditOutput('稳赚不赔').pass).toBe(false)
     expect(auditOutput('保本理财').pass).toBe(false)
+  })
+})
+
+describe('checkMonthlyQuota', () => {
+  const mkDb = (agents) => ({
+    collection: jest.fn(() => ({
+      where: jest.fn(() => ({
+        limit: jest.fn(() => ({ get: jest.fn().mockResolvedValue({ data: agents }) }))
+      }))
+    }))
+  })
+
+  test('未超限 → allowed', async () => {
+    const db = mkDb([{ openid: 'u1', token_monthly_limit: 10000, token_used_monthly: 3200 }])
+    const r = await checkMonthlyQuota(db, 'u1')
+    expect(r.allowed).toBe(true)
+    expect(db.collection).toHaveBeenCalledWith('agents')
+  })
+
+  test('超限 → 拒绝并带原因', async () => {
+    const db = mkDb([{ openid: 'u1', token_monthly_limit: 10000, token_used_monthly: 10000 }])
+    const r = await checkMonthlyQuota(db, 'u1')
+    expect(r.allowed).toBe(false)
+    expect(r.reason).toContain('上限')
+  })
+
+  test('limit<=0 视为无配额限制', async () => {
+    expect((await checkMonthlyQuota(mkDb([{ openid: 'u1', token_monthly_limit: 0, token_used_monthly: 99999 }]), 'u1')).allowed).toBe(true)
+    expect((await checkMonthlyQuota(mkDb([{ openid: 'u1', token_used_monthly: 99999 }]), 'u1')).allowed).toBe(true)
+  })
+
+  test('未建档/DB 不可用 → 默认放行', async () => {
+    expect((await checkMonthlyQuota(mkDb([]), 'u1')).allowed).toBe(true)
+    expect((await checkMonthlyQuota(null, 'u1')).allowed).toBe(true)
+    expect((await checkMonthlyQuota({}, 'u1')).allowed).toBe(true)
+    expect((await checkMonthlyQuota(mkDb([{}]), 'u1')).allowed).toBe(true) // 无 quota 字段
+  })
+
+  test('查询异常 → 放行不抛错', async () => {
+    const db = { collection: jest.fn(() => { throw new Error('db down') }) }
+    const r = await checkMonthlyQuota(db, 'u1')
+    expect(r.allowed).toBe(true)
   })
 })

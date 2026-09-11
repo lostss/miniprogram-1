@@ -58,7 +58,11 @@ async function callSibling(cloud, fnName, payload, openid, opts = {}) {
     }
   }
 
-  const data = { _authOpenid: openid, ...payload, ...extraPayload }
+  // P1（2026-08-30 安全）：剥离 payload/extraPayload 中可能被 AI 注入的 _authOpenid，
+  // 安全值最后写入不可覆盖——杜绝越权读写（familyId 由 S3-8 后置覆盖，_authOpenid 同样处理）
+  const { _authOpenid: _stripped, ...safePayload } = payload || {}
+  const { _authOpenid: _stripped2, ...safeExtra } = extraPayload || {}
+  const data = { ...safePayload, ...safeExtra, _authOpenid: openid }
   if (traceId) data._reqId = traceId
 
   if (fireAndForget) {

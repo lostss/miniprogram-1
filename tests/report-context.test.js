@@ -7,7 +7,8 @@
 const {
   buildSummaryMd,
   buildPrevReportMd,
-  buildReportContext
+  buildReportContext,
+  buildGapSnapshot
 } = require('../cloudfunctions/reportAI/report-context')
 
 describe('buildSummaryMd', () => {
@@ -43,20 +44,22 @@ describe('buildSummaryMd', () => {
     expect(md).toContain('年保费合计：1000元')
   })
 
-  test('income 为 0 → premiumRatio 显示 -', () => {
+  test('income 为 0 → 不计算占收入比（防 -% 泄漏）', () => {
     const md = buildSummaryMd([{ status: 'active', annual_premium: 1000 }], { income: 0 })
-    expect(md).toContain('占家庭年收入 -%')
+    expect(md).not.toContain('占家庭年收入')
+    expect(md).toContain('不计算占收入比')
   })
 
-  test('income 缺失 → premiumRatio 显示 -', () => {
+  test('income 缺失 → 不计算占收入比（防 -% 泄漏）', () => {
     const md = buildSummaryMd([{ status: 'active', annual_premium: 1000 }], {})
-    expect(md).toContain('占家庭年收入 -%')
+    expect(md).not.toContain('占家庭年收入')
+    expect(md).toContain('不计算占收入比')
   })
 
   test('snap 含 debt / fixed_expense → 显示', () => {
     const md = buildSummaryMd([], { debt: '房贷100万', fixed_expense: '8000元/月' })
     expect(md).toContain('家庭负债：房贷100万')
-    expect(md).toContain('固定月支出：8000元/月')
+    expect(md).toContain('固定支出：8000元/月')
   })
 
   test('snap 不含 debt / fixed_expense → 不显示该行', () => {
@@ -105,6 +108,13 @@ describe('buildPrevReportMd', () => {
 })
 
 describe('buildReportContext', () => {
+  test('上下文以「数据口径说明」开头（2026-09-10 口径前移，降低误用概率）', () => {
+    const r = buildReportContext({ v2ctx: { markdown: 'V2' }, policies: [], familyMeta: {} })
+    expect(r.indexOf('## 数据口径说明')).toBe(0)
+    expect(r).toContain('以「结构化保单清单」为准')
+    expect(r).toContain('按成员个人年收入计算')
+  })
+
   test('空输入 → 仅返回 summaryMd（buildSummaryMd 总是非空）', () => {
     const r = buildReportContext({})
     expect(r).toContain('保单汇总数据')
@@ -167,5 +177,104 @@ describe('buildReportContext', () => {
       familyMeta: {}
     })
     expect(r).toContain('数据一致性提示')
+  })
+})
+
+// 2026-09-10：此前零覆盖 —— 口径在前后端之间漂移过多次（P1-P2 2026-09-05、P1-2 2026-09-10），
+// 皆因矩阵的收入基数没有测试锁定。以下用例把「与前端 gap-engine 对齐」写成可执行契约。
+describe('buildGapSnapshot（缺口矩阵口径）', () => {
+  const _row = (md, name, cat) => md.split('\n').find(l => l.indexOf('| ' + name + ' | ' + cat + ' |') === 0)
+
+  test('寿险按成员个人收入算，不用家庭收入高估（双收入家庭）', () => {
+    // 家庭收入 50 万，配偶个人收入 20 万 → 寿险需求 = 负债100 + 5×20 = 200 万
+    // （旧实现用家庭收入：100 + 5×50 = 350 万，与前端矩阵对不上）
+    const md = buildGapSnapshot(
+      [{ status: 'active', member_id: 'm2', insured_name: '李四', insurance_category: '寿险', sum_assured: 2000000 }],
+      { income: 50, debt: 100 },
+      [
+        { member_id: 'm1', name: '张三', role: '本人', income: 30 },
+        { member_id: 'm2', name: '李四', role: '配偶', income: 20 }
+      ]
+    )
+    const row = _row(md, '李四', '寿险')
+    expect(row).toContain('5×收入20万')
+    expect(row).toContain('=200万')
+    expect(row).toContain('✅ 已覆盖')
+    expect(row).not.toContain('5×收入50万')
+  })
+
+  test('支柱个人收入缺失 → 用家庭年收入全额兜底并标注估算', () => {
+    const md = buildGapSnapshot([], { income: 50, debt: 0 }, [{ member_id: 'm1', name: '张三', role: '本人' }])
+    const row = _row(md, '张三', '寿险')
+    expect(row).toContain('5×收入50万')
+    expect(row).toContain('按家庭年收入估算')
+  })
+
+  test('非支柱收入缺失 → ⚠️ 无法计算，不用 0 收入编造需求', () => {
+    const md = buildGapSnapshot([], { income: 50, debt: 0 }, [
+      { member_id: 'm1', name: '张三', role: '本人', income: 50 },
+      { member_id: 'm2', name: '李四', role: '配偶' }
+    ])
+    const row = _row(md, '李四', '寿险')
+    expect(row).toContain('⚠️ 无法计算')
+    expect(row).toContain('年收入缺失无法计算')
+    expect(row).not.toContain('❌ 有缺口')
+    expect(row).not.toContain('✅ 已覆盖')
+    // 重疾/医疗不受收入缺失影响，仍正常判定
+    expect(_row(md, '李四', '重疾险')).toContain('❌ 有缺口')
+  })
+
+  test('P2-1：保单缺 member_id 但姓名匹配 → 不再出现"已覆盖"与"无任何保障"矛盾行', () => {
+    const md = buildGapSnapshot(
+      [{ status: 'active', insured_name: '张三', insurance_category: '重疾险', sum_assured: 600000 }],
+      { income: 50, debt: 0 },
+      [{ member_id: 'm1', name: '张三', role: '本人', income: 50 }]
+    )
+    expect(_row(md, '张三', '重疾险')).toContain('✅ 已覆盖')
+    expect(md).not.toContain('无任何保障')
+  })
+
+  test('无保单成员也逐险种给缺口金额（对齐前端粒度，不再只给笼统一行）', () => {
+    const md = buildGapSnapshot([], { income: 50, debt: 0 }, [
+      { member_id: 'm1', name: '张三', role: '本人', income: 50 },
+      { member_id: 'm2', name: '李四', role: '配偶', income: 20 }
+    ])
+    expect(_row(md, '李四', '重疾险')).toContain('❌ 有缺口')
+    expect(_row(md, '李四', '重疾险')).toContain('现有0万<50万')
+    expect(_row(md, '李四', '寿险')).toContain('=100万') // 负债0 + 5×个人收入20
+    expect(md).not.toContain('无任何保障')
+  })
+
+  test('保单 insured_name 不在成员名单 → 仍单独成行（不丢数据）', () => {
+    const md = buildGapSnapshot(
+      [{ status: 'active', insured_name: '王五', insurance_category: '重疾险', sum_assured: 800000 }],
+      { income: 30, debt: 0 },
+      [{ member_id: 'm1', name: '张三', role: '本人', income: 30 }]
+    )
+    expect(_row(md, '王五', '重疾险')).toContain('✅ 已覆盖')
+    expect(_row(md, '张三', '重疾险')).toContain('❌ 有缺口')
+  })
+
+  test('医疗险 100 万及格线（与前端一致）', () => {
+    const md = buildGapSnapshot(
+      [{ status: 'active', member_id: 'm1', insurance_category: '医疗险', sum_assured: 500000 }],
+      { income: 30, debt: 0 },
+      [{ member_id: 'm1', name: '张三', role: '本人', income: 30 }]
+    )
+    expect(_row(md, '张三', '医疗险')).toContain('❌ 有缺口')
+    expect(_row(md, '张三', '医疗险')).toContain('现有50万<100万')
+  })
+
+  test('全空家庭 → 单行显式声明（保证 AI 有依据可引用）', () => {
+    const md = buildGapSnapshot([], {}, [])
+    expect(md).toContain('| 全体 | - | ❌ 无任何保障 |')
+    expect(md).toContain('该家庭暂无任何保单')
+  })
+
+  test('snap.debt 支持对象形态 { amount, type }', () => {
+    const md = buildGapSnapshot([], { income: 30, debt: { amount: 100, type: '房贷' } }, [
+      { member_id: 'm1', name: '张三', role: '本人', income: 30 }
+    ])
+    expect(_row(md, '张三', '寿险')).toContain('负债100万')
   })
 })

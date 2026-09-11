@@ -18,6 +18,9 @@
  *   - TTL 3 分钟：单端高频使用场景（代理人个人设备），不要求跨端实时同步；SWR 后台刷新兜底新消息
  */
 const api = require('./apiClient')
+// P2-L3 修复（2026-09-05）：AI 回复标点统一全角——实时展示已转（chat-panel _fullWidthPunct），
+// 历史回读此前原样透传导致同一回复"实时全角、刷新后半角"；此处对 assistant 消息统一转换
+const { _toFullwidth } = require('./md-inline')
 
 const TTL_MS = 3 * 60 * 1000
 const CACHE_PREFIX = 'chat_history_'
@@ -37,8 +40,9 @@ function _writeCache(familyId, ms) {
   try { wx.setStorageSync(CACHE_PREFIX + familyId, { messages: ms, fetchedAt: Date.now() }) } catch (e) { /* 存储满/隐私模式：静默降级为无缓存 */ }
 }
 
-// 与 chat-panel _fmtTime 同逻辑：当天 → 刚刚/X分钟前/HH:mm；跨天 → 昨天/M月D日 + HH:mm
-function _fmtTime(d) {
+// C2（2026-08-30 审计）：时间格式化抽为公共导出（原 chat-panel 与 history-store 两处重复实现）
+// 当天 → 刚刚/X分钟前/HH:mm；跨天 → 昨天/M月D日 + HH:mm
+function fmtTime(d) {
   const n = new Date(), mins = Math.floor((n - d) / 60000)
   const pad = v => ('0' + v).slice(-2)
   const hhmm = pad(d.getHours()) + ':' + pad(d.getMinutes())
@@ -52,15 +56,46 @@ function _fmtTime(d) {
   return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hhmm
 }
 
+// 撤销倒计时格式化（mm:ss）
+function fmtCountdown(sec) {
+  if (sec <= 0) return '已过期'
+  const m = Math.floor(sec / 60), s = sec % 60
+  return m + ':' + ('0' + s).slice(-2)
+}
+
 // raw（desc 新→旧）→ 展示用 ms（time/_scrollId 格式化）；正序由调用侧决定
+// 单通道 v10：pending_confirms 随消息恢复，历史消息上的确认卡可继续交互
+// 历史显示 bug 兜底：旧版本落库的指令文本 {CONFIRM:xxx}/{KEEP:xxx}/{UNDO:xxx} 转中文
+// 新版本后端已落库友好化（confirm-handler.js / undo-handler.js），此处仅处理历史数据
+function _friendlyDisplay(content) {
+  const c = String(content || '').trim()
+  if (/^\{CONFIRM:[\w-]+\}$/.test(c)) return '确认'
+  if (/^\{KEEP:[\w-]+\}$/.test(c)) return '取消'
+  if (/^\{UNDO:[\w-]+\}$/.test(c)) return '撤销'
+  return c
+}
 function _toMs(raw) {
-  return raw.map(m => ({
+  return raw.map(m => {
+    const isAsst = (m.role || 'assistant') === 'assistant'
+    const friendly = _friendlyDisplay(m.content)
+    return {
     role: m.role || 'assistant',
-    content: m.content || '',
-    time: m.created_at ? _fmtTime(new Date(m.created_at)) : '',
+    // P2-L3：仅 assistant 消息转全角（对齐实时路径；user 消息保留原文，防保单号/URL 标点被转）
+    content: isAsst ? _toFullwidth(friendly) : friendly,
+    time: m.created_at ? fmtTime(new Date(m.created_at)) : '',
     suggestions: m.suggestions || [],
+    pendingConfirms: m.pending_confirms || [],
+    // C3（2026-08-30 审计）：撤销入口随历史恢复——ttl 按消息 created_at 折算剩余秒数，
+    // 过期按钮隐藏（后端 expires_at 校验兜底，无越权风险）
+    undoOps: (m.undoOps || []).map(op => {
+      const total = op.ttlSec || 300
+      const elapsed = m.created_at ? Math.floor((Date.now() - new Date(m.created_at).getTime()) / 1000) : 0
+      const ttl = Math.max(0, total - elapsed)
+      return { opId: op.opId, summary: op.summary || '操作已执行', undoing: false, ttl, ttlText: fmtCountdown(ttl) }
+    }),
     _scrollId: m.created_at ? 'msg_' + String(m.created_at).replace(/[^0-9]/g, '') : ''
-  }))
+    }
+  })
 }
 
 async function _fetch(familyId, params) {
@@ -107,7 +142,8 @@ function createHistoryStore() {
           // 游标必须取数组末尾=时间最旧（原取 raw[0]=最新 → 加载更多重复已显示 19 条+1 条新）
           oldestMsgTime = raw[raw.length - 1].created_at
           if (mode === 'more') {
-            // prepend：desc 数组（新→旧）直接插顶（顶部较新）正确，不 reverse
+            // P1-1 修复：desc 数组须 reverse 转正序（旧→新）再插顶，否则头部出现局部倒序段
+            ms.reverse()
             return { prepend: ms, rawCount: raw.length }
           }
           historyLoaded = true
@@ -138,4 +174,4 @@ function createHistoryStore() {
   return { load, reset }
 }
 
-module.exports = { createHistoryStore }
+module.exports = { createHistoryStore, fmtTime, fmtCountdown }

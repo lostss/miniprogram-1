@@ -18,7 +18,7 @@ jest.mock('tencentcloud-sdk-nodejs-ocr', () => ({
 process.env.TENCENT_SECRET_ID = 'test-secret-id'
 process.env.TENCENT_SECRET_KEY = 'test-secret-key'
 
-const { _parseAIJSON, ocrRecognize } = require('../cloudfunctions/_shared/ocr-extractor')
+const { _parseAIJSON, ocrRecognize, _groupByRow, _buildLayoutText } = require('../cloudfunctions/_shared/ocr-extractor')
 const { _toNum } = require('../cloudfunctions/_shared/ocr-core')
 
 
@@ -98,5 +98,40 @@ describe('ocrRecognize 服务异常', () => {
   test('SDK 重试后仍失败返回 ocr_service_error（与空识别区分）', async () => {
     const r = await ocrRecognize('http://example.com/temp.jpg')
     expect(r).toEqual({ text: '', confs: [], error_code: 'ocr_service_error' })
+  })
+})
+
+// 版面重建（坐标取自真实保单实测：安心保保单页 N 型保险利益表 + 换行撕裂）
+describe('_groupByRow 版面行块聚类', () => {
+  const items = [
+    { text: '险种名称', x: 77, y: 387, h: 9 },
+    { text: '基本保险金额/保险金额', x: 125, y: 387, h: 10 },
+    { text: '保险期间', x: 224, y: 387, h: 9 },
+    { text: '安心保臻选版定期', x: 70, y: 422, h: 10 },
+    { text: '200000.00元', x: 149, y: 424, h: 8 },
+    { text: '至2046年09月02日', x: 209, y: 424, h: 7 },
+    { text: '重大疾病保险', x: 77, y: 434, h: 8 }
+  ]
+
+  test('同视觉行合并，表头行/值行/续行分离', () => {
+    const rows = _groupByRow(items)
+    expect(rows.length).toBe(3)
+    expect(rows[0].items.length).toBe(3)
+    expect(rows[1].items.length).toBe(3)
+    expect(rows[2].items.length).toBe(1)
+    expect(rows[2].items[0].text).toBe('重大疾病保险')
+  })
+
+  test('行块内按 x 升序', () => {
+    const rows = _groupByRow(items)
+    expect(rows[1].items.map(i => i.x)).toEqual([70, 149, 209])
+  })
+
+  test('_buildLayoutText 输出 y 前缀 + x:文本 格式', () => {
+    const rows = _groupByRow([
+      { text: '保险期间', x: 224, y: 387, h: 9 },
+      { text: '险种名称', x: 77, y: 387, h: 9 }
+    ])
+    expect(_buildLayoutText(rows)).toBe('y387|77:险种名称|224:保险期间')
   })
 })

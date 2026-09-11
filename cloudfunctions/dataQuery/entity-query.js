@@ -7,7 +7,7 @@
  *      queryPolicies/queryMembers 走 safeQuery 接缝；queryFacts 因动态 where（predicate/subjectId）裸查并自带 _openid 过滤。
  *      集中到同一领域文件提升 locality（架构审计第 10 轮：从 handlers.js 拆分）。
  */
-const { safeQuery } = require('./_shared/db-helpers')
+const { safeQuery, safeQueryAll } = require('./_shared/db-helpers')
 const { loadActivePolicies } = require('./_shared/policy-read')
 const { wrapError } = require('./_shared/errorHandler')
 
@@ -50,7 +50,9 @@ async function queryFacts(db, openid, event) {
     if (predicate) where.predicate = predicate
     const sid = subjectId || memberId
     if (sid) where.subject_id = sid
-    const res = await db.collection('facts').where(where).limit(300).get().catch(() => ({ data: [] }))
+    // 2026-09-10：改走 safeQueryAll 自动分页——固定 limit(300) 只是把平台截断点后移，
+    // facts 随版本历史持续增长（该家庭已 227 条），迟早越界且无告警
+    const res = await safeQueryAll(db, 'facts', where, openid, { maxPages: 10 })
     const facts = (res.data || []).map(f => ({
       _id: f._id,
       subject_id: f.subject_id || '',
@@ -93,7 +95,7 @@ async function queryMemberProfile(db, openid, event) {
     // 并行查 facts 和 policies
     const mid = member.member_id
     const [factRes, policyRes] = await Promise.all([
-      db.collection('facts').where({ family_id: familyId, _openid: openid, subject_id: mid, status: 'active' }).limit(100).get().catch(() => ({ data: [] })),
+      safeQueryAll(db, 'facts', { family_id: familyId, subject_id: mid, status: 'active' }, openid),
       db.collection('policies').where({ family_id: familyId, _openid: openid, member_id: mid, status: db.command.neq('deleted') }).limit(20).get().catch(() => ({ data: [] }))
     ])
 
@@ -119,7 +121,7 @@ async function queryMemberProfile(db, openid, event) {
       goals: facts.filter(f => ['未来计划', '教育规划', '退休规划', '传承意图', '资产隔离需求', '婚嫁规划', '退休预期年龄', '子女教育节点', '婚嫁预期时点'].includes(f.predicate)).map(f => ({ predicate: f.predicate, value: f.object_value, confidence: f.confidence })),
       // 保障清单（policies 集合）
       policies: (policyRes.data || []).map(p => ({
-        policy_id: p.id || '',
+        policy_id: p.id || p._id || '',
         product_name: p.product_name || '',
         insurance_category: p.insurance_category || '',
         sum_assured: p.sum_assured || 0,

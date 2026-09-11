@@ -8,7 +8,9 @@
 
 .markdown-container {
   font-size: var(--fs-body);
-  line-height: var(--lh-loose);
+  /* 2026-09-06：默认行高由 loose(1.85) 统一为 body(1.7)——默认档仅报告页规则章（④保障缺口/⑧行动）使用，
+     与保障分析叙事/hero 正文密度拉齐，消除同页两档行高的明显差异 */
+  line-height: var(--lh-body);
   color: var(--text-primary);
 }
 
@@ -32,8 +34,11 @@
    段落
    ============================================================ */
 .md-paragraph {
-  margin: var(--sp-4) 0;
+  /* 2026-09-06：默认档段落距 16→12rpx，与紧凑档(8rpx)差距收敛为 1.5 倍，报告页内密度观感更顺 */
+  margin: var(--sp-3) 0;
   color: var(--text-primary);
+  /* 2026-09-06 可读性：中文长文两端对齐，边列整齐 */
+  text-align: justify;
 }
 
 .md-br {
@@ -43,7 +48,7 @@
 }
 
 /* ============================================================
-   代码�?
+   代码块
    ============================================================ */
 .md-code-block {
   background: var(--bg-input);
@@ -98,7 +103,7 @@
 }
 
 /* ============================================================
-   分割�?
+   分割线
    ============================================================ */
 .md-hr {
   height: 1rpx;
@@ -313,7 +318,7 @@
 }
 
 /* ============================================================
-   引用�?
+   引用块
    ============================================================ */
 .md-quote {
   margin: var(--sp-5) 0;
@@ -323,7 +328,7 @@
   overflow: hidden;
 }
 
-/* 工具�?*/
+/* 工具栏 */
 .quote-toolbar {
   display: flex;
   align-items: center;
@@ -369,7 +374,7 @@
   font-weight: var(--fw-medium);
 }
 
-/* 内容�?*/
+/* 内容区 */
 .quote-body {
   display: flex;
   padding: var(--sp-5);
@@ -393,6 +398,8 @@
   line-height: var(--lh-loose);
   white-space: pre-wrap;
   word-break: break-word;
+  /* 2026-09-06 可读性：引用长文两端对齐 */
+  text-align: justify;
 }
 
 /* ============================================================
@@ -447,6 +454,8 @@
   color: var(--text-primary);
   font-size: var(--fs-body);
   line-height: var(--lh-body);
+  /* 2026-09-06 可读性：列表长文本两端对齐 */
+  text-align: justify;
 }
 
 .list-sublines {
@@ -757,11 +766,29 @@
 .markdown-container--compact .md-heading--5,
 .markdown-container--compact .md-heading--6 { font-size: var(--fs-base); }
 
-.markdown-container--compact .md-paragraph { margin: var(--sp-1-5) 0; }
+/* 2026-09-06 可读性：报告阅读语境段距/项距上调（原 6rpx/4rpx 段落粘连），聊天气泡亦受益 */
+.markdown-container--compact .md-paragraph { margin: var(--sp-2) 0; }
+
+/* ============================================================
+   报告阅读语境（2026-09-09）：报告页长文正文 28→30rpx、段距 12→16rpx。
+   背景：截图实测大段点评/建议在手机上偏小偏密；此档只作用于传 variant="report" 的调用，
+   聊天气泡（compact）不受影响。
+   ============================================================ */
+.markdown-container--report { font-size: 30rpx; line-height: var(--lh-body); }
+.markdown-container--report .md-paragraph { margin: var(--sp-4) 0; font-size: 30rpx; }
+.markdown-container--report .md-list { margin: var(--sp-4) 0; }
+.markdown-container--report .list-item { margin: var(--sp-2) 0; }
+.markdown-container--report .list-text,
+.markdown-container--report .list-num { font-size: 30rpx; }
+.markdown-container--report .list-subline { font-size: var(--fs-caption); line-height: var(--lh-body); }
+.markdown-container--report .md-heading--4,
+.markdown-container--report .md-heading--5,
+.markdown-container--report .md-heading--6 { font-size: var(--fs-lg); }
+.markdown-container--report .md-strong { color: var(--text-primary); }
 .markdown-container--compact .md-hr { margin: var(--sp-3) 0; }
 
-.markdown-container--compact .md-list { margin: var(--sp-1-5) 0; }
-.markdown-container--compact .list-item { gap: var(--sp-2); margin: var(--sp-1) 0; }
+.markdown-container--compact .md-list { margin: var(--sp-2) 0; }
+.markdown-container--compact .list-item { gap: var(--sp-2); margin: var(--sp-1-5) 0; }
 .markdown-container--compact .list-text { font-size: var(--fs-base); line-height: var(--lh-body); }
 .markdown-container--compact .list-num { font-size: var(--fs-base); line-height: var(--lh-body); min-width: 28rpx; }
 .markdown-container--compact .list-bullet { width: 10rpx; height: 10rpx; margin-top: var(--sp-3); }

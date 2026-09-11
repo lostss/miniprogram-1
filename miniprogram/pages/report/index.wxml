@@ -20,15 +20,18 @@
     <button class="load-error-btn load-error-btn--ghost pressable" bindtap="onGoHome">返回首页</button>
   </view>
 
-  <scroll-view class="content" scroll-y wx:if="{{!loading && family}}">
+  <!-- 2026-09-06：主体为 scroll-view，页面级下拉被吞 → 改用 scroll-view 原生 refresher 承载下拉刷新 -->
+  <scroll-view class="content" scroll-y wx:if="{{!loading && family}}" refresher-enabled refresher-triggered="{{pullDownTriggered}}" refresher-default-style="black" bindrefresherrefresh="onScrollRefresh">
     <view class="title-bar">
       <view class="report-title">
         <text class="title-name">{{family.name}}</text>
-        <!-- 副标题行：标题与生成时间并排两端分散对齐 -->
+        <!-- 副标题行：标题与报告更新时间两端对齐（2026-09-06：familyTag 已下移摘要卡，分析时间不占主 meta 位） -->
         <view class="title-subrow">
           <text class="title-sub">家庭保障检视报告</text>
           <text class="title-meta" wx:if="{{reportMeta.dateTime}}">{{reportMeta.dateTime}}</text>
         </view>
+        <!-- 时效标识（owner）：数据已更新但报告尚未刷新 -->
+        <view class="title-stale" wx:if="{{staleTag}}">{{staleTag}}</view>
       </view>
     </view>
     <!-- 标题区域与正文分隔线 -->
@@ -42,6 +45,8 @@
     <!-- 保障摘要 + 保障覆盖检查融合卡：数据在上，覆盖检查在下（同卡分层） -->
     <view class="summary-card" wx:if="{{hasPolicy}}">
       <view class="summary-card-title">保障摘要</view>
+      <!-- 活报告模型（2026-09）：summary 家庭保障结构标签（AI 产出，移出标题区置于摘要卡顶，两版可见） -->
+      <view class="summary-tag" wx:if="{{familyTag}}">{{familyTag}}</view>
       <view class="summary-card-grid">
         <view class="num-cell">
           <text class="num-val">{{summaryCards.premium}}</text>
@@ -59,30 +64,101 @@
           <text class="num-lbl">保障人数</text>
         </view>
       </view>
+      <!-- 审计·顾问视角（2026-09-04）：总保额区分一年期短险，防止保额虚高误导客户 -->
+      <view class="summary-note" wx:if="{{summaryCards.short}}">其中一年期短险 {{summaryCards.short}} 万</view>
+      <!-- 审计 C1（2026-09-02）：AI 一句话结论（此前死值）置于摘要卡内、覆盖检查前 -->
+      <!-- P1-C（2026-09-05）：AI 结论与规则覆盖检查同卡并存，标注来源防止客户把 AI 解读误当系统计算 -->
+      <view class="hero-conclusion" wx:if="{{hero.conclusion}}"><text class="hero-conclusion-tag">AI 解读</text>{{hero.conclusion}}</view>
       <!-- 保障覆盖检查（结论先行：汇总在上、逐条论据在下、行动建议收尾） -->
       <view class="summary-check" wx:if="{{hero.alerts.length}}">
         <view class="hero-summary-lead">{{hero.summary}}</view>
-        <view class="hero-alert {{item.ok ? 'is-ok' : 'is-warn'}}" wx:for="{{hero.alerts}}" wx:key="name">
-          <text class="hero-alert-icon">{{item.ok ? '✅' : '⚠️'}}</text>
+        <view class="hero-alert {{item.ok ? 'is-ok' : (item.blocked ? 'is-unknown' : 'is-warn')}}" wx:for="{{hero.alerts}}" wx:key="name">
+          <text class="hero-alert-dot"></text>
           <text class="hero-alert-text">{{item.name}} {{item.display}}</text>
         </view>
-        <view class="hero-advice" wx:if="{{hero.topAdvice}}">💡 {{hero.topAdvice}}</view>
+        <view class="hero-advice" wx:if="{{hero.topAdvice}}">{{hero.topAdvice}}</view>
       </view>
     </view>
-    <view class="hints" wx:if="{{hasPolicy && hints.length}}">
-      <view class="hint-chip pressable" wx:for="{{hints}}" wx:key="index" catchtap="onHintTap" data-q="{{item.q}}" aria-label="问小秘：{{item.text}}">{{item.text}}</view>
+    <!-- 深度分析（可选项 2026-09-02）：未生成=结论下生成入口（owner）；已生成=折叠洞察摘要（owner）/完整展开（客户版叙事主内容） -->
+    <!-- 审计 C4（2026-09-02）：hints 死区块已删除（report 契约无 hints 键，恒空） -->
+    <view class="deep-entry" wx:if="{{hasPolicy && !deep && !isShared}}">
+      <view class="deep-head">
+        <text class="deep-title">保障分析</text>
+        <text class="deep-badge">AI 解读</text>
+      </view>
+      <text class="deep-entry-desc">系统会在信息更新后自动生成分析；也可点击立即生成。内容包括保障点评、缺口成因、配置建议与行动清单。</text>
+      <button class="deep-entry-btn pressable" bindtap="onDeepAnalysis" aria-label="立即生成保障分析">立即生成分析</button>
+    </view>
+    <view class="deep-analysis" wx:if="{{hasPolicy && deep}}">
+      <view class="deep-head">
+        <text class="deep-title">保障分析</text>
+        <text class="deep-badge">AI 解读</text>
+      </view>
+      <!-- 保障分析生成时间（2026-09-06：主 meta 位为"报告更新"，此处作分析新鲜度说明） -->
+      <text class="deep-meta" wx:if="{{reportMeta.analysisAt}}">{{reportMeta.analysisAt}}</text>
+      <!-- 保障分析恒展开完整解读（2026-09-06：移除折叠/收起/更新，报告内容默认全部展开） -->
+        <view class="deep-insights" wx:if="{{deep.insights.length}}">
+          <view class="deep-insight" wx:for="{{deep.insights}}" wx:key="*this">
+            <text class="deep-insight-text">{{item}}</text>
+          </view>
+        </view>
+        <!-- 审计 C2：AI 家庭画像（deep 首段，补齐分析叙事链） -->
+        <view class="deep-sec" wx:if="{{deep.portrait}}">
+          <view class="deep-sec-title">家庭画像</view>
+          <markdown-render content="{{deep.portrait}}" variant="report" />
+        </view>
+        <view class="deep-sec" wx:if="{{deep.review}}">
+          <view class="deep-sec-title">现有保障点评</view>
+          <markdown-render content="{{deep.review}}" variant="report" />
+        </view>
+        <view class="deep-sec" wx:if="{{deep.analysis}}">
+          <view class="deep-sec-title">保障缺口分析</view>
+          <markdown-render content="{{deep.analysis}}" variant="report" />
+        </view>
+        <view class="deep-sec" wx:if="{{deep.plan}}">
+          <view class="deep-sec-title">配置建议</view>
+          <markdown-render content="{{deep.plan}}" variant="report" />
+        </view>
+        <view class="deep-sec" wx:if="{{deep.suggestions}}">
+          <view class="deep-sec-title">行动清单</view>
+          <markdown-render content="{{deep.suggestions}}" variant="report" />
+        </view>
+        <!-- 活报告模型（2026-09）：待澄清项（owner 展示；补全后随下一轮分析消失） -->
+        <view class="deep-clarify" wx:if="{{!isShared && clarifications.length}}">
+          <view class="deep-clarify-title">完善信息可深化分析</view>
+          <view class="deep-clarify-item" wx:for="{{clarifications}}" wx:key="field" wx:for-item="cl">
+            <text class="deep-clarify-label">{{cl.label}}</text>
+            <text class="deep-clarify-act pressable" data-mode="{{cl.fix.mode}}" data-id="{{cl.fix.id}}" bindtap="onClarifyFix">去补全</text>
+          </view>
+        </view>
+        <!-- 待关联现价表（2026-09-11）：自动匹配（产品名模糊+被保人）未中的现价表此前无任何补救入口，
+             报告只读 matched:true → 数据在库但从不展示。此处提供人工关联闭环。 -->
+        <view class="deep-clarify" wx:if="{{!isShared && unmatchedCashValues.length}}">
+          <view class="deep-clarify-title">有 {{unmatchedCashValues.length}} 份现价表待关联保单</view>
+          <view class="deep-clarify-item" wx:for="{{unmatchedCashValues}}" wx:key="_id" wx:for-item="cv" wx:for-index="ci">
+            <text class="deep-clarify-label">{{cv.product_name || '现价表'}}{{cv.insured_name ? '（' + cv.insured_name + '）' : ''}}</text>
+            <text class="deep-clarify-act pressable" data-idx="{{ci}}" bindtap="onLinkCashValue">去关联</text>
+          </view>
+        </view>
+        <!-- 审计 C3（2026-09-02）：删除 deep 区 AI 免责（与页面底部静态免责双层重复，静态为合规唯一源） -->
     </view>
     <report-markdown wx:if="{{hasPolicy}}" chapters="{{chapters}}" readonly="{{isShared}}" bind:policytap="onPolicyTap" bind:statuschange="onStatusChange" bind:chapteredit="onChapterEdit" bind:riskcheck="onRiskCheck" />
     <!-- 免责声明：报告正文最末（附录之后、转发按钮之前）静态合规小字 -->
     <view class="report-disclaimer" wx:if="{{disclaimer}}">{{disclaimer}}</view>
     <view class="report-footer">
-      <button wx:if="{{!isShared}}" class="footer-share pressable" open-type="share" aria-label="转发客户">转发报告给客户</button>
-      <button wx:if="{{!isShared}}" class="footer-analyze pressable" bindtap="onDeepAnalysis" aria-label="深度分析">深度分析</button>
-      <view wx:if="{{isShared}}" class="share-watermark">由保小秘生成 · 数据仅供参考</view>
+      <block wx:if="{{!isShared}}">
+        <button class="footer-share pressable" open-type="share" aria-label="转发客户">转发报告给客户</button>
+        <button class="footer-export pressable" bindtap="onExportPdf" aria-label="导出 PDF">导出 PDF</button>
+      </block>
+      <block wx:if="{{isShared}}">
+        <!-- 活报告模型（2026-09）挂载点③：沟通桥正向引导（不新增客户自助录入） -->
+        <view class="share-guide">报告将随家庭成员/收支信息更新而自动刷新，可联系您的服务顾问完善</view>
+        <view class="share-watermark">由保小秘生成 · 数据仅供参考</view>
+      </block>
     </view>
   </scroll-view>
 
-  <chat-panel id="chatpanel" wx:if="{{!loading && !isShared}}" familyId="{{familyId}}" bindreportRefresh="onChatReportRefresh" bindcollapse="onChatCollapse" bindbusy="onChatBusy" />
+  <chat-panel id="chatpanel" wx:if="{{!loading && !loadError && !isShared}}" familyId="{{familyId}}" presetHints="{{presetHints}}" bindreportRefresh="onChatReportRefresh" bindcollapse="onChatCollapse" bindbusy="onChatBusy" />
 
   <!-- UI 审计 状态 S3：AI 深度分析中（可取消） -->
   <view class="analysis-mask" wx:if="{{analysisShow}}" catchtouchmove="onNoop">
@@ -91,6 +167,62 @@
       <text class="analysis-title">AI 深度分析中</text>
       <text class="analysis-sec">已进行 {{analysisSec}}s，正在梳理保障缺口…</text>
       <button class="analysis-cancel pressable" bindtap="onAnalysisCancel">取消分析</button>
+    </view>
+  </view>
+
+  <!-- 画像确认（2026-08-30）：深度分析前强制核对家庭信息——信息不完整或不真实将严重影响报告质量 -->
+  <view class="readiness-mask" wx:if="{{readinessShow}}" catchtouchmove="onNoop" aria-label="核对家庭信息">
+    <view class="readiness-card">
+      <text class="readiness-title">核对家庭信息</text>
+      <view class="readiness-warn">
+        <text class="readiness-warn-text">请核对以下家庭信息。信息不完整或不真实将严重影响报告质量，请确认属实后再开始分析。</text>
+      </view>
+      <scroll-view class="readiness-body" scroll-y>
+        <!-- 成员摘要 -->
+        <view class="rd-dim">
+          <view class="rd-dim-head">
+            <text class="rd-dim-status rd-{{readiness.dimensions[0].status}}">{{readiness.dimensions[0].status === 'ok' ? '✓' : (readiness.dimensions[0].status === 'warn' ? '!' : '×')}}</text>
+            <text class="rd-dim-title">家庭成员（{{readiness.portrait.members.length}} 人）</text>
+          </view>
+          <view class="rd-member" wx:for="{{readiness.portrait.members}}" wx:key="name" wx:for-item="m">
+            <text class="rd-member-name">{{m.name}} · {{m.role}} · {{m.ageText}}</text>
+            <text class="rd-member-sub">健康：{{m.health}} · 收入：{{m.income}}</text>
+          </view>
+          <view wx:if="{{readiness.portrait.members.length === 0}}" class="rd-empty">尚未添加家庭成员</view>
+        </view>
+        <!-- 财务摘要 -->
+        <view class="rd-dim">
+          <view class="rd-dim-head">
+            <text class="rd-dim-status rd-{{readiness.dimensions[1].status}}">{{readiness.dimensions[1].status === 'ok' ? '✓' : (readiness.dimensions[1].status === 'warn' ? '!' : '×')}}</text>
+            <text class="rd-dim-title">家庭财务</text>
+          </view>
+          <view class="rd-fin-row"><text class="rd-fin-label">家庭年收入</text><text class="rd-fin-val {{readiness.portrait.income === '未填写' ? 'rd-fin--missing' : ''}}">{{readiness.portrait.income}}</text></view>
+          <view class="rd-fin-row"><text class="rd-fin-label">总负债</text><text class="rd-fin-val {{readiness.portrait.debt === '未填写' ? 'rd-fin--missing' : ''}}">{{readiness.portrait.debt}}</text></view>
+          <view class="rd-fin-row"><text class="rd-fin-label">固定支出</text><text class="rd-fin-val {{readiness.portrait.fixedExpense === '未填写' ? 'rd-fin--missing' : ''}}">{{readiness.portrait.fixedExpense}}</text></view>
+        </view>
+        <!-- 保障摘要 -->
+        <view class="rd-dim">
+          <view class="rd-dim-head">
+            <text class="rd-dim-status rd-{{readiness.dimensions[2].status}}">{{readiness.dimensions[2].status === 'ok' ? '✓' : (readiness.dimensions[2].status === 'warn' ? '!' : '×')}}</text>
+            <text class="rd-dim-title">已有保障（{{readiness.portrait.policyCount}} 份，有效 {{readiness.portrait.activePolicyCount}} 份）</text>
+          </view>
+          <view wx:if="{{readiness.portrait.policyCount === 0}}" class="rd-empty">尚未添加保单</view>
+        </view>
+        <!-- 缺口提醒（待完善项 + 去补全） -->
+        <view wx:if="{{readiness.warnings.length > 0 || readiness.blockers.length > 0}}" class="rd-gap">
+          <text class="rd-gap-title">待完善（{{readiness.blockers.length}} 必填 / {{readiness.warnings.length}} 建议）</text>
+          <view class="rd-item" wx:for="{{readiness.dimensions}}" wx:key="key" wx:for-item="dim" wx:if="{{dim.status !== 'ok'}}">
+            <view class="rd-item" wx:for="{{dim.items}}" wx:key="label" wx:for-item="it">
+              <text class="rd-item-label">{{it.label}}</text>
+              <button class="rd-fix pressable" bindtap="onReadinessFix" data-mode="{{it.fix.mode}}" data-id="{{it.fix.id}}" aria-label="去补全{{it.label}}">去补全</button>
+            </view>
+          </view>
+        </view>
+      </scroll-view>
+      <view class="readiness-actions">
+        <button class="rd-btn rd-btn--primary pressable" bindtap="onReadinessConfirm" aria-label="信息属实，开始分析">信息属实，开始分析</button>
+        <button class="rd-btn rd-btn--ghost pressable" bindtap="onReadinessClose" aria-label="取消">取消</button>
+      </view>
     </view>
   </view>
   <!-- FAB 栏提到页面层，确保 position:fixed 相对视口生效 -->

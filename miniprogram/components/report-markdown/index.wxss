@@ -1,10 +1,14 @@
 /* UI 审计 #③：--green-report 收敛为全局 --ok（app.wxss） */
 /* UI 审计 视觉 S5：局部 --missing-bg/--covered-bg 与全局 --red-dim/--ok-dim 语义重复，收敛为全局 token */
 .md-root { padding:var(--sp-5) var(--sp-5) var(--sp-7); word-break:break-word; overflow-wrap:break-word; --missing-bg:var(--red-dim); --covered-bg:var(--ok-dim); }
+/* 2026-09-06 宽屏行宽约束：与报告页正文区同宽居中（手机 <768px 不受影响） */
+@media (min-width: 768px) {
+  .md-root { width: 720px; max-width: calc(100vw - 96px); margin-left: auto; margin-right: auto; box-sizing: border-box; }
+}
 
 /* 章节卡：细边框 + 宽松节奏 + 入场动画 */
 /* 正文卡片间距：sp-8（卡间 > 卡内 padding，强化分块感；summary-card 与 md-card 相邻处同值） */
-.md-card { background:var(--bg-card); border-radius:var(--r-lg); padding:var(--sp-6); margin-bottom:var(--sp-8); border:1rpx solid var(--border); }
+.md-card { background:var(--bg-card); border-radius:var(--r-lg); padding:var(--sp-6); margin-bottom:var(--sp-8); border:1rpx solid var(--border); animation:cardReveal var(--dur-glacial) var(--ease-out-expo) both; }
 
 /* 标题：衬线体章节号 + 暖金分割线 */
 /* UI 打磨：章节号 44→32rpx + accent→accent-deep 降权降饱和，章节标题为视觉第一 */
@@ -52,7 +56,7 @@
   margin-top:var(--tl-dot-mt); z-index:1; border:2rpx solid var(--bg-card); background:var(--accent-muted);
 }
 .tl-red { background:var(--red); }
-.tl-green { background:var(--green); }
+.tl-green { background:var(--ok); }
 .tl-yellow { background:var(--amber); }
 .tl-content { flex:1; min-width:0; display:flex; flex-direction:column; gap:var(--sp-1); }
 /* 年份组内产品行：名称 + 节点（/分隔）同行基线对齐，多产品纵向堆叠 */
@@ -68,6 +72,14 @@
   right:0; background:linear-gradient(90deg, var(--red-dim), transparent); border-radius:var(--r-sm);
 }
 .tl-soon .tl-year { color:var(--red); }
+
+/* 时间线图例（2026-09-09）：说明红/绿点含义，避免"红绿无语义" */
+.tl-legend { display:flex; align-items:center; margin-bottom:var(--sp-3); }
+.tl-legend-dot { width:12rpx; height:12rpx; border-radius:50%; flex-shrink:0; margin-right:var(--sp-2); }
+.tl-legend-dot.tl-green { background:var(--ok); }
+.tl-legend-dot.tl-red { background:var(--red); }
+.tl-legend-txt { font-size:var(--fs-tiny); color:var(--text-tertiary); }
+.tl-legend-txt + .tl-legend-dot { margin-left:var(--sp-5); }
 
 /* 保障全景矩阵（浅金表头 + 覆盖浅绿/缺失浅红） */
 /* UI 打磨：金色语义分流——数据表头/峰值不再用品牌实底 accent，改浅金底 accent-dim + 深金字 */
@@ -85,19 +97,14 @@
 .pano-val { font-size:var(--fs-caption); line-height:var(--lh-tight); font-variant-numeric:tabular-nums; }
 .ps-ok { background:var(--covered-bg); } .ps-ok .pano-val { color:var(--ok-deep); }
 .ps-partial { background:var(--amber-dim); } .ps-partial .pano-val { color:var(--amber-deep); }
-.ps-missing { background:var(--missing-bg); } .ps-missing .pano-val { color:var(--red-deep); }
+/* 2026-09-09：缺失态整格红底在汇总表里面积过大（医疗险整列全红）→ 视觉噪音盖过真缺口；
+   改为中性底 + 红字，告警语义由文字承载，红色留给「保障缺口」章的金额 */
+.ps-missing { background:var(--bg-input); } .ps-missing .pano-val { color:var(--red-deep); }
 .ps-hold { background:var(--accent-dim); } .ps-hold .pano-val { color:var(--accent-deep); }
 .ps-blocked { background:var(--accent-dim); } .ps-blocked .pano-val { color:var(--text-secondary); }
 .ps-na { background:var(--bg-input); } .ps-na .pano-val { color:var(--text-disabled); }
 .ps-total { background:var(--accent-dim); } .ps-total .pano-val { color:var(--accent-deep); font-weight:var(--fw-bold); }
 .ps-grand { background:var(--accent-dim); } .ps-grand .pano-val { color:var(--accent-deep); font-weight:var(--fw-bold); }
-.pano-legend { display:flex; flex-wrap:wrap; gap:var(--sp-4); justify-content:center; margin-top:var(--sp-3); }
-.pano-legend-item { display:flex; align-items:center; gap:var(--sp-2); font-size:var(--fs-tiny); color:var(--text-tertiary); }
-.pano-legend-dot { width:20rpx; height:20rpx; border-radius:4rpx; box-sizing:border-box; }
-.lg-ok { background:var(--covered-bg); border:2rpx solid var(--ok-deep); }
-.lg-partial { background:var(--amber-dim); border:2rpx solid var(--amber-deep); }
-.lg-missing { background:var(--missing-bg); border:2rpx solid var(--red-deep); }
-.lg-na { background:var(--bg-input); border:2rpx solid var(--border); }
 
 /* 缴费月历峰值高亮（浅金底 + 深金字，与表头语义分流） */
 .cal-peak { background:var(--accent-dim); }
@@ -155,7 +162,7 @@
 .pc-top-right { display:flex; align-items:center; gap:var(--sp-2); flex-shrink:0; }
 .pc-status { font-size:var(--fs-tiny); padding:var(--sp-1) var(--sp-3); border-radius:var(--r-full); white-space:nowrap; flex-shrink:0; }
 .pc-status.pressable:active { opacity:0.6; }
-.pc-status--active { color:var(--ok-deep, #1a7f4f); background:var(--ok-dim, #e6f4ec); }
+.pc-status--active { color:var(--ok-deep); background:var(--ok-dim); }
 .pc-status--lapsed { color:var(--amber-deep); background:var(--amber-dim); }
 .pc-status--surrendered { color:var(--text-secondary); background:var(--bg-input); }
 .pc-status--claim_terminated { color:var(--accent-deep); background:var(--accent-dim); }
@@ -179,4 +186,3 @@
 .fold-hd { display:flex; align-items:center; justify-content:space-between; padding:var(--sp-5) var(--sp-1); margin-bottom:var(--sp-2); border-bottom:1rpx solid var(--border-accent); }
 .fold-title { font-size:var(--fs-lg); font-weight:var(--fw-bold); color:var(--text-primary); font-family:var(--font-serif); letter-spacing:var(--ls-wide); }
 .fold-arrow { display:inline-flex; align-items:center; justify-content:center; min-height:88rpx; font-size:var(--fs-caption); color:var(--accent-deep); padding:var(--sp-2) var(--sp-3); box-sizing:border-box; transition:transform var(--dur-base) var(--ease-out); }
-.fold-hint { font-size:var(--fs-caption); color:var(--text-tertiary); text-align:center; padding:var(--sp-6) var(--sp-5); background:var(--bg-input); border-radius:var(--r-md); margin-top:var(--sp-3); }

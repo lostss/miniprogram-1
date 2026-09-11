@@ -163,7 +163,7 @@
   subject_id: 'mem_xxx',
   subject_name: '李阳勇',   // 冗余，便于展示
 
-  predicate: '个人年收入',  // 见谓词表（30 谓词全量）
+  predicate: '个人年收入',  // 见谓词表（66 谓词全量）
 
   object_type: 'member',    // member | policy | literal
   object_id: 'mem_yyy',     // literal 时为空
@@ -183,11 +183,11 @@
 }
 ```
 
-**写入策略**：`FACT_STRATEGIES` 30 谓词全覆盖（dedup 8 + versioned 22）。`versioned` 策略自动 supersede 旧事实 → 写入新事实。agent_confirmed 源受保护不被低置信源覆盖。
+**写入策略**：`FACT_STRATEGIES` 66 谓词全覆盖（dedup 12 + versioned 54）。`versioned` 策略自动 supersede 旧事实 → 写入新事实。agent_confirmed 源受保护不被低置信源覆盖。
 
 ---
 
-## 三、谓词表（30 谓词全量）
+## 三、谓词表（66 谓词全量）
 
 ### 关系类
 

@@ -23,6 +23,7 @@ jest.mock('../cloudfunctions/ocrService/_shared/ocr-core', () => ({
 
 const { ocrOnly } = require('../cloudfunctions/ocrService/handlers')
 const { ocrPhase } = require('../cloudfunctions/ocrService/_shared/ocr-core')
+const { _desensitizeWithPolicyProtect } = require('../cloudfunctions/ocrService/_shared/ocr-extractor')
 
 const mockDb = { collection: () => ({}) }
 
@@ -126,6 +127,72 @@ describe('ocrService handlers', () => {
       await ocrOnly(mockDb, 'oid', { fileIds: ['cloud://env.xxx/temp/oid/f1.jpg'] })
       const callArgs = ocrPhase.mock.calls[0][0]
       expect(callArgs.familyId).toBeNull()
+    })
+  })
+
+  // ===== OCR 审计 H1：计费 OCR 入口频控 =====
+  describe('ocrOnly 频控（OCR 审计 H1）', () => {
+    test('60s 内已达 10 批 → 429 限流', async () => {
+      const db = {
+        command: { gte: v => ({ $gte: v }) },
+        collection: jest.fn(() => ({
+          where: jest.fn(() => ({ count: jest.fn(() => Promise.resolve({ total: 10 })) }))
+        }))
+      }
+      const res = await ocrOnly(db, 'oid', { fileIds: ['cloud://env.xxx/temp/oid/f1.jpg'] })
+      expect(res.code).toBe(429)
+    })
+
+    test('未超限（5 批）→ 正常执行 OCR', async () => {
+      const db = {
+        command: { gte: v => ({ $gte: v }) },
+        collection: jest.fn(() => ({
+          where: jest.fn(() => ({ count: jest.fn(() => Promise.resolve({ total: 5 })) })),
+          add: jest.fn(() => Promise.resolve({ _id: 'x' }))
+        }))
+      }
+      const res = await ocrOnly(db, 'oid', { fileIds: ['cloud://env.xxx/temp/oid/f1.jpg'] })
+      expect(res.code).toBe(200)
+    })
+
+    test('频控查询异常（无 command）→ 放行不阻断 OCR', async () => {
+      const db = { collection: () => ({}) }
+      const res = await ocrOnly(db, 'oid', { fileIds: ['cloud://env.xxx/temp/oid/f1.jpg'] })
+      expect(res.code).toBe(200)
+    })
+  })
+
+  // ===== OCR 审计 H3：PII 脱敏前保单号保护 =====
+  describe('_desensitizeWithPolicyProtect（OCR 审计 H3）', () => {
+    test('16 位纯数字保单号（带标签）不被银行卡规则误伤', () => {
+      const text = '保单号：1234567890123456，投保人：张三'
+      expect(_desensitizeWithPolicyProtect(text)).toContain('1234567890123456')
+      expect(_desensitizeWithPolicyProtect(text)).not.toContain('****')
+    })
+
+    test('18 位纯数字保单号（带标签）不被误伤', () => {
+      const text = '合同号:123456789012345678 保费1000元'
+      expect(_desensitizeWithPolicyProtect(text)).toContain('123456789012345678')
+    })
+
+    test('无标签的 16 位数字仍保守脱敏（PII 不泄漏）', () => {
+      const text = '银行卡 6222021234567890'
+      const out = _desensitizeWithPolicyProtect(text)
+      expect(out).not.toContain('6222021234567890')
+      expect(out).toContain('****')
+    })
+
+    test('带标签保单号 + 手机号同现：保单号保留、手机号脱敏', () => {
+      const text = '保单号:1234567890123456 手机号13812345678'
+      const out = _desensitizeWithPolicyProtect(text)
+      expect(out).toContain('1234567890123456')
+      expect(out).not.toContain('13812345678')
+    })
+
+    test('字母数字混合保单号（含标签）原样保留', () => {
+      const text = '保单号：P12345678901234567890，保额50万'
+      const out = _desensitizeWithPolicyProtect(text)
+      expect(out).toContain('P12345678901234567890')
     })
   })
 })

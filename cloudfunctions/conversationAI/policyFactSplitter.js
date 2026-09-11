@@ -23,6 +23,10 @@ const COVERAGE_CATS = [
   ['教育金', '教育金'], ['教育', '教育金']
 ]
 
+// 保障陈述语境守卫：只有"买/投保/配/有"等陈述词（或金额）才可能产出现有保障事实，
+// 防止问候（你好）、收入（家庭连收入25万）、日期更正（康健华尊生效日是...）等非保障陈述被误提取
+const COVERAGE_STMT_RE = /买|投保|配|办|上|有|加保|新增|续保|保额|给/
+
 function _matchCat(text) {
   for (const [kw, cat] of COVERAGE_CATS) {
     if (text.indexOf(kw) !== -1) return cat
@@ -40,6 +44,8 @@ function _extractAmount(text) {
 
 function splitCoverageText(text, opts = {}) {
   if (!text || typeof text !== 'string') return []
+  // 守卫：非保障陈述语境（问候/收入/日期等）一律不预提取，避免污染 AI 上下文
+  if (!COVERAGE_STMT_RE.test(text)) return []
   const baseConf = (typeof opts.confidence === 'number') ? opts.confidence : 0.9
   const isCompany = /(公司|单位|团险|团体|雇主|企业)/.test(text)
   const predicate = isCompany ? '公司提供保障' : '拥有保障'
@@ -52,18 +58,7 @@ function splitCoverageText(text, opts = {}) {
   const facts = []
   const seen = {}
 
-  if (segs.length <= 1) {
-    // C2：无分隔口语（单块）——能识别险种则整块成一条；识别不出则保持原样降一档
-    const cat = _matchCat(text)
-    const amount = _extractAmount(text)
-    if (cat) {
-      facts.push({ predicate, objectValue: amount ? `${cat},保额${amount}` : cat, confidence: baseConf })
-    } else {
-      facts.push({ predicate, objectValue: text, confidence: Math.max(0.5, baseConf - 0.2) })
-    }
-    return facts
-  }
-
+  // 只产出明确识别出险种的保障陈述；识别不出 → 不预提取（交给模型用工具/上下文处理）
   for (const seg of segs) {
     const cat = _matchCat(seg)
     if (!cat) continue
@@ -74,10 +69,6 @@ function splitCoverageText(text, opts = {}) {
     facts.push({ predicate, objectValue: ov, confidence: baseConf })
   }
 
-  // C2：规则完全没拆出任何块，保持原样降一档（不拆错）
-  if (facts.length === 0) {
-    facts.push({ predicate, objectValue: text, confidence: Math.max(0.5, baseConf - 0.2) })
-  }
   return facts
 }
 

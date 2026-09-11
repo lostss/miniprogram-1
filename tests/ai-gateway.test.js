@@ -12,6 +12,7 @@ jest.mock('../cloudfunctions/conversationAI/_shared/guard', () => ({
   sanitize: jest.fn(t => t || ''),
   detectInjection: jest.fn(() => ({ injected: false })),
   checkRateLimit: jest.fn(() => Promise.resolve({ allowed: true })),
+  checkMonthlyQuota: jest.fn(() => Promise.resolve({ allowed: true })),
   auditOutput: jest.fn(t => ({ pass: true, text: t }))
 }))
 jest.mock('../cloudfunctions/conversationAI/_shared/pii-rules', () => ({
@@ -19,6 +20,11 @@ jest.mock('../cloudfunctions/conversationAI/_shared/pii-rules', () => ({
 }))
 jest.mock('../cloudfunctions/conversationAI/_shared/config', () => ({
   COST_PER_1K: 0.004,
+  // 2026-09-10 成本口径：按模型查价（元/百万；hy3 为美元）
+  PRICING: {
+    'deepseek-flash': { in: 1, out: 4, inCached: 0.02, currency: 'CNY' },
+    hy3: { in: 4, out: 4, inCached: 4, currency: 'USD' }
+  },
   SECURITY: {
     CONTENT_AUDIT_TRUNCATE: 5000,
     RATE_LIMIT_WINDOW_MS: 60000,
@@ -31,7 +37,7 @@ jest.mock('../cloudfunctions/conversationAI/_shared/logSeam', () => ({
   updateLogStatus: jest.fn(() => Promise.resolve())
 }))
 
-const { safeCallChat, safeCallChatWithTools } = require('../cloudfunctions/conversationAI/_shared/ai-gateway')
+const { safeCallChat, safeCallChatWithTools, calcTokenUsage, bumpAgentTokens } = require('../cloudfunctions/conversationAI/_shared/ai-gateway')
 const guard = require('../cloudfunctions/conversationAI/_shared/guard')
 const logSeam = require('../cloudfunctions/conversationAI/_shared/logSeam')
 
@@ -67,7 +73,8 @@ describe('ai-gateway', () => {
       expect(result.logId).toBe('log_id_001')
       // rawCallChat 以 secured messages + opts 调用（sanitize/desensitize 为 identity，深等于 messages）
       expect(rawCallChat).toHaveBeenCalledTimes(1)
-      expect(rawCallChat).toHaveBeenCalledWith(messages, opts)
+      // 观测归因（2026-09-05）：mergedOpts 注入 ctx.openid，rawCallChat 透传给 ai-client 观测
+      expect(rawCallChat).toHaveBeenCalledWith(messages, { model: 'gpt-4', openid: 'openid_test' })
       // logAI 以 success 状态写入
       expect(logSeam.logAI).toHaveBeenCalledWith(ctx.db, expect.objectContaining({
         status: 'success',
@@ -105,7 +112,7 @@ describe('ai-gateway', () => {
       const opts = { model: 'gpt-4' }
       const result = await safeCallChatWithTools(messages, tools, rawCallChatWithTools, ctx, opts)
 
-      expect(rawCallChatWithTools).toHaveBeenCalledWith(messages, tools, opts)
+      expect(rawCallChatWithTools).toHaveBeenCalledWith(messages, tools, { model: 'gpt-4', openid: 'openid_test' })
       expect(result.text).toBe('已为您查询保单')
       expect(result.toolCalls).toEqual([{ name: 'queryPolicy', args: { id: 'P001' } }])
       expect(result.usage).toEqual({ prompt_tokens: 50, completion_tokens: 30 })
@@ -262,7 +269,7 @@ describe('ai-gateway', () => {
 
       expect(result.text).toBe('空对话')
       expect(result.logId).toBe('log_id_001')
-      expect(rawCallChat).toHaveBeenCalledWith([], {})
+      expect(rawCallChat).toHaveBeenCalledWith([], { openid: 'openid_test' })
     })
 
     test('14. rawCallChat 抛错 → 异常向上传播（流水线不捕获 invokeAI 异常）', async () => {
@@ -271,6 +278,91 @@ describe('ai-gateway', () => {
       await expect(safeCallChat(messages, rawCallChat, ctx, {}))
         .rejects.toThrow('AI service unavailable')
       expect(rawCallChat).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('月度 token 配额', () => {
+    test('15. checkMonthlyQuota 命中 → 返回 reason，不调用 AI，写 QUOTA_LIMIT 日志', async () => {
+      guard.checkMonthlyQuota.mockResolvedValueOnce({ allowed: false, reason: '本月 AI 用量已达上限' })
+      const messages = [{ role: 'user', content: '你好' }]
+      const rawCallChat = jest.fn()
+      const result = await safeCallChat(messages, rawCallChat, ctx, {})
+
+      expect(result.text).toBe('本月 AI 用量已达上限')
+      expect(result.logId).toBeNull()
+      expect(result.toolCalls).toEqual([])
+      expect(rawCallChat).not.toHaveBeenCalled()
+      expect(guard.checkMonthlyQuota).toHaveBeenCalledWith(ctx.db, 'openid_test')
+      expect(logSeam.logAI).toHaveBeenCalledWith(ctx.db, expect.objectContaining({
+        status: 'blocked',
+        error: expect.objectContaining({ code: 'QUOTA_LIMIT', step: 'quota' })
+      }))
+    })
+
+    test('16. 成功调用后原子累加 agents.token_used_monthly/total（total=input+output）', async () => {
+      const update = jest.fn().mockResolvedValue({ stats: { updated: 1 } })
+      const where = jest.fn(() => ({ update }))
+      const quotaDb = {
+        command: { inc: v => ({ $inc: v }) },
+        collection: jest.fn(() => ({ where }))
+      }
+      const ctxQuota = { cloud, db: quotaDb, openid: 'openid_test' }
+      const messages = [{ role: 'user', content: 'hi' }]
+      const rawCallChat = jest.fn(() => ({
+        text: 'hello',
+        usage: { prompt_tokens: 100, completion_tokens: 50 }
+      }))
+      const result = await safeCallChat(messages, rawCallChat, ctxQuota, {})
+
+      expect(result.text).toBe('hello')
+      expect(quotaDb.collection).toHaveBeenCalledWith('agents')
+      expect(where).toHaveBeenCalledWith({ openid: 'openid_test', _openid: 'openid_test' })
+      expect(update).toHaveBeenCalledWith({
+        data: { token_used_monthly: { $inc: 150 }, token_used_total: { $inc: 150 } }
+      })
+    })
+
+    test('17. 配额累加失败不阻断主流程（update 抛错仍返回结果）', async () => {
+      const quotaDb = {
+        command: { inc: v => ({ $inc: v }) },
+        collection: jest.fn(() => ({
+          where: jest.fn(() => ({
+            update: jest.fn(() => Promise.reject(new Error('db down')))
+          }))
+        }))
+      }
+      const ctxQuota = { cloud, db: quotaDb, openid: 'openid_test' }
+      const messages = [{ role: 'user', content: 'hi' }]
+      const rawCallChat = jest.fn(() => ({ text: 'hello', usage: { prompt_tokens: 10, completion_tokens: 5 } }))
+      const result = await safeCallChat(messages, rawCallChat, ctxQuota, {})
+
+      expect(result.text).toBe('hello')
+      expect(result.logId).toBe('log_id_001')
+    })
+
+    test('18. calcTokenUsage：OpenAI 格式与驼峰格式映射', () => {
+      // 未传 model（或未登记模型）→ 回落旧口径 COST_PER_1K，精度提到 6 位（原 4 位会把 0.00012 抹成 0.0001）
+      expect(calcTokenUsage({ prompt_tokens: 100, completion_tokens: 50 })).toEqual({ input: 100, output: 50, total: 150, cost: 0.0006 })
+      expect(calcTokenUsage({ input_tokens: 10, output_tokens: 20, totalTokens: 30 })).toEqual({ input: 10, output: 20, total: 30, cost: 0.00012 })
+      expect(calcTokenUsage({})).toEqual({ input: 0, output: 0, total: 0, cost: 0 })
+    })
+
+    test('18b. calcTokenUsage：按模型计价并拆分缓存命中（DeepSeek V4.1 Flash）', () => {
+      // 输入未命中 1000×1元 + 缓存命中 500×0.02元 + 输出 1000×4元 = 5010 元/百万 → 0.00501
+      const r = calcTokenUsage(
+        { prompt_tokens: 1500, completion_tokens: 1000, prompt_cache_hit_tokens: 500 },
+        'deepseek-flash'
+      )
+      expect(r).toEqual({ input: 1500, output: 1000, total: 2500, cost: 0.00501 })
+      // 缓存命中部分超过 input 时不出现负数成本（防御异常 usage）
+      const r2 = calcTokenUsage({ prompt_tokens: 10, completion_tokens: 0, prompt_cache_hit_tokens: 999 }, 'deepseek-flash')
+      expect(r2.cost).toBeGreaterThanOrEqual(0)
+    })
+
+    test('19. bumpAgentTokens：DB 无 collection / total<=0 静默跳过', async () => {
+      await expect(bumpAgentTokens({}, 'u1', 100)).resolves.toBeUndefined()
+      await expect(bumpAgentTokens({ collection: jest.fn() }, 'u1', 0)).resolves.toBeUndefined()
+      await expect(bumpAgentTokens(null, 'u1', 100)).resolves.toBeUndefined()
     })
   })
 })

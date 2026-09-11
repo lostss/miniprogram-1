@@ -68,6 +68,49 @@ describe('ensureStatus 自动判断', () => {
     expect(r.status).toBe('active')
   })
 
+  test('日期区间形态一年期（OCR：自2024年01月15日起至2025年01月14日止）不判到期终止', () => {
+    const p = makePolicy({
+      status: undefined,
+      insurance_period: '自2024年01月15日零时起至2025年01月14日二十四时止',
+      contract_effective_date: '2024-01-15',
+      effective_date: '2024-01-15'
+    })
+    const r = calcStatus(p)
+    expect(r.status).toBe('active')
+  })
+
+  test('日期区间形态一年期（2024-01-15至2025-01-14）不判到期终止', () => {
+    const p = makePolicy({
+      status: undefined,
+      insurance_period: '至2025-01-14',
+      contract_effective_date: '2024-01-15',
+      effective_date: '2024-01-15'
+    })
+    const r = calcStatus(p)
+    expect(r.status).toBe('active')
+  })
+
+  test('多年期（3年）到期日已过仍判 expired（不误伤非一年期）', () => {
+    const p = makePolicy({
+      status: undefined,
+      insurance_period: '至2013-01-14',
+      contract_effective_date: '2010-01-15',
+      effective_date: '2010-01-15'
+    })
+    const r = calcStatus(p)
+    expect(r.status).toBe('expired')
+  })
+
+  test('中文数字"一年"不判到期终止', () => {
+    const p = makePolicy({
+      status: undefined,
+      insurance_period: '一年',
+      effective_date: '2010-01-01'
+    })
+    const r = calcStatus(p)
+    expect(r.status).toBe('active')
+  })
+
   test('显式 active 被尊重，不因明确到期日自动转为 expired（手动恢复有效场景）', () => {
     const p = makePolicy({
       status: 'active',
@@ -78,9 +121,12 @@ describe('ensureStatus 自动判断', () => {
     expect(r.status).toBe('active')
   })
 
-  test('calcStatus 对明确到期日仍判 expired（写入层录入时据此落库）', () => {
+  test('calcStatus 对明确到期日（多年期）仍判 expired（写入层录入时据此落库）', () => {
+    // contract_effective_date 优先于 effective_date：须同时覆盖，否则 eff=2020-01-01 + 至2020-12-31
+    // 恰好构成 1 年间隔，会被一年期语义判定为 active（见"日期区间形态一年期"用例）
     const p = makePolicy({
-      insurance_period: '至2020-12-31',
+      insurance_period: '至2013-12-31',
+      contract_effective_date: '2010-01-01',
       effective_date: '2010-01-01'
     })
     const r = calcStatus(p)

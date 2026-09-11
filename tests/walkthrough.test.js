@@ -62,11 +62,12 @@ function installDbMock() {
 // A. 登录
 // ============================================================
 describe('A. 登录', function() {
-  test('无 code/无 devMode → 缺少参数 400', async function() {
+  test('openid 静默登录成功（方案 A：无需手机号授权）', async function() {
     delete require.cache[require.resolve('../cloudfunctions/login/index')]
     const login = require('../cloudfunctions/login/index')
-    const res = await login.main({ action: 'login' }, {})
-    expect(res.code).toBe(400)
+    const res = await login.main({}, {})
+    expect(res.code).toBe(200)
+    expect(res.data.openid).toBe('wx_openid_test')
   })
 })
 
@@ -126,25 +127,22 @@ describe('C. dataWrite 写入', function() {
 // D. conversationAI 提示词
 // ============================================================
 describe('D. conversationAI 提示词', function() {
-  test('SYSTEM_PROMPT 含关键章节（v9 双通道：A 流式含工具意图协议 / B 工具执行）', function() {
-    const { STREAMING_PROMPT, TOOL_PROMPT, BASE_PROMPT } = require('../cloudfunctions/conversationAI/prompts')
-    // 通道 A：基础角色 + 工具意图协议（v9.6 中性理解/矛盾澄清/标识输出，不断言结果）
-    const aChapters = ['核心职责', '对话风格', '工具意图协议', '红线']
-    aChapters.forEach(ch => expect(STREAMING_PROMPT).toContain(ch))
-    expect(STREAMING_PROMPT).toContain('{TOOL_INTENT:')
-    expect(STREAMING_PROMPT).toContain('中性理解')
-    expect(STREAMING_PROMPT).not.toContain('结果断言')
-    expect(STREAMING_PROMPT).toContain(BASE_PROMPT)
-    // 通道 B：工具执行 + 最终答复（v9.6 回流角色）
-    expect(TOOL_PROMPT).toContain('工具执行员')
-    expect(TOOL_PROMPT).toContain('执行规则')
-    expect(TOOL_PROMPT).toContain('最终答复规则')
-    expect(TOOL_PROMPT).toContain('红线')
+  test('CHAT_PROMPT 含关键章节（单通道 v10：综合提示词，无 A 流式协议）', function() {
+    const { CHAT_PROMPT, BASE_PROMPT } = require('../cloudfunctions/conversationAI/prompts')
+    // 单通道：一份综合提示词（基础角色 + 工具协议 + 确认规则 + 最终答复）
+    const chapters = ['核心职责', '职责边界', '对话风格', '工具协议', '写入规则', '数据时效', '最终答复规则', '红线']
+    chapters.forEach(ch => expect(CHAT_PROMPT).toContain(ch))
+    expect(CHAT_PROMPT).toContain(BASE_PROMPT)
+    // 单通道无 A 流式协议
+    expect(CHAT_PROMPT).not.toContain('{TOOL_INTENT:')
+    // 写入类确认规则存在（成员/财务/保单需确认；facts 免确认）
+    expect(CHAT_PROMPT).toContain('确认卡')
+    expect(CHAT_PROMPT).toContain('addFact')
   })
 
-  test('buildContext 函数可调用（v9：buildStreamingPrompt + buildToolSystemPrompt）', function() {
-    const { buildStreamingPrompt, buildToolSystemPrompt, stripToolCardMarkers } = require('../cloudfunctions/conversationAI/prompts')
-    expect(typeof buildStreamingPrompt).toBe('function')
+  test('buildContext 函数可调用（v10：buildSystemPrompt + buildToolSystemPrompt + stripToolCardMarkers）', function() {
+    const { buildSystemPrompt, buildToolSystemPrompt, stripToolCardMarkers } = require('../cloudfunctions/conversationAI/prompts')
+    expect(typeof buildSystemPrompt).toBe('function')
     expect(typeof buildToolSystemPrompt).toBe('function')
     expect(typeof stripToolCardMarkers).toBe('function')
   })
@@ -210,14 +208,17 @@ describe('G. OCR 提取', function() {
   test('buildExtractionPrompt 返回 systemPrompt + userPrompt', function() {
     const { buildExtractionPrompt } = require('../cloudfunctions/ocrService/prompts')
     const { systemPrompt, userPrompt } = buildExtractionPrompt('OCR文本', [{ text: '保单:ABC', ocr_conf: 95 }])
-    expect(systemPrompt).toContain('不可变更的核心约束')
+    expect(systemPrompt).toContain('【公共约束】')
     expect(systemPrompt).toContain('field_confidence')
     expect(systemPrompt).toContain('输入特征')
     expect(systemPrompt).toContain('提取重点')
-    expect(systemPrompt).toContain('换行或分页撕裂')
+    expect(systemPrompt).toContain('跨页表格不拼接')
     // 保险公司简称契约：OCR 提取 insurer 必须输出品牌简称（禁止照抄机构全称）
     expect(systemPrompt).toContain('品牌简称')
     expect(systemPrompt).toContain('平安人寿')
+    // 约束编号统一序列契约（2026-09-04）：13/14 已并入 CORE_CONSTRAINTS，渲染顺序 12 在 13 前（原编号倒置修复）
+    expect(systemPrompt.indexOf('12. insurance_company')).toBeGreaterThan(-1)
+    expect(systemPrompt.indexOf('12. insurance_company')).toBeLessThan(systemPrompt.indexOf('13. 多产品保单'))
     expect(userPrompt).toContain('OCR文本')
     expect(userPrompt).toContain('OCR字符级置信度参考')
     expect(userPrompt).toContain('95%')

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * reportAI — 保障报告生成（AI 产出画像/点评/规划/建议）
  *
  * 架构（#7 重构后）：
@@ -16,6 +16,7 @@ const cloud = require('wx-server-sdk')
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
 const db = cloud.database()
 const { calcCompletenessScore } = require('./_shared/completeness')
+const { evaluateReadiness } = require('./_shared/readiness')
 const { buildFamilyContext: buildV2Context } = require('./_shared/v2-context')
 const { getFamily } = require('./_shared/db-helpers')
 const { loadFamilyView } = require('./_shared/familyView')
@@ -34,11 +35,13 @@ const { logAI } = require('./_shared/logSeam')
 const { wrapError } = require('./_shared/errorHandler')
 
 exports.main = async (event, context) => {
-  const { familyId } = event
+  const { familyId, source } = event
   if (!familyId) return { code: 400, msg: '缺少参数 familyId' }
   const wxContext = cloud.getWXContext()
   const openid = wxContext?.OPENID || wxContext?.openId
   if (!openid) return { code: 401, msg: '未登录' }
+  // 活报告模型（2026-09）：source='auto' = 自动介入触发（不等待、静默降级）；缺省=manual（向后兼容）
+  const isAuto = source === 'auto'
 
   try {
     // ponytail: buildV2Context 内部已并行查询 family/members/finances/facts/cashValues 5 集合
@@ -47,10 +50,21 @@ exports.main = async (event, context) => {
     // ensureStatus 关闭——下方需先注入 insured_birth_date/insured_age 再调用 ensureStatusBatch（依赖 age）
     const [ctx, rawPolicies] = await Promise.all([
       buildV2Context(db, familyId, openid, 'report'),
-      loadActivePolicies(db, familyId, openid, { ensureStatus: false, limit: 50 })
+      // 2026-09-10：limit 50 → 100，与 policy-read 默认值对齐。原值意味着家庭保单超 50 份时
+      // 报告会静默少算（画像/缺口矩阵/汇总全基于此数组），且无任何告警
+      loadActivePolicies(db, familyId, openid, { ensureStatus: false, limit: 100 })
     ])
     const fm = ctx.familyMeta
     if (!fm || !fm.family_id) return { code: 404, msg: '客户不存在' }
+    // 深度分析前置检查（readiness 门禁，2026-08）：buildV2Context 后、节流检查前。
+    // 必填项缺失 → 422 返回明细（不烧 token、不占 CAS 锁，补全后可立即重试不被 30s 锁卡住）
+    const readiness = evaluateReadiness({ familyMeta: fm, members: ctx.datasets.members || [], finances: ctx.datasets.finances || [], policies: rawPolicies })
+    // 活报告模型（2026-09）：blocked 仍阻断（事实层缺失，烧 token 无意义）；degraded 放行（定性模式由上下文注入，见 A3）
+    // source='auto' 时 blocked 静默跳过（不打扰用户），manual 维持 422 供前端 readiness 弹窗
+    if (readiness.blockers.length > 0) {
+      if (isAuto) return { code: 200, data: { skipped: true, reason: 'blocked' } }
+      return { code: 422, data: readiness }
+    }
     // B1: 30s 节流防抖，避免短时间重复调用 AI
     // 全链路审计 RM1/RM5：节流时间源为 analysis_lock_at（CAS 占用字段）；last_analysis_at 仅表示"上次成功分析时间"，
     // 不再被 CAS 污染——归档 version_at（report-versions 读 last_analysis_at）因此保持"上次成功时间"，修复版本时间线错位
@@ -72,16 +86,26 @@ exports.main = async (event, context) => {
     }
     // R3v2 审计 #5：CAS 原子占用 analysis_lock_at（独立字段），防并发双跑（两处节流读旧值竞态 → 双倍计费+重复归档）
     // 条件更新：仅当 analysis_lock_at 仍为读取时的旧值（或无值）才占用成功；并发请求条件失败 → 视同节流命中
+    // S-1 修复：where 必须含 _openid 防越权占用他人 analysis_lock_at（项目硬约束）
     const _ = db.command
     const casNow = new Date()
     const casCond = fm.analysis_lock_at
       ? { analysis_lock_at: fm.analysis_lock_at }
       : { analysis_lock_at: _.exists(false) }
-    const cas = await db.collection('families').where({ _id: familyId, ...casCond }).update({ data: { analysis_lock_at: casNow } })
+    const cas = await db.collection('families').where({ _id: familyId, _openid: openid, ...casCond }).update({ data: { analysis_lock_at: casNow } })
     const casUpdated = cas.stats ? cas.stats.updated : (cas.updated || 0)
     if (casUpdated === 0) {
-      const f2 = await getFamily(db, familyId, openid)
-      return { code: 200, data: toReadReport(f2), throttled: true }
+      // 2026-09-10 脏值防御：analysis_lock_at 字段存在但值非有效时间（如被误写成空串）时，
+      // 上面的 casCond 会退化为 _.exists(false)、永不匹配 → CAS 恒失败 → 报告被"永久节流"
+      // （实测现象：204ms 返回上一次的旧报告，用户以为生成失败）。
+      // 此处区分"真并发占用"与"脏值"：脏值直接忽略并继续生成。
+      const lockRaw = fm.analysis_lock_at
+      const lockValid = !!lockRaw && !isNaN(new Date(lockRaw).getTime())
+      if (lockValid) {
+        const f2 = await getFamily(db, familyId, openid)
+        return { code: 200, data: toReadReport(f2), throttled: true }
+      }
+      console.error('[reportAI] analysis_lock_at 脏值（非有效时间），忽略并继续生成:', JSON.stringify(lockRaw))
     }
     const birthMap = ctx.birthMap
 
@@ -97,11 +121,23 @@ exports.main = async (event, context) => {
     // 3 段上下文整合：v2.markdown + 保单汇总 + 结构化清单 + 一致性提示 + 上一版参考
     // 抽到 report-context.js，本处仅组合调用（避免主流程被字符串拼接淹没）
     // facts/cashValues 由 buildReportContext 从 v2ctx.datasets 自取（避免双源读取）
-    const enrichedContext = buildReportContext({
+    const enrichedBase = buildReportContext({
       v2ctx: ctx,
       policies,
       familyMeta: fm
     })
+    // 活报告模型（2026-09）：定性模式——经济数据缺失（tier=degraded）时前置【定性模式】标记，
+    // prompts.js 按标记执行禁额黑名单；缺失清单随标记注入供 AI 感知待补项
+    const enrichedContext = readiness.tier === 'degraded'
+      ? '【定性模式】本家庭未填写家庭年收入，量化测算不可用。待补全项：' + readiness.missing.map(x => x.label).join('、') + '\n\n' + enrichedBase
+      : enrichedBase
+    // 上下文体积观测（2026-09-10 上下文审计 P3）：**不做截断**——截断会让覆盖被少算（见上方 loadActivePolicies
+    // limit 注释的同类教训），风险大于收益；改为记录估算 token 量，超阈值告警并写入成功日志 metrics，
+    // 使"数据规模增长导致输出质量劣化"这类隐性劣化可观测。中文约 1.6 字符/token 粗估。
+    const ctxTokensEst = Math.round(enrichedContext.length / 1.6)
+    if (ctxTokensEst > 20000) {
+      console.warn('[reportAI] 上下文体积超阈值:', JSON.stringify({ chars: enrichedContext.length, tokensEst: ctxTokensEst, policies: policies.length }))
+    }
 
     try {
       // B5: JSON 解析失败重试 1 次（首轮 AI 输出偶发带噪声/截断，第二轮提示更严格输出格式）
@@ -134,7 +170,10 @@ exports.main = async (event, context) => {
           rawText: lastRawText,
           error: { message: 'AI 返回非预期 JSON 格式（含 1 次重试）' }
         })
-        // 全链路审计 RM5：失败提示附带剩余冷却秒数（CAS 锁 30s 未过期）
+        // 2026-09-09：解析失败同样释放 CAS 锁——原实现仅成功/异常路径释放，此分支残留 30s，
+        // 用户点重试直接命中节流返回空报告（提示"已是最新分析"）
+        await db.collection('families').where({ _id: familyId, _openid: openid }).update({ data: { analysis_lock_at: _.remove() } }).catch(function () {})
+        // 全链路审计 RM5：失败提示附带剩余冷却秒数（锁已释放，通常为空）
         return { code: 500, msg: '报告生成失败' + _retrySuffix() }
       }
       const now = new Date()
@@ -143,6 +182,22 @@ exports.main = async (event, context) => {
       for (const k of ['portrait', 'review', 'plan', 'summary', 'analysis', 'conclusion', 'suggestions', 'disclaimer']) {
         const v = parsed && parsed[k]
         if (v === undefined || v === null || String(v).trim() === '') _missing.push(k)
+      }
+      // 观测锚点（prompt 工程审计 2026-09-04）：思维链痕迹字段弱校验——activated_dimensions 激活即必填且值限 A-F，
+      // core_insights 键必在（可为空数组）。弱校验不阻断（避免白烧 token），缺失/非法值记入日志指标供观测
+      const LEGAL_DIMS = { A: '时间窗口', B: '自保数学', C: '代际穿透', D: '资产保全', E: '跨境风险', F: '养老断层' }
+      let dimWarnings = []
+      if (!Array.isArray(parsed.activated_dimensions) || parsed.activated_dimensions.length === 0) {
+        if (parsed.portrait) _missing.push('activated_dimensions')
+      } else {
+        for (const d of parsed.activated_dimensions) {
+          if (!LEGAL_DIMS[String(d || '').charAt(0)]) dimWarnings.push('非法维度:' + String(d || ''))
+        }
+      }
+      if (parsed.core_insights === undefined || parsed.core_insights === null) {
+        _missing.push('core_insights')
+      } else if (!Array.isArray(parsed.core_insights)) {
+        dimWarnings.push('core_insights 非数组')
       }
       // suggestions 语义为字符串列表，AI 偶发输出数组时规范化（join('；')），避免污染后续消费
       if (parsed && Array.isArray(parsed.suggestions)) parsed.suggestions = parsed.suggestions.filter(x => x).join('；')
@@ -157,10 +212,13 @@ exports.main = async (event, context) => {
       })
       // 写入 families 经 writeSeam 收编（自动注入 _openid/updated_at 不变量）
       // 用 silentUpdateWhere 因下方显式调 advanceStage，避免钩子重复触发
+      // 活报告模型（2026-09）：待澄清项 = readiness 缺失清单确定性派生（≤5，随成功分析覆盖旧值）
+      const clarifications = (readiness.missing || []).slice(0, 5)
       const ws = writeSeam(db, openid, familyId)
       await ws.silentUpdateWhere('families', { _id: familyId }, Object.assign(toWriteFields(parsed), {
         completeness_score: calcCompletenessScore(f, policies),
         insight_stale: false,
+        pending_clarifications: clarifications,
         last_analysis_at: now,
         // 全链路审计 RM1：分析成功即释放 CAS 锁（analysis_lock_at 仅表示"进行中"占用）
         analysis_lock_at: _.remove()
@@ -175,20 +233,35 @@ exports.main = async (event, context) => {
         traceId: event._reqId || '',
         action: 'report_generate',
         status: 'success',
-        activatedDimensions: Array.isArray(parsed.activated_dimensions) ? parsed.activated_dimensions : [],
+        activatedDimensions: Array.isArray(parsed.activated_dimensions) ? parsed.activated_dimensions.filter(d => LEGAL_DIMS[String(d || '').charAt(0)]) : [],
         coreInsights: Array.isArray(parsed.core_insights) ? parsed.core_insights : [],
-        metrics: { completeness: calcCompletenessScore(f, policies), missingFields: _missing },
+        metrics: { completeness: calcCompletenessScore(f, policies), missingFields: _missing, dimWarnings, contextTokens: ctxTokensEst, policyCount: policies.length },
         promptVersion: 'reportAI_v2'
       })
       // 全链路审计 RC1：删除 milestones 返回（FIELD_KEYS 不持久化 + 前端 parseMilestonesToTimeline 无消费调用，返回即契约断裂死值）
-      return { code: 200, data: { portrait: parsed.portrait, review: parsed.review, plan: parsed.plan, summary: String(parsed.summary || ''), analysis: String(parsed.analysis || ''), conclusion: String(parsed.conclusion || ''), suggestions: parsed.suggestions, disclaimer: parsed.disclaimer || '', core_insights: Array.isArray(parsed.core_insights) ? parsed.core_insights : [] } }
+      // 合规审计其他4：readiness_warnings 随成功响应下发（WARN 放行后降质披露——前端据此提示"部分数据未填写，缺口仅供参考"）
+      return { code: 200, data: { portrait: parsed.portrait, review: parsed.review, plan: parsed.plan, summary: String(parsed.summary || ''), analysis: String(parsed.analysis || ''), conclusion: String(parsed.conclusion || ''), suggestions: parsed.suggestions, disclaimer: parsed.disclaimer || '', core_insights: Array.isArray(parsed.core_insights) ? parsed.core_insights : [], readiness_warnings: (readiness && readiness.warnings) || [], clarifications } }
     } catch (e) {
-      // 全链路审计 RM5：通用失败同样附带剩余冷却秒数
+      // 2026-09-09：失败即释放 CAS 锁——原实现仅成功路径 remove，失败后锁残留 30s，
+      // 期间用户重试命中节流返回空报告（throttled:true + 全空字段），既看不到错误也看不到内容
+      await db.collection('families').where({ _id: familyId, _openid: openid }).update({ data: { analysis_lock_at: _.remove() } }).catch(function () {})
+      // 2026-09-09：错误详情落库（云函数日志 CLI 不可读，500 无迹可查）
+      await logAI(db, {
+        openid, familyId, traceId: event._reqId || '', action: 'report_error', status: 'fail',
+        error: { message: (e && e.message) || '', stack: String((e && e.stack) || '').substring(0, 600) }
+      }).catch(function () {})
+      // 全链路审计 RM5：通用失败同样附带剩余冷却秒数（锁已释放，通常为空）
       const r = wrapError('报告生成', e)
       if (r && typeof r.msg === 'string') r.msg += _retrySuffix()
       return r
     }
   } catch (e) {
+    // 外层失败同样释放锁（CAS 前的异常时锁可能未占用，remove 对不存在字段无害）
+    await db.collection('families').where({ _id: familyId, _openid: openid }).update({ data: { analysis_lock_at: db.command.remove() } }).catch(function () {})
+    await logAI(db, {
+      openid, familyId, traceId: event._reqId || '', action: 'report_error_outer', status: 'fail',
+      error: { message: (e && e.message) || '', stack: String((e && e.stack) || '').substring(0, 600) }
+    }).catch(function () {})
     return wrapError('处理', e)
   }
 }
@@ -201,9 +274,20 @@ function _compactForRetry(full) {
 async function _callAI(context, deps) {
   const { text: aiText, usage, logId } = await require('./_shared/ai-gateway').safeCallChat(
     [{ role: 'system', content: REPORT_PROMPT }, { role: 'user', content: context }],
-    require('./_shared/ai-client').callChat,
-    { cloud: deps.cloud, db: deps.db, openid: deps.openid, familyId: deps.familyId, sessionId: 'report_' + Date.now().toString(36), model: AI.CHAT_MODEL, action: 'report_generate' },
-    { maxTokens: 2600, temperature: 0.5, responseFormat: { type: 'json_object' }, timeoutMs: 30000 }
+    // 2026-09-09 切 DeepSeek 直连：hy3（hunyuan-exp）在长 prompt + json_object 下输出不可靠——
+    // 同一 context 连续实测出现 4 种病态：空对象 {"": ""}（6 tokens）、垃圾串 {")_(": "invalid"}、
+    // 括号错位 {"}portrait{": "}...{"}（reasoning 与 content 交错）、偶发正常；
+    // 线上 22:33/22:48/22:53 三次 report_parse_fail 均由此导致。
+    // DeepSeek 直连（callChatDirect，内部 thinking:{type:'disabled'}）同 prompt 实测稳定产出完整 JSON（10 键 / 1345 tokens / 11.5s）。
+    require('./_shared/ai-client').callChatDirect,
+    // model 仅用于日志归因：实际走 DeepSeek 直连（callChatDirect 强制 DIRECT_MODEL），
+    // 记 CHAT_MODEL 会让成本/模型看板失真
+    // outputAuditMode:'warn' —— 报告输出是结构化 JSON：一旦 auditOutput 命中禁止承诺规则，
+    // 会把整份 JSON 替换成一句拒答文案 → 必然解析失败 + 重试同样被拦（2026-09-10 23:20 线上事故：
+    // 报告含"按家庭年收入兜底估算"，命中当时过宽的兜底裸词规则，两次调用 output 全部丢弃）。
+    // 改为命中时保留原文、仅记日志告警，合规由 REPORT_PROMPT 的禁止承诺约束 + 内容安全审核承担。
+    { cloud: deps.cloud, db: deps.db, openid: deps.openid, familyId: deps.familyId, sessionId: 'report_' + Date.now().toString(36), model: AI.DIRECT_MODEL, action: 'report_generate', outputAuditMode: 'warn' },
+    { maxTokens: 2600, temperature: 0.5, responseFormat: { type: 'json_object' }, timeoutMs: 40000 }
   )
   return { text: aiText, usage, logId }
 }

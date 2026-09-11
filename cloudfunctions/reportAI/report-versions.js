@@ -15,6 +15,37 @@
 
 const { toReadReport } = require('./_shared/report-fields')
 
+const REPORTS_COL = 'reports'
+
+/** 判定"集合不存在"错误（CloudBase：DATABASE_COLLECTION_NOT_EXIST / ResourceNotFound） */
+function _isCollectionMissing(e) {
+  const code = String((e && (e.errCode || e.code)) || '')
+  const msg = String((e && (e.errMsg || e.message)) || '')
+  return code === 'DATABASE_COLLECTION_NOT_EXIST' || /collection.?not.?exist|ResourceNotFound|集合不存在/i.test(msg)
+}
+
+/**
+ * 确保集合存在后写入（2026-09-11 修复线上静默失效）：
+ * 线上 reports 集合从未被创建 → 每次归档 add 都抛 ResourceNotFound，被调用方 catch 吞掉 →
+ * 「报告历史版本」自上线起从未可用，且云函数日志 CLI 不可读 → 长期无人发现。
+ * 命中"集合不存在"时自动 createCollection 并重试一次。
+ */
+async function _addWithCollectionEnsure(db, collection, data) {
+  try {
+    return await db.collection(collection).add({ data })
+  } catch (e) {
+    if (!_isCollectionMissing(e) || typeof db.createCollection !== 'function') throw e
+    try {
+      await db.createCollection(collection)
+      console.log('[report-versions] 集合不存在，已自动创建:', collection)
+    } catch (ce) {
+      // 并发下两个请求同时创建，后者会收到"已存在"错误——忽略即可
+      if (!/exist/i.test(String((ce && (ce.errMsg || ce.message)) || ''))) throw ce
+    }
+    return await db.collection(collection).add({ data })
+  }
+}
+
 /**
  * 归档上一版报告到 reports 集合，并清理超出保留数的旧版本
  * @param {object} db - cloud.database()
@@ -33,18 +64,16 @@ async function archivePrevious(db, { familyId, openid, prevFamily, keepVersions,
   if (!hasPrev) return
 
   try {
-    await db.collection('reports').add({
-      data: Object.assign(toReadReport(prevFamily), {
-        family_id: familyId,
-        _openid: openid,
-        version_at: prevFamily.last_analysis_at || prevFamily.updated_at || now,
-        completeness_score: prevFamily.completeness_score || 0,
-        saved_at: now
-      })
-    })
+    await _addWithCollectionEnsure(db, REPORTS_COL, Object.assign(toReadReport(prevFamily), {
+      family_id: familyId,
+      _openid: openid,
+      version_at: prevFamily.last_analysis_at || prevFamily.updated_at || now,
+      completeness_score: prevFamily.completeness_score || 0,
+      saved_at: now
+    }))
 
     // 清理超出保留数的旧版本：按 version_at 倒序，跳过前 keepVersions 条，删除其余
-    const stale = await db.collection('reports')
+    const stale = await db.collection(REPORTS_COL)
       .where({ family_id: familyId, _openid: openid })
       .orderBy('version_at', 'desc')
       .skip(keepVersions)
@@ -52,11 +81,19 @@ async function archivePrevious(db, { familyId, openid, prevFamily, keepVersions,
       .get()
     if (stale.data && stale.data.length > 0) {
       await Promise.all(stale.data.map(v =>
-        db.collection('reports').doc(v._id).remove().catch(() => 0)
+        db.collection(REPORTS_COL).doc(v._id).remove().catch(() => 0)
       ))
     }
   } catch (e) {
     console.error('[report-versions] 版本归档失败:', e.message)
+    // 2026-09-11：不再完全静默——本次线上问题的根因正是"仅 console.error 而云函数日志 CLI 不可读"，
+    // 归档失效长期无人发现。落 agent_logs 使其可观测（写日志失败不阻断主流程）。
+    try {
+      await require('./_shared/logSeam').logAI(db, {
+        openid, familyId, action: 'report_archive_fail', status: 'fail',
+        error: { message: (e && (e.message || e.errMsg)) || '' }
+      })
+    } catch (_) { /* 日志失败不阻断 */ }
   }
 }
 

@@ -302,9 +302,81 @@ async function deleteMembersForFamily(db, familyId, openid) {
   } catch (_) { /* 静默 */ }
 }
 
+// ---------- ② 默认执行+撤销（2026-08-30）：写前快照与恢复 ----------
+/** 写前财务快照（撤销定位用）：返回 finances 文档全文，无则 null（新建场景） */
+async function snapshotFinance(db, familyId, openid) {
+  const res = await safeQuery(db, 'finances', { family_id: familyId }, openid)
+  return (res.data && res.data[0]) || null
+}
+
+/** 写前成员快照（撤销定位用）：按 memberId / memberName 定位，返回文档全文，无则 null（新建场景） */
+async function snapshotMember(db, familyId, openid, args) {
+  args = args || {}
+  if (args.memberId) {
+    const m = await findMember(db, familyId, openid, args.memberId)
+    if (m) return m
+  }
+  if (args.memberName) {
+    const res = await safeQuery(db, 'members', { family_id: familyId, name: args.memberName }, openid)
+    if (res.data && res.data.length > 0) return res.data[0]
+  }
+  return null
+}
+
+/** 撤销财务变更：before 非 null → 覆盖写回原字段；null（撤销新建）→ 删除文档 */
+async function restoreFinance(db, familyId, openid, before) {
+  try {
+    const res = await safeQuery(db, 'finances', { family_id: familyId }, openid)
+    const doc = res.data && res.data[0]
+    if (!doc) return { code: 404, msg: '未找到可恢复的财务记录' }
+    const ws = writeSeam(db, openid, familyId)
+    if (before && doc._id === before._id) {
+      const { _id, family_id, _openid, created_at, ...rest } = before
+      await ws.silentUpdateDoc('finances', doc._id, rest)
+      await ws.triggerHooks()
+      return { code: 200, data: { action: 'restored' } }
+    }
+    // before 为 null 或 _id 不匹配 → 撤销新建：删除当前文档
+    await ws.silentRemoveDoc('finances', doc._id)
+    await ws.triggerHooks()
+    return { code: 200, data: { action: 'removed' } }
+  } catch (e) {
+    console.error('[memberRepo] restoreFinance 失败:', (e && e.message) || e)
+    return { code: 500, msg: '恢复财务记录失败' }
+  }
+}
+
+/** 撤销成员变更：before 非 null → 恢复原字段（含 status）；null（撤销新增）→ 软删新建成员 */
+async function restoreMember(db, familyId, openid, before, after) {
+  try {
+    const ws = writeSeam(db, openid, familyId)
+    if (before && before._id) {
+      const { _id, family_id, _openid, created_at, ...rest } = before
+      await ws.silentUpdateDoc('members', before._id, { ...rest, status: 'active' })
+      await ws.triggerHooks()
+      return { code: 200, data: { action: 'restored' } }
+    }
+    // 撤销新建成员：按 after.member_id 定位并软删
+    const mid = after && (after.member_id || after.memberId)
+    if (mid) {
+      const m = await findMember(db, familyId, openid, mid)
+      if (m) {
+        await ws.silentUpdateDoc('members', m._id, { status: 'deleted' })
+        await ws.triggerHooks()
+        return { code: 200, data: { action: 'deleted' } }
+      }
+    }
+    return { code: 404, msg: '未找到可恢复的成员' }
+  } catch (e) {
+    console.error('[memberRepo] restoreMember 失败:', (e && e.message) || e)
+    return { code: 500, msg: '恢复成员失败' }
+  }
+}
+
 module.exports = {
   getMembers, getFinance, findMember,
   upsertMember, setMemberField, updateMemberFields,
   upsertFinances, createMembersForFamily, deleteMembersForFamily,
+  snapshotFinance, snapshotMember, restoreFinance, restoreMember,
   _MEMBER_FIELDS, _MEMBER_FIELD_ZH, FINANCE_FIELD_MAP, calcAgeYears, _shapeMember
 }

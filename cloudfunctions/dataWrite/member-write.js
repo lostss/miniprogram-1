@@ -10,7 +10,7 @@
 const { detectInjection } = require('./_shared/guard')
 const { writeSeam } = require('./_shared/writeSeam')
 const { ALLOWED_DIMENSIONS, FAMILY_DIMENSIONS_ZH, ZH_TO_EN } = require('./member-dimensions')
-const { setMemberField, upsertFinances } = require('./_shared/memberRepo')
+const { setMemberField, upsertFinances, _MEMBER_FIELDS } = require('./_shared/memberRepo')
 const { VALID_ROLES } = require('./constants')
 const { addFact, DIM_TO_PREDICATE } = require('./fact-write')
 
@@ -88,8 +88,8 @@ async function updateMember(db, openid, event) {
   if (!memId) return { code: 400, msg: '缺少参数 memberId' }
   if (!fld) return { code: 400, msg: '缺少参数 field' }
 
-  const ALLOWED_MEMBER_FIELDS = ['name', 'birth_date', 'age', 'gender', 'role', 'health', 'occupation', 'income']
-  if (!ALLOWED_MEMBER_FIELDS.includes(fld)) return { code: 400, msg: '不允许修改成员字段：' + fld }
+  // 候选 4：白名单单源（memberRepo._MEMBER_FIELDS），避免第二份文本漂移
+  if (!_MEMBER_FIELDS.includes(fld)) return { code: 400, msg: '不允许修改成员字段：' + fld }
 
   // 校验值
   let safeValue = val

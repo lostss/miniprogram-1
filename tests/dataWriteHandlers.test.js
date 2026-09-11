@@ -79,19 +79,7 @@ jest.mock('wx-server-sdk', function () {
   }
 })
 
-jest.mock('../cloudfunctions/dataWrite/_shared/ai-gateway', function () {
-  return {
-    safeCallChat: jest.fn(function () { return Promise.resolve({ text: '{}', usage: {}, logId: null }) }),
-    safeCallThink: jest.fn()
-  }
-})
-jest.mock('../cloudfunctions/dataWrite/_shared/ai-client', function () {
-  return {
-    callChat: jest.fn(function () { return Promise.resolve({ text: '{}', usage: {} }) }),
-    callAIWithRetry: jest.fn(function () { return Promise.resolve({ text: '{}', usage: {} }) }),
-    callHunyuan: jest.fn(function () { return Promise.resolve({ text: '{}', usage: {} }) })
-  }
-})
+
 jest.mock('../cloudfunctions/dataWrite/_shared/config', function () {
   return {
     AI_TIMEOUT: { OCR: 20000, CHAT: 30000 },
@@ -158,6 +146,12 @@ describe('dataWrite handlers — 真实 handler 调用', function () {
       expect(mockStore.messages.length).toBe(1)
       expect(mockStore.messages[0].content).toBe('hello')
     })
+    test('undoOps 透传落库（P1-L1：历史恢复撤销入口，此前白名单丢弃导致按钮永不出现）', async function () {
+      var res = await call('writeMessage', { familyId: 'f1', role: 'assistant', content: '已更新家庭财务', undoOps: [{ opId: 'ud_1', summary: '已更新家庭财务', ttlSec: 300 }] })
+      expect(res.code).toBe(200)
+      var m = mockStore.messages.find(function (x) { return x.content === '已更新家庭财务' })
+      expect(m && m.undoOps).toEqual([{ opId: 'ud_1', summary: '已更新家庭财务', ttlSec: 300 }])
+    })
   })
 
   describe('writeOpLog', function () {
@@ -206,17 +200,6 @@ describe('dataWrite handlers — 真实 handler 调用', function () {
     })
   })
 
-  describe('setStage', function () {
-    test('缺少 familyId 返回 400', async function () {
-      var res = await call('setStage', { stage: 'profiling' })
-      expect(res.code).toBe(400)
-    })
-    test('成功设置返回 200', async function () {
-      var res = await call('setStage', { familyId: 'f1', stage: 'analyzing' })
-      expect(res.code).toBe(200)
-    })
-  })
-
   describe('createFamily', function () {
     // createFamily 检查重名，mock 的 where().count() 返回全部行数，需清空 families
     beforeEach(function () { mockStore.families = [] })
@@ -236,6 +219,33 @@ describe('dataWrite handlers — 真实 handler 调用', function () {
       expect(res.code).toBe(200)
       expect(mockStore.families.length).toBe(1)
       expect(mockStore.members.length).toBe(2)
+    })
+  })
+
+  describe('updatePolicy', function () {
+    function seedPolicy() {
+      var rec = { _id: 'pol_test1', _openid: 'test_openid', family_id: 'f1', member_id: '', product_name: '康健华尊', insured_name: '张三', insurance_category: '医疗险', effective_date: '2025-01-01', insurance_period: '1年', status: 'active' }
+      mockStore.policies.push(rec)
+      return rec
+    }
+    beforeEach(function () { mockStore.policies = [] })
+    test('生效日期格式非法（AI 误填保障期间）返回 400 且不落库', async function () {
+      var t = seedPolicy()
+      var res = await call('updatePolicy', { familyId: 'f1', policyId: t._id, data: { effective_date: '1年' } })
+      expect(res.code).toBe(400)
+      expect(t.effective_date).toBe('2025-01-01')
+    })
+    test('保障期间字段可更新（白名单）且落库', async function () {
+      var t = seedPolicy()
+      var res = await call('updatePolicy', { familyId: 'f1', policyId: t._id, data: { insurance_period: '终身' } })
+      expect(res.code).toBe(200)
+      expect(t.insurance_period).toBe('终身')
+    })
+    test('合法生效日期可更新', async function () {
+      var t = seedPolicy()
+      var res = await call('updatePolicy', { familyId: 'f1', policyId: t._id, data: { effective_date: '2026-03-01' } })
+      expect(res.code).toBe(200)
+      expect(t.effective_date).toBe('2026-03-01')
     })
   })
 })

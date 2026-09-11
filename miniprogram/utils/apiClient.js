@@ -22,9 +22,11 @@ const DIRECT_FN = {
   recordField:            ['dataWrite', { action: 'recordField' }],
   writePoliciesBatch:     ['dataWrite', { action: 'writePoliciesBatch' }],
   writeCashValue:         ['dataWrite', { action: 'writeCashValue' }],
+  // 2026-09-11：孤儿现价表人工关联（未注册则该 action 直接抛"未知 API"，功能永远不可用）
+  linkCashValue:          ['dataWrite', { action: 'linkCashValue' }],
   updateFamily:           ['dataWrite', { action: 'updateFamily' }],
   updatePolicy:           ['dataWrite', { action: 'updatePolicy' }],
-    changePolicyStatus:     ['dataWrite', { action: 'changePolicyStatus' }],
+  changePolicyStatus:     ['dataWrite', { action: 'changePolicyStatus' }],
   updateMember:           ['dataWrite', { action: 'updateMember' }],
   createFamily:           ['dataWrite', { action: 'createFamily' }],
   deleteFamily:           ['dataWrite', { action: 'deleteFamily' }],
@@ -43,10 +45,13 @@ const DIRECT_FN = {
   // reportAI
   generateReport:         ['reportAI', null],
 
+  // reportPdf（正式存档/打印导出）
+  generateReportPdf:      ['reportPdf', null],
+
   // ocrService
   ocrOnly:                ['ocrService', { action: 'ocrOnly' }],
-  aiExtractBatch:         ['ocrService', { action: 'aiExtractBatch' }],
   aiExtractParallel:      ['ocrService', { action: 'aiExtractParallel' }],
+  ocrExtract:             ['ocrService', { action: 'ocrExtract' }],
 
   // conversationAI
   conversationAI:         ['conversationAI', null],
@@ -69,7 +74,7 @@ async function apiCall(action, params = {}, opts = {}) {
   if (data._reqId) _lastReqId = data._reqId
   // 网络审计：写操作强制 retries:0（超时/网络 fail 重发 = 已入库数据双写）。
   // 读操作保持默认重试（弱网可容忍）；调用方显式传 opts.retries 优先。
-  if (opts.retries === undefined && /^(create|update|delete|write|record|change)/.test(action)) {
+  if (opts.retries === undefined && /^(create|update|delete|write|record|change|upsert|add)/.test(action)) {
     opts.retries = 0
   }
   const raw = await callCloud(name, data, opts)

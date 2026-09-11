@@ -56,3 +56,33 @@ describe('buildTimeline 现价回本节点', () => {
     expect(events.find(e => e.type === 'breakeven')).toBeUndefined()
   })
 })
+
+describe('buildTimeline 至N岁（age 注入）', () => {
+  // 当前年份动态计算（parse-expiry 用 new Date() 推出生年）
+  const now = new Date()
+  const birthY = now.getFullYear() - 30
+  const p = {
+    id: 'pol_age',
+    product_name: '守护一生',
+    insured_name: '李阳勇',
+    insurance_period: '至70岁',
+    payment_period: '交至60岁',
+    effective_date: '2026-06-15'
+  }
+
+  test('成员 age 注入 → 至N岁保障/缴费节点出现', () => {
+    const events = buildTimeline([p], [{ name: '李阳勇', age: 30 }])
+    const expiry = events.find(e => e.type === 'expiry')
+    const paydone = events.find(e => e.type === 'paydone')
+    expect(expiry).toBeDefined()
+    expect(expiry.y).toBe(birthY + 70)
+    expect(paydone).toBeDefined()
+    expect(paydone.y).toBe(birthY + 60)
+  })
+
+  test('无 age（成员缺失）→ 至N岁节点缺省（保持旧行为）', () => {
+    const events = buildTimeline([p], [])
+    expect(events.find(e => e.type === 'expiry')).toBeUndefined()
+    expect(events.find(e => e.type === 'paydone')).toBeUndefined()
+  })
+})

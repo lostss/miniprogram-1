@@ -1,40 +1,21 @@
 const api = require('../../utils/apiClient')
-const { navigateToFamily, confirmDeleteFamily } = require('../../utils/family-actions')
+const { navigateToFamily, confirmDeleteFamily, HOME_CACHE_KEY } = require('../../utils/family-actions')
 
 /** 保小秘 首页 */
 // 最近客户列表本地缓存（60s TTL + 静默刷新）：避免每次 onShow 查库导致骨架屏闪烁
 // 冷启动直接渲染缓存；60s 内命中不请求；过期则后台静默更新；OCR 保存/删除等数据变更场景 force 绕过
-const HOME_CACHE_KEY = 'homeRecentClients'
 const HOME_CACHE_TTL = 60 * 1000
 
 Page({
   data: {
-    recentClients: [], loadingClients: false, removingId: '', ocrBusy: false, loadError: false, needLogin: false
+    recentClients: [], loadingClients: false, removingId: '', ocrBusy: false, loadError: false
   },
 
   onUnload() { this._disposed = true },
   onShow() {
-    this.setData({ needLogin: !!(getApp().globalData.needLogin) })
     this._fetchClients()
     const ocrFlow = this.selectComponent('#ocrFlow')
     if (ocrFlow) ocrFlow.checkResume()
-  },
-  // 手机号登录（正式环境；open-type=getPhoneNumber → e.detail.code → login({code})）
-  onPhoneLogin(e) {
-    var code = e.detail && e.detail.code
-    if (!code) { wx.showToast({ title: '未获取到授权，请重试', icon: 'none' }); return }
-    api('login', { code: code }).then(res => {
-      if (res.ok) {
-        getApp().completePhoneLogin(res.data || {})
-        this.setData({ needLogin: false })
-        this._fetchClients(true)
-      } else {
-        wx.showToast({ title: res.msg || '登录失败', icon: 'none' })
-      }
-    }).catch(err => {
-      console.error('[index] 手机号登录失败:', err)
-      wx.showToast({ title: '登录失败，请重试', icon: 'none' })
-    })
   },
   onOcrBusy(e) {
     this.setData({ ocrBusy: !!((e && e.detail) && e.detail.busy) })
@@ -54,9 +35,11 @@ Page({
       if (cache.data && cache.data.length) this.setData({ recentClients: cache.data, loadingClients: false, loadError: false })
       return
     }
-    // 静默刷新：有旧缓存先渲染，避免骨架屏闪白；无缓存才显示骨架
-    if (!force && cache && cache.data && cache.data.length) {
-      this.setData({ recentClients: cache.data, loadingClients: false, loadError: false })
+    // 静默刷新：内存已有列表（含 force 场景）则不闪骨架屏，请求完成再更新；
+    // 无内存数据才显示骨架。用内存而非 storage 缓存判断：删除场景已本地 filter，
+    // 若渲染 storage 旧缓存会把已删家庭闪回
+    if (this.data.recentClients && this.data.recentClients.length) {
+      this.setData({ loadingClients: false, loadError: false })
     } else {
       this.setData({ loadingClients: true })
     }
@@ -76,12 +59,6 @@ Page({
   // UI 审计 R-M5：首页错误态重试（force 绕过 60s TTL 缓存）
   onRetryLoad() { this._fetchClients(true) },
 
-  // UI 审计 交互 S1：OCR 弹窗/进行中拦截返回键，防误按退页丢进度
-  onBackPress() {
-    const ocr = this.selectComponent('#ocrFlow')
-    if (ocr && ocr.onBackPressed && ocr.onBackPressed()) return true
-    return false
-  },
   // 上传入口：委托 ocr-flow 组件（chooseMedia + 全流程）
   onUploadTap() {
     const ocrFlow = this.selectComponent('#ocrFlow')
@@ -111,7 +88,7 @@ Page({
     const detail = e.detail || {}
     const ds = e.currentTarget.dataset || {}
     const id = (detail._id !== undefined && detail._id !== '') ? detail._id : (ds.id || ds._id || '')
-    if (!id) { wx.showToast({ title: '客户数据异常，请下拉刷新', icon: 'none' }); return }
+    if (!id) { wx.showToast({ title: '客户数据异常，请稍后重试', icon: 'none' }); return } // UX 审计：首页未开启下拉刷新，原文案指引无效
     navigateToFamily(id)
   },
   onClientLongPress(e) {
@@ -122,9 +99,11 @@ Page({
       familyId: c._id,
       name: c.name || c.family_name || '',
       onSuccess: () => {
-        this.setData({ removingId: c._id })
+        // 删除后本地先移除（避免刷新失败/骨架屏闪回时已删家庭残留或闪回），后台 force 刷新收尾
+        const list = (this.data.recentClients || []).filter(x => x._id !== c._id)
+        this.setData({ removingId: c._id, recentClients: list })
         setTimeout(() => {
-          this._fetchClients(true) // 删除后强制刷新
+          this._fetchClients(true)
           this.setData({ removingId: '' })
         }, 250)
       }

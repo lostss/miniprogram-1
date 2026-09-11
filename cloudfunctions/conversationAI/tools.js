@@ -64,14 +64,17 @@ const TOOL_DEFINITIONS = [
         type: 'object',
         properties: {
           product_name: { type: 'string', description: '产品名称' },
-          insurance_category: { type: 'string', enum: ['重疾险', '医疗险', '意外险', '寿险', '年金', '其他'] },
+          insurance_category: { type: 'string', enum: ['重疾险', '医疗险', '意外险', '寿险', '年金', '养老', '教育', '投连', '万能', '其他'] },
           sum_assured: { type: 'number', description: '保额（元）' },
           annual_premium: { type: 'number', description: '年缴保费（元）' },
           insured_name: { type: 'string', description: '被保人姓名（后端匹配 memberId）' },
           effective_date: { type: 'string', description: '生效日 YYYY-MM-DD' },
           insurer: { type: 'string', description: '保险公司' },
-          premium_term: { type: 'number', description: '缴费年期，0=趸交' },
-          coverage_term: { type: 'number', description: '保障年期，0=终身' },
+          payment_method: { type: 'string', description: '缴费方式：趸交/年交/月交/季交/半年交' },
+          insurance_period: { type: 'string', description: '保障期间（文本优先，语义完整）：终身 / 30年 / 至70岁 / 至2045-12-31 / 90天 / 12个月' },
+          payment_period: { type: 'string', description: '缴费期限（文本优先）：趸交 / 20年 / 交至60岁 / 月交' },
+          premium_term: { type: 'number', description: '缴费年期（数字编码，仅当明确年限时填）：1=趸交，如20；无法确定留空' },
+          coverage_term: { type: 'number', description: '保障年期（数字编码，仅当明确年限时填）：105=终身，如30；无法确定留空' },
           policy_number: { type: 'string' },
           policyholder_name: { type: 'string', description: '投保人' }
         },
@@ -128,7 +131,7 @@ const TOOL_DEFINITIONS = [
           },
           objectValue: { type: 'string', description: '客体值' },
           objectName: { type: 'string', description: '客体是成员时的姓名（如配偶关系）' },
-          confidence: { type: 'number', description: '置信度 0-1：客户明确陈述→0.8-0.9；模糊提及/推断→0.4-0.6；未知默认 0.9。低于 0.6 会生成确认卡片' },
+          confidence: { type: 'number', description: '置信度 0-1：客户明确陈述→0.8-0.9；模糊提及/推断→0.4-0.6；未知默认 0.9' },
           reasoning: { type: 'string', description: '推理依据（AI 推理结论时填写）' }
         },
         required: ['subjectName', 'predicate', 'objectValue']
@@ -219,15 +222,22 @@ const TOOL_DEFINITIONS = [
           policy_number: { type: 'string', description: '保单号' },
           data: {
             type: 'object',
-            description: '要更新的字段。保单状态类信息（有效/已失效/续保/取消）必须填 status，勿填到 effective_date',
+            description: '要更新的字段。保单状态类信息（有效/已失效/续保/取消）必须填 status；保障期间/缴费期限填 insurance_period/payment_period 文本字段，勿填到 effective_date（生效日期，仅 YYYY-MM-DD）',
             properties: {
               product_name: { type: 'string' },
               insurer: { type: 'string' },
               sum_assured: { type: 'number', description: '保额（元）' },
               annual_premium: { type: 'number', description: '年缴保费（元）' },
-              effective_date: { type: 'string' },
+              effective_date: { type: 'string', description: '生效日期，格式 YYYY-MM-DD' },
               insurance_category: { type: 'string' },
-              status: { type: 'string', enum: ['active', 'expired', 'cancelled', 'suspicious'], description: '保单状态：active=有效/在保，expired=已失效/过期，cancelled=已取消/退保，suspicious=待核查' }
+              insurance_period: { type: 'string', description: '保障期间：终身 / 30年 / 至70岁 / 至2045-12-31 / 90天 / 12个月' },
+              payment_period: { type: 'string', description: '缴费期限：趸交 / 20年 / 交至60岁 / 月交' },
+              payment_method: { type: 'string', description: '缴费方式：趸交/年交/月交/季交/半年交' },
+              coverage_term: { type: 'number', description: '保障年期（数字编码，仅明确年限时填）：105=终身，如30' },
+              premium_term: { type: 'number', description: '缴费年期（数字编码，仅明确年限时填）：1=趸交，如20' },
+              status: { type: 'string', enum: ['active', 'lapsed', 'surrendered', 'claim_terminated', 'cancelled'], description: '保单状态（手动可设枚举）：active=有效/在保，lapsed=失效/脱保，surrendered=退保，claim_terminated=理赔终止，cancelled=已取消。到期终止(expired)由系统自动判断，不可手动设置' },
+              status_effective_date: { type: 'string', description: '状态变更生效日期（YYYY-MM-DD）：从有效改为 失效/退保/理赔终止 时必须填写' },
+              status_reason: { type: 'string', description: '状态变更原因（可选）' }
             }
           }
         },
@@ -280,14 +290,4 @@ const TOOL_DEFINITIONS = [
   }
 ]
 
-/**
- * toToolList — 转换为前端 wx.cloud.extend.AI streamText tools.list 格式
- * （{name, description, parameters}），经 getPrompt 下发，前端不复制 schema，单一事实源保持在后端。
- */
-function toToolList() {
-  return TOOL_DEFINITIONS
-    .map(d => d.function ? { name: d.function.name, description: d.function.description, parameters: d.function.parameters } : null)
-    .filter(Boolean)
-}
-
-module.exports = { TOOL_DEFINITIONS, toToolList }
+module.exports = { TOOL_DEFINITIONS }

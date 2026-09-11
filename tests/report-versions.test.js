@@ -28,8 +28,11 @@ function makeMockDb({ addResult = { _id: 'r_new' }, staleList = [] } = {}) {
     where: whereFn,
     doc: docFn
   })
+  // 2026-09-11：archivePrevious 现会在"集合不存在"时自动建集合后重试
+  const createCollectionFn = jest.fn().mockResolvedValue({})
   return {
     collection: collectionFn,
+    createCollection: createCollectionFn,
     _add: addFn,
     _where: whereFn,
     _orderBy: orderByFn,
@@ -37,7 +40,8 @@ function makeMockDb({ addResult = { _id: 'r_new' }, staleList = [] } = {}) {
     _limit: limitFn,
     _get: getFn,
     _doc: docFn,
-    _remove: removeFn
+    _remove: removeFn,
+    _createCollection: createCollectionFn
   }
 }
 
@@ -182,6 +186,48 @@ describe('archivePrevious - 异常降级', () => {
   test('where.get 抛错 → console.error，不向上抛', async () => {
     const db = makeMockDb()
     db._get.mockRejectedValue(new Error('query failed'))
+    await expect(archivePrevious(db, baseArgs)).resolves.toBeUndefined()
+    expect(errSpy).toHaveBeenCalled()
+  })
+})
+
+// 2026-09-11：线上 reports 集合从未创建 → 每次归档 add 抛 ResourceNotFound 被 catch 吞掉 →
+// 「报告历史版本」自上线起从未可用。以下锁定"集合不存在 → 自动创建 → 重试"的修复。
+describe('archivePrevious - 集合不存在自动创建', () => {
+  const missingErr = () => Object.assign(new Error('Db or Table not exist: reports. Please check your request'), {
+    errCode: 'DATABASE_COLLECTION_NOT_EXIST'
+  })
+
+  test('add 因集合不存在失败 → createCollection 后重试成功，且不记失败日志', async () => {
+    const db = makeMockDb()
+    db._add.mockRejectedValueOnce(missingErr()).mockResolvedValueOnce({ _id: 'r_retry' })
+    await archivePrevious(db, baseArgs)
+    expect(db._createCollection).toHaveBeenCalledWith('reports')
+    expect(db._add).toHaveBeenCalledTimes(2)
+    expect(errSpy).not.toHaveBeenCalled()
+  })
+
+  test('createCollection 报"已存在"（并发创建）→ 忽略后重试成功', async () => {
+    const db = makeMockDb()
+    db._add.mockRejectedValueOnce(missingErr()).mockResolvedValueOnce({ _id: 'r_ok' })
+    db._createCollection.mockRejectedValueOnce(new Error('collection already exists'))
+    await archivePrevious(db, baseArgs)
+    expect(db._add).toHaveBeenCalledTimes(2)
+    expect(errSpy).not.toHaveBeenCalled()
+  })
+
+  test('非"集合不存在"错误 → 不创建集合，仍走降级（不向上抛）', async () => {
+    const db = makeMockDb()
+    db._add.mockRejectedValue(new Error('DB down'))
+    await expect(archivePrevious(db, baseArgs)).resolves.toBeUndefined()
+    expect(db._createCollection).not.toHaveBeenCalled()
+    expect(errSpy).toHaveBeenCalled()
+  })
+
+  test('缺 createCollection 能力（老 SDK）→ 不重试，走降级', async () => {
+    const db = makeMockDb()
+    delete db.createCollection
+    db._add.mockRejectedValue(missingErr())
     await expect(archivePrevious(db, baseArgs)).resolves.toBeUndefined()
     expect(errSpy).toHaveBeenCalled()
   })

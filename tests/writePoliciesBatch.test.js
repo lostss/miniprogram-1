@@ -147,4 +147,108 @@ describe('writePoliciesBatch (mock DB)', function() {
       expect(res.data.results[1].ok).toBe(false)
     })
   })
+
+  // ===== OCR 审计 H2：人工编辑路径金额归一（万/亿→元 + 数字化） =====
+  test('H2：手填 "80万" 落库为 800000（元数字）', function() {
+    return dataWrite.main({
+      action: 'writePoliciesBatch', familyId: 'f1',
+      policies: [{ insured_name: '张三', product_name: '储蓄险', sum_assured: '80万', annual_premium: '1.5万' }]
+    }).then(function(res) {
+      expect(res.code).toBe(200)
+      // mock 的 add 模拟真实 SDK 语义：row = { _id, data: doc }，落库数据在 row.data
+      const row = mockStore.policies.find(p => p.data && p.data.insured_name === '张三' && p.data.product_name === '储蓄险')
+      expect(row.data.sum_assured).toBe(800000)
+      expect(row.data.annual_premium).toBe(15000)
+    })
+  })
+
+  test('H2：手填 "1.2亿" 落库为 120000000', function() {
+    return dataWrite.main({
+      action: 'writePoliciesBatch', familyId: 'f1',
+      policies: [{ insured_name: '张三', product_name: '团险', sum_assured: '1.2亿' }]
+    }).then(function(res) {
+      expect(res.code).toBe(200)
+      const row = mockStore.policies.find(p => p.data && p.data.product_name === '团险')
+      expect(row.data.sum_assured).toBe(120000000)
+    })
+  })
+
+  test('H2：OCR 直传元数字原样保留（不误乘万）', function() {
+    return dataWrite.main({
+      action: 'writePoliciesBatch', familyId: 'f1',
+      policies: [{ insured_name: '张三', product_name: '重疾险', sum_assured: 500000, annual_premium: 8000 }]
+    }).then(function(res) {
+      expect(res.code).toBe(200)
+      const row = mockStore.policies.find(p => p.data && p.data.product_name === '重疾险')
+      expect(row.data.sum_assured).toBe(500000)
+      expect(row.data.annual_premium).toBe(8000)
+    })
+  })
+
+  test('H2：非法金额字符串兜底 0（不落库 NaN/字符串）', function() {
+    return dataWrite.main({
+      action: 'writePoliciesBatch', familyId: 'f1',
+      policies: [{ insured_name: '张三', product_name: '异常', sum_assured: 'abc' }]
+    }).then(function(res) {
+      expect(res.code).toBe(200)
+      const row = mockStore.policies.find(p => p.data && p.data.product_name === '异常')
+      expect(row.data.sum_assured).toBe(0)
+    })
+  })
+
+  test('H2：千分位 "80,000" 数字化为 80000', function() {
+    return dataWrite.main({
+      action: 'writePoliciesBatch', familyId: 'f1',
+      policies: [{ insured_name: '张三', product_name: '重疾险', sum_assured: '80,000' }]
+    }).then(function(res) {
+      expect(res.code).toBe(200)
+      const row = mockStore.policies.find(p => p.data && p.data.product_name === '重疾险')
+      expect(row.data.sum_assured).toBe(80000)
+    })
+  })
+
+  // ===== OCR 审计 M4：effective_date 格式规范 =====
+  test('M4：中文日期 "2024年01月15日" → 规范为 2024-01-15', function() {
+    return dataWrite.main({
+      action: 'writePoliciesBatch', familyId: 'f1',
+      policies: [{ insured_name: '张三', product_name: '规范日期', effective_date: '2024年01月15日' }]
+    }).then(function(res) {
+      expect(res.code).toBe(200)
+      const row = mockStore.policies.find(p => p.data && p.data.product_name === '规范日期')
+      expect(row.data.effective_date).toBe('2024-01-15')
+    })
+  })
+
+  test('M4：斜杠日期 "2024/1/15" → 规范为 2024-01-15', function() {
+    return dataWrite.main({
+      action: 'writePoliciesBatch', familyId: 'f1',
+      policies: [{ insured_name: '张三', product_name: '斜杠日期', effective_date: '2024/1/15' }]
+    }).then(function(res) {
+      expect(res.code).toBe(200)
+      const row = mockStore.policies.find(p => p.data && p.data.product_name === '斜杠日期')
+      expect(row.data.effective_date).toBe('2024-01-15')
+    })
+  })
+
+  test('M4：已标准 YYYY-MM-DD 原样保留', function() {
+    return dataWrite.main({
+      action: 'writePoliciesBatch', familyId: 'f1',
+      policies: [{ insured_name: '张三', product_name: '标准日期', effective_date: '2024-01-15' }]
+    }).then(function(res) {
+      expect(res.code).toBe(200)
+      const row = mockStore.policies.find(p => p.data && p.data.product_name === '标准日期')
+      expect(row.data.effective_date).toBe('2024-01-15')
+    })
+  })
+
+  test('M4：无法解析的日期 → 置空（不落垃圾数据）', function() {
+    return dataWrite.main({
+      action: 'writePoliciesBatch', familyId: 'f1',
+      policies: [{ insured_name: '张三', product_name: '脏日期', effective_date: '1年' }]
+    }).then(function(res) {
+      expect(res.code).toBe(200)
+      const row = mockStore.policies.find(p => p.data && p.data.product_name === '脏日期')
+      expect(row.data.effective_date).toBe('')
+    })
+  })
 })

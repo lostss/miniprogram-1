@@ -13,23 +13,24 @@ const { yuanToWan } = require('../amount')
 
 /**
  * 解析 insurance_period 为到期年份（null=无明确到期年/终身）
+ * @param {number} [age=0] 被保人年龄（"至N岁"格式需要，来自 members 匹配）
  */
-function parseExpiryYear(period, startY) {
+function parseExpiryYear(period, startY, age) {
   _loadExpiry()
   if (!period) return null
   var eff = startY ? new Date(String(startY) + '-01-01') : null
-  var r = _parseExpiry(period, eff, 0)
+  var r = _parseExpiry(period, eff, age || 0)
   if (/终身|长期/.test(period)) return null
   return r.year
 }
 
 /**
- * 保障到期年（双字段兼容）：OCR 文本（insurance_period）优先，兜底对话数字（coverage_term，0=终身→null）
+ * 保障到期年（双字段兼容）：OCR 文本（insurance_period）优先，兜底对话数字（coverage_term，105=终身，兼容旧 0→null）
  */
-function _coverTermYear(p, startY) {
-  if (p.insurance_period) return parseExpiryYear(p.insurance_period, startY)
+function _coverTermYear(p, startY, age) {
+  if (p.insurance_period) return parseExpiryYear(p.insurance_period, startY, age)
   var ct = p.coverage_term
-  if (ct === 0 || ct === '0') return null // 终身，无到期节点
+  if (ct === 105 || ct === '105' || ct === 0 || ct === '0') return null // 终身，无到期节点
   if (ct) {
     var n = parseInt(ct, 10)
     if (!isNaN(n) && n > 0) return startY + n
@@ -38,12 +39,12 @@ function _coverTermYear(p, startY) {
 }
 
 /**
- * 缴费期满年（双字段兼容）：OCR 文本（payment_period）优先，兜底对话数字（premium_term，0=趸交→null）
+ * 缴费期满年（双字段兼容）：OCR 文本（payment_period）优先，兜底对话数字（premium_term，1=趸交，兼容旧 0→null）
  */
-function _payTermYear(p, startY) {
-  if (p.payment_period) return parseExpiryYear(p.payment_period, startY)
+function _payTermYear(p, startY, age) {
+  if (p.payment_period) return parseExpiryYear(p.payment_period, startY, age)
   var pt = p.premium_term
-  if (pt === 0 || pt === '0') return null // 趸交，无"缴完"节点
+  if (pt === 1 || pt === '1' || pt === 0 || pt === '0') return null // 趸交/终身缴费，无"缴完"节点
   if (pt) {
     var n = parseInt(pt, 10)
     if (!isNaN(n) && n > 0) return startY + n
@@ -82,6 +83,13 @@ function buildTimeline(policies, members, cashValues) {
   var thisMonth = now.getMonth()
   var events = []
 
+  // 成员名 → 年龄（"至N岁"期限需真实 age 推算到期年；未匹配到成员则保持 age=0 缺省）
+  var ageByName = {}
+  for (var mi = 0; mi < (members || []).length; mi++) {
+    var mem = members[mi]
+    if (mem && mem.name) ageByName[mem.name] = mem.age || 0
+  }
+
   for (var i = 0; i < policies.length; i++) {
     var p = policies[i]
     var eff = p.contract_effective_date || p.effective_date || ''
@@ -91,17 +99,18 @@ function buildTimeline(policies, members, cashValues) {
     if (isNaN(startY)) continue
 
     var name = p.insured_name || '--'
+    var age = ageByName[name] || 0
     var startD = new Date(eff)
     var dayOfMonth = isNaN(startD.getDate()) ? 1 : startD.getDate()
 
     // 保障到期（insurance_period 文本或 coverage_term 数字双字段）
-    var endY = _coverTermYear(p, startY)
+    var endY = _coverTermYear(p, startY, age)
     if (endY && endY > thisYear) {
       events.push({ y: endY, label: p.product_name + '（' + name + '）到期', type: 'expiry' })
     }
 
     // 缴费期满（payment_period 文本或 premium_term 数字双字段）
-    var payEnd = _payTermYear(p, startY)
+    var payEnd = _payTermYear(p, startY, age)
     if (payEnd && payEnd > thisYear) {
       events.push({ y: payEnd, label: p.product_name + '（' + name + '）缴完', type: 'paydone' })
     }

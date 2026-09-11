@@ -55,7 +55,12 @@ const FACT_STRATEGIES = {
   // 关系类
   '配偶': 'dedup', '子女': 'dedup', '父母': 'dedup',
   // 保障类
-  '拥有保障': 'versioned', '公司提供保障': 'versioned', '投保': 'dedup',
+  // 2026-09-10 修复：拥有保障/公司提供保障 原为 versioned，而 versioned 的 supersede 条件只有
+  // subject_id + predicate（不含 object_id），导致同一成员的多份保单边互相作废——
+  // 实测 11 份保单只剩 3 条边，画像缺保 → 报告误判"谢敏无任何保障"（实际有重疾70万+定寿100万）。
+  // 改 dedup：按 subject + predicate + object_value 去重，同成员多份不同产品并存，重复导入才 skipped。
+  // 安全性：边的 object_value 是「产品名(id后缀)」不含保额，保额变化走保单节点的 versioned 属性，不受影响。
+  '拥有保障': 'dedup', '公司提供保障': 'dedup', '投保': 'dedup',
   // 人况类
   '职业': 'versioned', '个人年收入': 'versioned', '健康异常': 'versioned', '病史时间线': 'dedup',
   '年龄': 'versioned', '性别': 'versioned', '教育程度': 'versioned',
@@ -106,7 +111,7 @@ async function addFact(db, openid, event) {
   if (!familyId) return { code: 400, msg: '缺少参数 familyId' }
   if (!rawPredicate || objectValue == null || objectValue === '') return { code: 400, msg: '缺少 predicate/objectValue' }
   // 安全审计 H3：AI 产出内容写入前注入检测（防提示词注入产物持久化成二次注入载体，与 upsertMember/writePolicy 对齐）
-  if (detectInjection(String(objectValue) + ' ' + String(reasoning || '')).detected) return { code: 400, msg: '内容校验未通过，已拦截' }
+  if (detectInjection(String(objectValue) + ' ' + String(reasoning || '')).injected) return { code: 400, msg: '内容校验未通过，已拦截' }
   // 安全审计 P1-2：objectValue/reasoning 落库前脱敏（纵深防御，AI/表单双路径）。
   // 注意：解构参数为 const 绑定不可重赋值，用 safe* 局部变量
   const safeObjectValue = desensitize(String(objectValue))
@@ -123,6 +128,12 @@ async function addFact(db, openid, event) {
     if (!subRes.data || subRes.data.length === 0) return { code: 404, msg: '未找到主体成员：' + resolvedSubjectName }
     resolvedSubjectId = subRes.data[0].member_id
     resolvedSubjectType = 'member'
+  }
+  // P1-D1 修复（2026-09-05）：family 级决策备注（deletePolicy/updatePolicy 状态留痕）——
+  // subjectType='family' 且无 subjectId 时以 familyId 为主体。此前无此分支，备注 addFact 恒 400，
+  // 备注永不落库且 triggerHooks 不触发（deletePolicy/updatePolicy 全程 silent 写，钩子依赖 addFact）
+  if (!resolvedSubjectId && resolvedSubjectType === 'family' && familyId) {
+    resolvedSubjectId = familyId
   }
   if (!resolvedSubjectId) return { code: 400, msg: '缺少主体标识（subjectId 或 subjectName）' }
 
@@ -212,8 +223,16 @@ async function deleteFact(db, openid, event) {
   if (!factId) return { code: 400, msg: '缺少 factId' }
   const r = await db.collection('facts').where({ _id: factId, family_id: familyId, _openid: openid }).limit(1).get()
   if (!r.data || !r.data.length) return { code: 404, msg: '未找到该事实' }
+  const fact = r.data[0]
   const ws = writeSeam(db, openid, familyId, { advanceStageHook: false })
-  await ws.updateDoc('facts', r.data[0]._id, { status: 'superseded' }).catch(e => { console.error('[dataWrite] deleteFact 失败:', e.message); throw new Error('事实删除失败：' + e.message) })
+  await ws.updateDoc('facts', fact._id, { status: 'superseded' }).catch(e => { console.error('[dataWrite] deleteFact 失败:', e.message); throw new Error('事实删除失败：' + e.message) })
+  // P2-A 修复：关系类谓词（配偶/子女/父母）删除时同步清理对向事实，防孤儿关系边残留（对齐 member-write.deleteMember P0-3）
+  if (['配偶', '子女', '父母'].includes(fact.predicate) && fact.subject_id) {
+    await ws.silentUpdateWhere('facts',
+      { family_id: familyId, predicate: fact.predicate, object_id: fact.subject_id, status: 'active', _id: _.neq(fact._id) },
+      { status: 'superseded' }
+    ).catch(e => console.error('[dataWrite] deleteFact 反向关系清理失败:', e.message))
+  }
   return { code: 200, data: { deleted: true, factId } }
 }
 

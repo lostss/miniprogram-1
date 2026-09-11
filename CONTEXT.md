@@ -31,7 +31,7 @@
 
 **基础版（已实现）**：纯规则引擎驱动。`gap-engine` 计算保障缺口/覆盖矩阵，`timeline-builder` 构建缴费时间轴，`buildReportView` 统一聚合 7 章（含家庭财务独立章），无 AI 参与。
 
-**深度分析（已实现，手动触发）**：report 页「深度分析」按钮 → `api('generateReport')`（60s 超时）→ reportAI AI 生成画像/点评/规划/建议，写 `families.last_*` 并由前端渲染。缺口矩阵由系统预计算注入 AI（`report-context.buildGapSnapshot`）。PDF 导出待设计。
+**深度分析（2026-09-06 活报告模型：自动介入为主 + 手动补算保留）**：数据变更（writeSeam 置 `insight_stale`）后前端汇聚点以 `source:'auto'` 自动触发（30s CAS 节流，不设频率上限）；report 页「立即生成分析」按钮 → `api('generateReport')`（60s 超时）→ reportAI AI 生成画像/点评/规划/建议，写 `families.last_*` 并由前端渲染。缺口矩阵由系统预计算注入 AI（`report-context.buildGapSnapshot`）。PDF 导出待设计。
 
 ## 信息采集模式
 
@@ -49,7 +49,7 @@
 ## 分析触发
 
 - **基础版报告：纯数据驱动**。OCR/编辑入库后仅触发前端「缓冲（默认 500ms）→ 重读 → 应用」重算 7 章，不调用 AI；编辑保存走本地增量更新（`_applyLocalUpdate` 立即渲染 + `waitMs:0` 后台校验）
-- **深度分析：手工触发（已实现）**。曾自动触发 reportAI，用户明确决策删除自动触发（2026-08），改为 report 页「深度分析」按钮手动触发（`generateReport`）
+- **深度分析：自动介入（2026-09-06 活报告模型，恢复自动）**。2026-08 曾删自动触发改手动；现改事件驱动自动（OCR/编辑/对话/撤销后 `source:'auto'`，30s CAS 节流），手动按钮保留为立即补算入口。readiness BLOCK 收敛为事实层，家庭年收入缺失降 `degraded` 放行定性分析；待澄清项落库 `families.pending_clarifications`（详见 specs/living-report-20260906/）
 - **置信度标注**（OCR 侧）：`assessPolicy`（0.9 阈值单一真相源）+ `assessCoreCompleteness`（核心字段 ≥80% 非空才自动确认），低置信度走确认卡
 
 ## 报告结构（基础版 · 7 章单页长图）
@@ -114,10 +114,10 @@
   - `dataQuery`：查询聚合（getFamily / queryMessages / listFamilies / searchFamilies / queryPolicies / queryMembers / queryFacts）
   - `dataWrite`：写入聚合（家庭/成员/事实/保单/消息，`ingestPolicies` 批量入库 step 化）
   - `reportAI`：深度分析报告生成（已停止自动触发，待手工入口）
-  - `conversationAI`：对话三步流程（getPrompt / generateText / postProcess）+ 13 工具路由
+  - `conversationAI`：对话三步流程（getPrompt / generateText / postProcess / record）+ 14 工具路由
   - `ocrService`：OCR 全链路（ocrOnly / aiExtractBatch / aiExtractParallel / matchPolicies）
   - `login`：手机号登录；`cleanup`：定时清理
-- **数据库**：CloudBase NoSQL（文档型，5 集合：families / members / finances / policies / facts，灵活适配渐进式录入）
+- **数据库**：CloudBase NoSQL（文档型，6 集合：families / members / finances / policies / products / facts，灵活适配渐进式录入；products 为 2026-08 新增产品条款主数据）
 - **AI**：对话/单图 OCR 提取经混元 `hy3`（`hunyuan-exp` 分组，TokenHub）；批量 OCR 提取（>1 张）走 DeepSeek 直连（`deepseek-v4-flash`，key 仅配置于 ocrService）；云函数侧 AI 全链经 `ai-gateway.js` → `safeCallChat`（审查链：sanitize → PII 脱敏 → 注入检测 → 内容安全 → 限流 60/60s → 输出审计 → agent_logs）
 
 原则：**轻量化，单一服务，零分布式复杂度**。
@@ -137,7 +137,7 @@
 
 ## 数据模型
 
-### 集合总览（5 集合架构）
+### 集合总览（6 集合架构）
 
 | 集合 | 定位 | 变更 | 量级 |
 |------|------|------|------|
@@ -145,6 +145,7 @@
 | `members` | 成员主数据（展示+推理输入） | 低频覆盖 | 2-20/家庭 |
 | `finances` | 财务主数据（推理输入） | 低频覆盖 | 1/家庭 |
 | `policies` | 保单事实表（推理输入） | 高频追加 | 5-30/家庭 |
+| `products` | 产品条款主数据（liability+benefits，一次解析跨家庭复用） | 低频追加 | 10-100（在售+停售） |
 | `facts` | 三元组关系+推理结论 | 高频追加 | 20-80/家庭 |
 
 > **去冗余（Plan A）**：`members` / `finances` 为独立集合，成员与财务的**唯一真相源**；`families.members` 内嵌字段已废弃。`families.financial_snapshot` **仍活跃**：由 `memberRepo.getFinance` 聚合 finances 集合（元键 annual_income/total_debt/fixed_annual_expense ÷10000 转万；旧万键 income/debt/fixed_expense fallback），供表单回显与报告上下文使用。关联键统一为 `members.member_id`（形如 `mem_xxx`）：`policies.member_id` 与 `facts.subject_id` 均指向它。读写经 `_shared/memberRepo.js`（`loadFamilyView` / `getMembers` / `upsertMember` / `getFinance` 等）。

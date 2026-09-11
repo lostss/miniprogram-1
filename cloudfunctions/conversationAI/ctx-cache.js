@@ -48,6 +48,14 @@ class CtxCache {
     this._store.delete(key)
   }
 
+  /** P1（2026-08-30）：按 key 前缀批量失效（query 缓存按 familyId+openid 前缀统一清理） */
+  invalidateByPrefix(prefix) {
+    if (!prefix) return
+    for (const key of Array.from(this._store.keys())) {
+      if (key.indexOf(prefix) === 0) this._store.delete(key)
+    }
+  }
+
   get size() {
     return this._store.size
   }

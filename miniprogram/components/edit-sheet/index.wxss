@@ -16,8 +16,9 @@
 /* 信息分组标题（识别卡片 sheet 同款：accent-deep 小标 + 底部金线）；组间 sp-3+sp-6=36rpx，组内 sp-3=12rpx */
 .form-group-title { font-size:var(--fs-caption); color:var(--accent-deep); font-weight:var(--fw-semi); margin-top:var(--sp-6); margin-bottom:var(--sp-3); padding-bottom:var(--sp-1); border-bottom:1rpx solid var(--border-accent); }
 .form-group-title:first-child { margin-top:0 }
-/* 查看态只读行：label + value 横排，值用主文字色（空值 '--' 弱化） */
-.form-row--view { min-height:88rpx; }
+/* 查看态只读行：label + value 横排，值用主文字色（空值 '--' 弱化）。
+   行高 76rpx：原 88rpx 过稀疏（与输入行同高但无输入框视觉重量） */
+.form-row--view { min-height:76rpx; }
 .form-view-val { flex:1; min-width:0; font-size:var(--fs-body); color:var(--text-primary); font-variant-numeric:tabular-nums; }
 .form-view-val--empty { color:var(--text-tertiary); }
 /* 查看态保留置信度底色（低/中置信字段可读时即提示 ⚠️） */

@@ -6,7 +6,8 @@ Component({
   observers: {
     'client'(c) {
       if (!c) return
-      const comp = c.completeness || (c.report && c.report.completeness) || 0
+      // 审计 P1-5：后端列表投影字段为 completeness_score（0-100）；completeness/report.completeness 均为历史不存在字段 → 恒 0
+      const comp = Number(c.completeness_score) || c.completeness || (c.report && c.report.completeness) || 0
       this.setData({ _fmtTime: this._fmt(c.updated_at), _completeness: comp, _name: c.name || c.family_name || '', _id: c._id || '' })
     }
   },

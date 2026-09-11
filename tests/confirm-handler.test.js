@@ -20,7 +20,9 @@ function makeDeps({ dispatchResult = { code: 200, msg: 'ok' } } = {}) {
   const dispatch = jest.fn().mockResolvedValue(dispatchResult)
   const writeMessage = jest.fn().mockResolvedValue(true)
   const ctxCache = { invalidate: jest.fn() }
-  return { dispatch, writeMessage, ctxCache }
+  // P2-L1：生产路径（index.js 传入）stateCache 才是状态块失效目标
+  const stateCache = { invalidate: jest.fn() }
+  return { dispatch, writeMessage, ctxCache, stateCache }
 }
 
 const baseArgs = {
@@ -50,14 +52,14 @@ describe('handleConfirm - 输入校验', () => {
     expect(r.code).toBe(404)
   })
 
-  test('pendingId 不匹配 → 400', async () => {
+  test('pendingId 不匹配 → 400（P2-B 可读提示）', async () => {
     const r = await handleConfirm({
       ...baseArgs,
       lastMsg: { pending_confirms: [{ pendingId: 'other', type: 'fact_confirm' }] },
       ctxCache: { invalidate: jest.fn() }, dispatch: jest.fn(), writeMessage: jest.fn()
     })
     expect(r.code).toBe(400)
-    expect(r.msg).toContain('无效')
+    expect(r.msg).toContain('已失效')
   })
 
   test('不支持的 type → 400', async () => {
@@ -73,17 +75,18 @@ describe('handleConfirm - 输入校验', () => {
 
 describe('handleConfirm - fact_confirm', () => {
   test('成功路径：清缓存→dispatch→写消息→log', async () => {
-    const { dispatch, writeMessage, ctxCache } = makeDeps({ dispatchResult: { code: 200, msg: 'ok' } })
+    const { dispatch, writeMessage, ctxCache, stateCache } = makeDeps({ dispatchResult: { code: 200, msg: 'ok' } })
     const r = await handleConfirm({
       ...baseArgs,
       lastMsg: { pending_confirms: [{ pendingId: 'pc_001', type: 'fact_confirm', factId: 'fact_001' }] },
-      ctxCache, dispatch, writeMessage
+      ctxCache, stateCache, dispatch, writeMessage
     })
     expect(r.code).toBe(200)
-    expect(ctxCache.invalidate).toHaveBeenCalledWith('fam_001:op_test')
+    // P2-L1：失效打在 stateCache（生产路径）；ctxCache 仅旧调用回退
+    expect(stateCache.invalidate).toHaveBeenCalledWith('state:fam_001:op_test')
     expect(dispatch).toHaveBeenCalledWith('updateFactConfidence', expect.objectContaining({
       familyId: 'fam_001', factId: 'fact_001', confidence: 1, source: 'agent_confirmed'
-    }))
+    }), 'op_test')
     // 写两条消息：user + assistant
     expect(writeMessage).toHaveBeenCalledTimes(2)
     expect(writeMessage.mock.calls[0][2]).toBe('user')
@@ -106,7 +109,7 @@ describe('handleConfirm - fact_confirm', () => {
     expect(writeMessage.mock.calls[1][3]).toContain('DB error')
   })
 
-  test('userText 为空时使用 {CONFIRM:pendingId}', async () => {
+  test('userText 为空时使用友好化确认文案（历史显示修复：落库中文而非 {CONFIRM:xxx}）', async () => {
     const { dispatch, writeMessage, ctxCache } = makeDeps()
     await handleConfirm({
       ...baseArgs,
@@ -114,7 +117,7 @@ describe('handleConfirm - fact_confirm', () => {
       lastMsg: { pending_confirms: [{ pendingId: 'pc_001', type: 'fact_confirm', factId: 'fact_001' }] },
       ctxCache, dispatch, writeMessage
     })
-    expect(writeMessage.mock.calls[0][3]).toBe('{CONFIRM:pc_001}')
+    expect(writeMessage.mock.calls[0][3]).toBe('确认')
   })
 })
 
@@ -129,7 +132,7 @@ describe('handleConfirm - member_confirm', () => {
     })
     expect(dispatch).toHaveBeenCalledWith('upsertMember', expect.objectContaining({
       familyId: 'fam_001', memberName: '张三', memberId: 'mem_001', data: proposed, confirmed: true
-    }))
+    }), 'op_test')
     expect(writeMessage.mock.calls[1][3]).toContain('已确认并更新成员信息')
     expect(logAI.mock.calls[0][1]).toMatchObject({ action: 'member_confirm' })
   })
@@ -145,7 +148,7 @@ describe('handleConfirm - delete_confirm', () => {
     })
     expect(dispatch).toHaveBeenCalledWith('deletePolicy', expect.objectContaining({
       familyId: 'fam_001', policyId: 'pol_001', confirmed: true
-    }))
+    }), 'op_test')
     expect(writeMessage.mock.calls[1][3]).toContain('已删除平安福')
   })
 
@@ -196,17 +199,32 @@ describe('handleKeep', () => {
     expect(logAI.mock.calls[0][1]).toMatchObject({ action: 'member_keep' })
   })
 
-  test('无 lastMsg 也能走 member_keep 路径', async () => {
+  test('write_confirm 类型 → 回复"已取消写入"，log write_keep', async () => {
+    const writeMessage = jest.fn().mockResolvedValue(true)
+    const r = await handleKeep({
+      ...baseArgs,
+      lastMsg: { pending_confirms: [{ pendingId: 'pc_001', type: 'write_confirm', toolName: 'updateFinances' }] },
+      writeMessage
+    })
+    expect(r.code).toBe(200)
+    expect(writeMessage.mock.calls[1][3]).toBe('已取消写入')
+    expect(logAI.mock.calls[0][1]).toMatchObject({ action: 'write_keep' })
+  })
+
+  test('无待确认项（lastMsg null / 卡已过期）→ 400 可读失效提示', async () => {
     const writeMessage = jest.fn().mockResolvedValue(true)
     const r = await handleKeep({ ...baseArgs, lastMsg: null, writeMessage })
-    expect(r.code).toBe(200)
-    expect(writeMessage.mock.calls[1][3]).toContain('已保留原值')
+    expect(r.code).toBe(400)
+    expect(r.msg).toContain('已失效')
+    // 不写消息、不记日志（无实际保留动作）
+    expect(writeMessage).not.toHaveBeenCalled()
+    expect(logAI).not.toHaveBeenCalled()
   })
 })
 
 describe('STRATEGIES 策略表', () => {
-  test('三类策略齐全', () => {
-    expect(Object.keys(STRATEGIES).sort()).toEqual(['delete_confirm', 'fact_confirm', 'member_confirm'])
+  test('四类策略齐全（单通道 v10 新增 write_confirm）', () => {
+    expect(Object.keys(STRATEGIES).sort()).toEqual(['delete_confirm', 'fact_confirm', 'member_confirm', 'write_confirm'])
   })
 
   test('每个策略都有 4 个 hook', () => {
@@ -216,5 +234,39 @@ describe('STRATEGIES 策略表', () => {
       expect(typeof s.reply).toBe('function')
       expect(typeof s.logStatus).toBe('function')
     }
+  })
+})
+
+describe('handleConfirm - write_confirm（单通道 v10 写入确认卡）', () => {
+  test('成功路径：dispatch 工具名 + payload + confirmed:true，reply 含确认语', async () => {
+    const { dispatch, writeMessage, ctxCache, stateCache } = makeDeps()
+    const r = await handleConfirm({
+      ...baseArgs,
+      lastMsg: { pending_confirms: [{ pendingId: 'pc_001', type: 'write_confirm', toolName: 'updateFinances', payload: { annual_income: 250000 }, target: '家庭财务', summary: '年收入:250,000元' }] },
+      ctxCache, stateCache, dispatch, writeMessage
+    })
+    expect(r.code).toBe(200)
+    expect(dispatch).toHaveBeenCalledWith('updateFinances', expect.objectContaining({
+      familyId: 'fam_001', annual_income: 250000, confirmed: true
+    }), 'op_test')
+    // P2-L1：失效打在 stateCache（生产路径）
+    expect(stateCache.invalidate).toHaveBeenCalledWith('state:fam_001:op_test')
+    expect(writeMessage).toHaveBeenCalledTimes(2)
+    expect(writeMessage.mock.calls[1][3]).toContain('已确认写入')
+    expect(writeMessage.mock.calls[1][3]).toContain('家庭财务')
+    expect(logAI).toHaveBeenCalledTimes(1)
+    expect(logAI.mock.calls[0][1]).toMatchObject({ action: 'write_confirm', status: 'success' })
+  })
+
+  test('dispatch 失败 → reply 包含失败信息', async () => {
+    const { dispatch, writeMessage, ctxCache } = makeDeps({ dispatchResult: { code: 500, msg: 'DB error' } })
+    const r = await handleConfirm({
+      ...baseArgs,
+      lastMsg: { pending_confirms: [{ pendingId: 'pc_001', type: 'write_confirm', toolName: 'addPolicy', payload: {}, target: '保单', summary: '' }] },
+      ctxCache, dispatch, writeMessage
+    })
+    expect(r.code).toBe(200)
+    expect(writeMessage.mock.calls[1][3]).toContain('写入失败')
+    expect(writeMessage.mock.calls[1][3]).toContain('DB error')
   })
 })

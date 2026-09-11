@@ -8,7 +8,7 @@ const api = require('../miniprogram/utils/apiClient')
 const { createHistoryStore } = require('../miniprogram/utils/history-store')
 
 const descMsgs = [
-  { role: 'assistant', content: '第20条(最新)', created_at: '2026-08-08T10:20:00.000Z' },
+  { role: 'assistant', content: '第20条（最新）', created_at: '2026-08-08T10:20:00.000Z' },
   { role: 'user', content: '第19条', created_at: '2026-08-08T10:19:00.000Z' },
   { role: 'assistant', content: '第18条', created_at: '2026-08-08T10:18:00.000Z' }
 ]
@@ -31,12 +31,12 @@ describe('history-store 分页加载', () => {
     const store = createHistoryStore()
     const r = await store.load('fam_001')
 
-    expect(r.replace.map(m => m.content)).toEqual(['第18条', '第19条', '第20条(最新)'])
+    expect(r.replace.map(m => m.content)).toEqual(['第18条', '第19条', '第20条（最新）'])
     // 游标 = 数组末尾（最早消息时间），而非原 bug 的 raw[0]（最新）
     expect(store._oldest).toBeUndefined() // 闭包不暴露，用二次 more 验证
   })
 
-  test('more 加载：before=最早消息时间，返回 prepend 不 reverse（新→旧插顶）', async () => {
+  test('more 加载：before=最早消息时间，返回 prepend reverse 为正序（旧→新插顶，与首次加载同契约）', async () => {
     api.mockResolvedValue({ ok: true, data: { messages: descMsgs } })
     const store = createHistoryStore()
     await store.load('fam_001')
@@ -44,7 +44,7 @@ describe('history-store 分页加载', () => {
     api.mockClear()
     api.mockResolvedValue({ ok: true, data: { messages: descMsgs } })
     const r2 = await store.load('fam_001', 'more')
-    expect(r2.prepend.map(m => m.content)).toEqual(['第20条(最新)', '第19条', '第18条'])
+    expect(r2.prepend.map(m => m.content)).toEqual(['第18条', '第19条', '第20条（最新）'])
     // 关键断言：before 必须是 firstLoad 末尾（最早时间），不是最新时间
     expect(api).toHaveBeenCalledWith('queryMessages', { familyId: 'fam_001', limit: 15, before: '2026-08-08T10:18:00.000Z' })
   })
@@ -71,7 +71,7 @@ describe('history-store 分页加载', () => {
     api.mockClear()
     const store2 = createHistoryStore()
     const r = await store2.load('fam_001')
-    expect(r.replace.map(m => m.content)).toEqual(['第18条', '第19条', '第20条(最新)'])
+    expect(r.replace.map(m => m.content)).toEqual(['第18条', '第19条', '第20条（最新）'])
     // SWR 后台刷新：load 返回后缓存会被新数据覆盖（网络响应一致则内容不变，验证缓存写入）
     await new Promise(res => setTimeout(res, 20))
     const cached = wx.getStorageSync('chat_history_fam_001')
@@ -90,7 +90,7 @@ describe('history-store 分页加载', () => {
     api.mockResolvedValue({ ok: true, data: { messages: descMsgs } })
     const store = createHistoryStore()
     const r = await store.load('fam_001')
-    expect(r.replace.map(m => m.content)).toEqual(['第18条', '第19条', '第20条(最新)'])
+    expect(r.replace.map(m => m.content)).toEqual(['第18条', '第19条', '第20条（最新）'])
     expect(api).toHaveBeenCalledWith('queryMessages', { familyId: 'fam_001', limit: 15, mode: 'latest' })
   })
 })

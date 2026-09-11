@@ -146,9 +146,11 @@ async function matchPoliciesToMembers({ db, familyId, openid, allPolicies }) {
     await Promise.all(birthUpdatePromises)
 
     // policies.member_id 同步：经 writeSeam silentUpdateWhere（_openid 注入）
+    // M3（OCR 审计 M3）：where 显式含 family_id——writeSeam 只注入 _openid，
+    // 同 openid 多家庭时保单号匹配会跨家庭误改；保单号虽全局唯一，但加 family_id 成本为零且语义正确
     const wsSync = writeSeam(db, openid, familyId, { markMutated: false, advanceStageHook: false })
     const syncPromises = allPolicies.filter(p => p.member_id).map(p => {
-      const where = {}
+      const where = { family_id: familyId }
       if (p.policy_number) {
         where.policy_number = p.policy_number
       } else if (p.id) {

@@ -7,7 +7,6 @@
 jest.mock('../cloudfunctions/ocrService/_shared/ocr-core', () => ({
   ocrPhase: jest.fn(),
   aiPhase: jest.fn(),
-  aiExtractBatchPhase: jest.fn(),
   matchPoliciesToMembers: jest.fn(),
   buildPolicyFromExtract: jest.fn(),
   _toNum: jest.fn()

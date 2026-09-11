@@ -3,13 +3,13 @@
  */
 
 // ============================================================
-// 模型分流（用户决策 2026-08）：1 张 → aiExtractBatch（hy3, 1次调用）
-// >1 张 → aiExtractParallel（DeepSeek 直连, 每张1次并发）
-// 拼接（多张 1 次 AI）已弃用；aiExtractBatch 仅服务单图
+// 模型分流（2026-08-30 收敛）：1 张与 N 张统一 aiExtractParallel（DeepSeek 直连）
 // ============================================================
 // API 客户端
 // ============================================================
 const api = require('./apiClient')
+// 领域写薄层（候选 5）：批量保单写参数形状收口（cashValues → cash_values）
+const { writePoliciesBatch } = require('./domain-writes')
 // 置信度判定（单一真相源，与 ocr-confidence 同步）
 const { assessPolicy } = require('./ocr-confidence')
 
@@ -30,11 +30,12 @@ function defaultState() {
     streamSlots: [], streamFilled: 0, elapsed: 0
   }
 }
-function start(total) { return { 'ocrMask.visible': true, 'ocrMask.phase': 'upload', 'ocrMask.total': total, 'ocrMask.uploaded': 0, 'ocrMask.elapsed': 0 } }
+// 审计修复：每批 OCR 开始即重置 confirming——failed 相"放弃本次"未复位 confirming 时，新批次"全部确认"会永久灰死
+function start(total) { return { 'ocrMask.visible': true, 'ocrMask.phase': 'upload', 'ocrMask.confirming': false, 'ocrMask.total': total, 'ocrMask.uploaded': 0, 'ocrMask.elapsed': 0 } }
 function setUploaded(n) { return { 'ocrMask.uploaded': n } }
 function setSaving() { return { 'ocrMask.phase': 'saving' } }
 // OCR 子阶段（batchOCR 阶段1：纯文字识别，无 AI）
-function setRecognizing() { return { 'ocrMask.phase': 'recognize', 'ocrMask.phaseText': '正在文字识别…', 'ocrMask.processed': 0, 'ocrMask.elapsed': 0 } }
+function setRecognizing(total) { return { 'ocrMask.phase': 'recognize', 'ocrMask.phaseText': total ? '正在识别 ' + total + ' 张图片…' : '正在文字识别…', 'ocrMask.processed': 0, 'ocrMask.elapsed': 0 } }
 // 流式回填：初始化 N 个槽位（null 占位）+ 切换到 streaming phase
 // thumbs: 与 fileIds 对齐的本地缩略图路径数组（失败后可定位是哪张图）
 function setStreamingSlots(total, thumbs) {
@@ -48,7 +49,7 @@ function setStreamingSlots(total, thumbs) {
     'ocrMask.phase': 'recognize-stream',
     'ocrMask.total': total,
     'ocrMask.processed': 0,
-    'ocrMask.phaseText': 'AI 正在提取保单信息…',
+    'ocrMask.phaseText': '正在提取 ' + total + ' 张图片的保单信息…',
     'ocrMask.streamSlots': slots,
     'ocrMask.streamFilled': 0,
     'ocrMask.elapsed': 0
@@ -131,14 +132,29 @@ async function compressAndUpload(paths, setData, prefix) {
 }
 
 // ============================================================
-// 批量提取入口（分流：1 张 → aiExtractBatch，≥2 张 → aiExtractParallel）
-//   阶段1：ocrOnly 并发 OCR（无 AI，无 429）
-//   阶段2：AI 提取（aiExtractBatch 单图走 hy3 | aiExtractParallel 每张独立走 DeepSeek 并发）
-//           + 一次性填充所有槽位
+// ============================================================
+// OCR 文本缓存（重试复用，2026-09-09）
+// 目的：AI 阶段失败重试时只重跑 aiExtractParallel，不重复 OCR 计费（约 0.5 元/张）
+// 仅内存持有（不落 storage，避免 PII 明文持久化）；跨会话恢复无缓存时回退完整链路
+// ============================================================
+var _ocrTextCache = {}
+var OCR_TEXT_CACHE_MAX = 18 // 两批上限，防内存膨胀
+function _cacheOcrTexts(map) {
+  if (!map || typeof map !== 'object') return
+  Object.keys(map).forEach(function(fid) { _ocrTextCache[fid] = map[fid] })
+  var keys = Object.keys(_ocrTextCache)
+  if (keys.length > OCR_TEXT_CACHE_MAX) {
+    keys.slice(0, keys.length - OCR_TEXT_CACHE_MAX).forEach(function(k) { delete _ocrTextCache[k] })
+  }
+}
+function getCachedOcrText(fileId) { return (fileId && _ocrTextCache[fileId]) || null }
+function clearCachedOcrText(fileId) { if (fileId) delete _ocrTextCache[fileId] }
+
+// 批量提取入口（单通道，2026-09-09 合并两阶段）：1 张与 N 张统一走 ocrExtract
+//   云端一次调用内完成：批量临时链接 → OCR 并发 → AI 提取并发 → 一次性填充所有槽位
 // 对外契约：返回 { policies, cashValues, errors }
 // ============================================================
-async function batchOCR_merged(fileIds, setData, opts, aiAction) {
-  aiAction = aiAction || 'aiExtractBatch'
+async function batchOCR(fileIds, setData, opts) {
   opts = opts || {}
   // 日志审计 #1：本次 OCR 会话生成 traceId（OCR→提取→保存全链串联）
   _lastReqId = _genReqId()
@@ -147,52 +163,34 @@ async function batchOCR_merged(fileIds, setData, opts, aiAction) {
   var batchIds = fileIds.filter(function(id) { return id !== null })
   if (!batchIds.length) return { policies: [], cashValues: [], errors: [] }
 
-  // ===== 阶段 1：ocrOnly 并发 OCR（无 AI，无 429） =====
-  // 阶段分离提示：OCR（文字识别）→ setStreamingSlots（AI 提取）→ 填充
-  if (setData) setData(setRecognizing())
-  var ocrRes
-  try {
-    var ocrRaw = await api('ocrOnly', { fileIds: batchIds, familyId: opts.familyId || '' })
-    if (!ocrRaw.ok) {
-      return {
-        policies: [], cashValues: [],
-        errors: batchIds.map(function(fid) { return { fileId: fid, error: ocrRaw.msg || 'OCR阶段失败', error_code: 'ocr_api_error' } })
-      }
-    }
-    ocrRes = ocrRaw.data
-  } catch (e) {
-    return { policies: [], cashValues: [], errors: batchIds.map(function(fid) { return { fileId: fid, error: (e && e.message) || 'OCR异常', error_code: 'ocr_exception' } }) }
-  }
-
-  var ocrResults = ocrRes.ocr_results || []
-  if (ocrRes.failures) { for (var f = 0; f < ocrRes.failures.length; f++) { errors.push(ocrRes.failures[f]) } }
-  if (ocrResults.length === 0) return { policies: [], cashValues: [], errors: errors }
-
-  // ===== 初始化流式槽位（骨架屏，批量 AI 期间显示） =====
-  var totalSlots = ocrResults.length
-  if (setData) setData(setStreamingSlots(totalSlots, opts.thumbs))
-
-  // ===== 阶段 2：1 次批量 AI 调用（'aiExtractBatch' 拼接 | 'aiExtractParallel' 并行） =====
-  // AI 批量提取可能遇到 hy3 限流退避（retry-after 等待），前端默认 30s 超时不够，单独设为 100s（≥ 云函数超时）
-  var aiRes
+  // ===== 单次调用：OCR + AI 提取（2026-09-09 合并两阶段） =====
+  // 原 ocrOnly + aiExtractParallel 两次 RPC 合并为 ocrExtract：省一次云函数往返/冷启动，
+  // ocrText 由双程传输降为单程；getTempFileURL 在云端批量一次（原逐张最多 9 次）。
+  if (setData) setData(setRecognizing(batchIds.length))
+  var raw
   try {
     // 网络审计：ocrService 平台超时上限 60s，前端 70s 略大于平台（原 100s 永不触发是无效配置；
     // 也不宜改为 60s 相等——前端 timer 与平台同时超时，race 可能先拿到 timeout 丢真实错误码）
-    aiRes = await api(aiAction, { ocr_results: ocrResults, familyId: opts.familyId || '' }, { timeout: 70000 })
+    // 2026-09-10 traceId 修复：原实现生成 reqId 却只挂在写入调用上，OCR/AI 这两次主调用缺 trace_id，
+    // 云端日志无法与前端的识别会话串联（reqId 变量此前是死变量）
+    raw = await api('ocrExtract', { fileIds: batchIds, familyId: opts.familyId || '' }, { timeout: 70000, requestId: reqId })
   } catch (e) {
-    // AI 阶段异常（超时/网络/云函数未捕获）：错误码用 ai_exception，避免误报为 OCR 异常
-    return { policies: [], cashValues: [], errors: errors.concat(ocrResults.map(function(r) { return { fileId: r.fileId, error: (e && e.message) || aiAction + '异常', error_code: 'ai_exception' } })) }
+    return { policies: [], cashValues: [], errors: batchIds.map(function(fid) { return { fileId: fid, error: (e && e.message) || 'OCR异常', error_code: 'ocr_exception' } }) }
+  }
+  if (!raw || !raw.ok) {
+    return { policies: [], cashValues: [], errors: batchIds.map(function(fid) { return { fileId: fid, error: (raw && raw.msg) || 'OCR阶段失败', error_code: 'ocr_api_error' } }) }
   }
 
-  var data = aiRes.ok ? aiRes.data : null
-  if (!data) {
-    return {
-      policies: [], cashValues: [],
-      errors: errors.concat(ocrResults.map(function(r) { return { fileId: r.fileId, error: aiRes.msg || 'aiExtractBatch失败', error_code: 'ai_exception' } }))
-    }
-  }
+  var data = raw.data || {}
+  // OCR 文本缓存：AI 阶段失败重试时只重跑 aiExtractParallel，不重复计费 OCR
+  _cacheOcrTexts(data.ocr_texts)
 
-  // ===== 阶段 3：一次性填充所有槽位 =====
+  // ===== 初始化流式槽位（骨架屏） =====
+  // 槽位按入参张数（含失败项），与 fileIds/thumbs 对齐
+  var totalSlots = batchIds.length
+  if (setData) setData(setStreamingSlots(totalSlots, opts.thumbs))
+
+  // ===== 一次性填充所有槽位 =====
   var results = data.results || []
   var streamSlots = new Array(totalSlots).fill(null)
   var filledCount = 0
@@ -211,7 +209,8 @@ async function batchOCR_merged(fileIds, setData, opts, aiAction) {
           thumb: slotThumb,
           product_name: r.policies[0].product_name,
           insurance_category: r.policies[0].insurance_category,
-          low: !((r.policies[0].auto_confirmed !== false) && r.policies[0].confidence >= 0.95)
+          // P2-12 修复：统一走 assessPolicy（ocr-confidence 单一真相源），原内联 0.95 双条件与确认卡分组判定漂移
+          low: assessPolicy(r.policies[0])
         }
         for (var k = 0; k < r.policies.length; k++) all.push(r.policies[k])
       }
@@ -245,72 +244,96 @@ async function batchOCR_merged(fileIds, setData, opts, aiAction) {
   return { policies: all, cashValues: cashValues, errors: errors }
 }
 
-// ============================================================
-// 方案 D：DeepSeek 并行提取 — N 张图每张独立 1 次 AI 调用（并发）
-//   阶段1：ocrOnly 并发 OCR（复用）
-//   阶段2：aiExtractParallel（云函数内并发调用 aiPhase）
-//   填充逻辑与 batchOCR_merged 完全一致（results 格式对齐）
-// ============================================================
-async function batchOCR_parallel(fileIds, setData, opts) {
-  return batchOCR_merged(fileIds, setData, opts, 'aiExtractParallel')
+// 仅重跑 AI 阶段（重试复用已缓存的 OCR 文本，省一次 OCR 计费）
+// 入参 ocrItems: [{ fileId, ocrText, ocrConfInfo }]；出参与 batchOCR 一致
+// 按 ocrItems 逐文件生成错误项（2026-09-10）：批量失败时保证每个 fileId 都有对应错误项，
+// 调用方按 fileId 回填槽位不再出现"只有第一张被标记失败、其余悬空"
+function _allFileErrors(ocrItems, msg, code) {
+  var list = Array.isArray(ocrItems) ? ocrItems : []
+  if (!list.length) return [{ fileId: '', error: msg, error_code: code }]
+  return list.map(function(it) { return { fileId: (it && it.fileId) || '', error: msg, error_code: code } })
 }
 
-async function batchOCR(fileIds, setData, opts) {
-  // 按张数分流（拼接已弃用，模型绑定张数）：
-  //   1 张 → hy3（aiExtractBatch，1 次调用）
-  //   >1 张 → DeepSeek 并发（aiExtractParallel，每张 1 次）
-  var batchIds = fileIds.filter(function(id) { return id !== null })
-  if (batchIds.length > 1) {
-    return batchOCR_parallel(fileIds, setData, opts)
+async function retryAiOnly(ocrItems, opts) {
+  opts = opts || {}
+  _lastReqId = _genReqId()
+  var raw
+  try {
+    // 2026-09-10 traceId 修复：同 batchOCR——AI 提取是排查成本最高的调用，必须带 _reqId
+    raw = await api('aiExtractParallel', { ocr_results: ocrItems, familyId: opts.familyId || '' }, { timeout: 70000, requestId: _lastReqId })
+  } catch (e) {
+    // 2026-09-10 错误粒度修复：原只回报首个 fileId，调用方按 fileId 回填槽位时其余图片悬空
+    return { policies: [], cashValues: [], errors: _allFileErrors(ocrItems, (e && e.message) || 'AI提取异常', 'ai_exception') }
   }
-  return batchOCR_merged(fileIds, setData, opts)
+  if (!raw || !raw.ok || !raw.data) {
+    return { policies: [], cashValues: [], errors: _allFileErrors(ocrItems, (raw && raw.msg) || 'AI提取失败', 'ai_exception') }
+  }
+  var results = raw.data.results || []
+  var all = [], cashValues = [], errors = []
+  for (var i = 0; i < results.length; i++) {
+    var r = results[i]
+    if (r.success) {
+      if (r.policies && r.policies.length) { for (var k = 0; k < r.policies.length; k++) all.push(r.policies[k]) }
+      if (r.cashValueData) cashValues.push(r.cashValueData)
+      if ((!r.policies || !r.policies.length) && !r.cashValueData) {
+        errors.push({ fileId: r.fileId, error: 'AI返回内容为空', error_code: 'ai_empty' })
+      }
+    } else {
+      errors.push({ fileId: r.fileId, error: r.error || 'AI提取失败', error_code: r.error_code || r.errorCode })
+    }
+  }
+  return { policies: all, cashValues: cashValues, errors: errors }
 }
 
 // ============================================================
 // 纯现价表入库（带重试对话框，30s 超时）
 // ============================================================
+// 单张现价表写入（并行单元；单项失败独立捕获返回 err，不中断其它表）
+function _writeCashValueOne(familyId, cv, withReqId) {
+  const opts = { timeout: 60000, retries: 0 }
+  if (withReqId) opts.requestId = _lastReqId
+  return api('writeCashValue', { familyId: familyId, cash_value: cv }, opts)
+    .then(function (r) { return { matched: !!(r && r.data && r.data.matched), err: null } })
+    .catch(function (e) { return { matched: false, err: e } })
+}
+
 async function saveCashValuesWithRetry(familyId, cashValues, setData) {
   if (!cashValues || cashValues.length === 0) {
     setData(hide())
     return { ok: false, matched: false }
   }
-  try {
-    // A5 修复：循环入库全部现价表（原仅入库 cashValues[0]，多张现价表会丢失）
-    var matchedAny = false
-    for (var i = 0; i < cashValues.length; i++) {
-      // R2 参数审计 #3：写超时对齐 dataWrite 60s + 关自动重试（该函数自带手动重试对话框）
-      var res = await api('writeCashValue', { familyId: familyId, cash_value: cashValues[i] }, { timeout: 60000, retries: 0, requestId: _lastReqId })
-      var result = res.data || {}
-      if (result.matched) matchedAny = true
-    }
+  // P2-8（性能 2026-09-05）：并行入库全部现价表（原 for 串行，多张叠加到分钟级）；
+  // 失败仅记录索引供重放，成功项不再重复写（writeCashValue 幂等覆盖，原重试从 0 全量重放）
+  const firstRound = await Promise.all(cashValues.map(function (cv) { return _writeCashValueOne(familyId, cv, true) }))
+  const failedIdx = []
+  let matchedAny = false
+  firstRound.forEach(function (r, i) { if (r.err) failedIdx.push(i); else if (r.matched) matchedAny = true })
+  if (failedIdx.length === 0) {
     setData(hide())
     return { ok: true, matched: matchedAny }
-  } catch (e) {
-    setData(hide())
-    // S5 修复：移除 30s 超时竞速 — wx.showModal 无编程式关闭 API，超时后 modal 会成为孤儿
-    var choice = await new Promise(function(resolve) {
-      wx.showModal({
-        title: '现价表保存失败',
-        content: (e.message || '').substring(0, 50),
-        confirmText: '重试',
-        cancelText: '取消',
-        success: function(r) { resolve(r.confirm ? 'retry' : 'cancel') }
-      })
-    })
-    if (choice !== 'retry') return { ok: false, matched: false }
-    try {
-      var matchedAny2 = false
-      for (var j = 0; j < cashValues.length; j++) {
-        var r2 = await api('writeCashValue', { familyId: familyId, cash_value: cashValues[j] }, { timeout: 60000, retries: 0 })
-        var result2 = r2.data || {}
-        if (result2.matched) matchedAny2 = true
-      }
-      return { ok: true, matched: matchedAny2 }
-    } catch (e2) {
-      wx.showToast({ title: '现价表保存失败', icon: 'none' })
-      return { ok: false, matched: false }
-    }
   }
+  setData(hide())
+  const firstErr = firstRound.find(function (r) { return r.err })
+  // S5 修复：移除 30s 超时竞速 — wx.showModal 无编程式关闭 API，超时后 modal 会成为孤儿
+  const choice = await new Promise(function(resolve) {
+    wx.showModal({
+      title: '现价表保存失败',
+      content: ((firstErr && firstErr.err && firstErr.err.message) || '未知错误').substring(0, 50),
+      confirmText: '重试',
+      cancelText: '取消',
+      success: function(r) { resolve(r.confirm ? 'retry' : 'cancel') }
+    })
+  })
+  if (choice !== 'retry') return { ok: false, matched: matchedAny }
+  // 仅重放失败的表（成功项已入库不重复写）
+  const retried = await Promise.all(failedIdx.map(function (i) { return _writeCashValueOne(familyId, cashValues[i], false) }))
+  const stillFailed = retried.some(function (r) { return r.err })
+  retried.forEach(function (r) { if (r.matched) matchedAny = true })
+  if (stillFailed) {
+    wx.showToast({ title: '部分现价表保存失败', icon: 'none' })
+    return { ok: false, matched: matchedAny }
+  }
+  return { ok: true, matched: matchedAny }
 }
 
 // ============================================================
@@ -320,10 +343,13 @@ async function confirmWritePolicies(familyId, policies, cashValues, setData) {
   setData(setSaving())
   try {
     // R2 参数审计 #3：写超时对齐 dataWrite 60s + 写操作关自动重试（防超时后重复写入）
-    var r = await api('writePoliciesBatch', { familyId: familyId, policies: policies, cash_values: cashValues }, { timeout: 60000, retries: 0, requestId: _lastReqId })
+    var r = await writePoliciesBatch({ familyId: familyId, policies: policies, cashValues: cashValues }, { timeout: 60000, retries: 0, requestId: _lastReqId })
     if (r.ok) {
       setData(hide())
-      return { ok: true }
+      // Bug-B（2026-09-09）：ingestPolicies 对校验失败项仍返回 200 → 透传 written/total 供上层对账，
+      // 防"written=0 却显示保存成功"
+      var d = r.data || {}
+      return { ok: true, written: d.written, total: d.total, dedupSkipped: d.dedupSkipped || 0 }
     }
     // S4 修复：失败路径不 hide，由调用方决定 UI（保留确认卡让用户重试）
     return { ok: false, error: r.msg || '写入失败' }
@@ -410,6 +436,29 @@ function errorLabel(code) {
 //   - review:  需人工核对保单（low=true，逐字段/整体置信度 <0.9）
 //   - error:   识别失败项（error_code → 文案 + 缩略图回退）
 // ============================================================
+// 低置信字段 → 用户可读标签（待核对卡片提示"保额待确认"，让用户知道要核对什么）
+var LOW_FIELD_LABELS = {
+  product_name: '产品名', insurance_category: '险种', insurance_type: '险种类型',
+  insurance_period: '保障期间', sum_assured: '保额', annual_premium: '保费',
+  payment_method: '缴费方式', payment_period: '缴费期限',
+  insured_name: '被保人', policyholder_name: '投保人', beneficiary_name: '受益人',
+  policy_number: '保单号', insurance_company: '保险公司', insurer: '保险公司',
+  effective_date: '生效日', insured_birth_date: '被保人生日',
+  policyholder_birth_date: '投保人生日', beneficiary_birth_date: '受益人生日'
+}
+function _lowFieldText(p) {
+  var fc = (p && p.field_confidence) || {}
+  var names = []
+  Object.keys(fc).forEach(function(k) {
+    if (fc[k] < 0.9) {
+      var label = LOW_FIELD_LABELS[k]
+      if (label && names.indexOf(label) === -1) names.push(label)
+    }
+  })
+  if (!names.length) return ''
+  return names.slice(0, 2).join('、') + '待确认' + (names.length > 2 ? '等' : '')
+}
+
 function classifyBatchResults(policies, cashValues, errors, thumbMap) {
   var success = []
   var review = []
@@ -423,6 +472,7 @@ function classifyBatchResults(policies, cashValues, errors, thumbMap) {
       effective_date: p.effective_date || '',
       confidence: p.confidence || 0,
       low: low,
+      lowFields: low ? _lowFieldText(p) : '',
       thumb: ''
     }
     if (low) review.push(card); else success.push(card)
@@ -489,7 +539,9 @@ module.exports = {
   compress,
   compressAndUpload,
   batchOCR,
-  batchOCR_parallel,
+  retryAiOnly,
+  getCachedOcrText,
+  clearCachedOcrText,
   saveCashValuesWithRetry,
   confirmWritePolicies,
   errorToUI, errorLabel,

@@ -28,7 +28,11 @@ async function queryMessages(db, openid, event) {
       content: m.content || '',
       created_at: m.created_at,
       suggestions: m.suggestions || [],
-      cards: m.cards || [],
+      // 历史恢复确认卡：DB 落库了 pending_confirms（message-write），此前返回时漏映射，
+      // 导致重新进入对话时 history-store 拿到的 pendingConfirms 恒为空数组、历史卡片不显示
+      pending_confirms: m.pending_confirms || [],
+      // P1-L1 修复（2026-09-05）：undoOps 随消息回读——此前白名单漏该键，历史恢复的撤销按钮永不出现
+      undoOps: m.undoOps || [],
       input_type: m.input_type || '',
       session_id: m.session_id || ''
     }))

@@ -3,7 +3,7 @@
  *
  * 由 index.js 通过 createHandler(handlers, '写入') 路由调用。
  * 实际处理函数按领域拆分到 5 个模块：
- *   - family-write.js   家庭 CRUD + 阶段设置
+ *   - family-write.js   家庭 CRUD
  *   - member-write.js   成员操作（recordField / updateMember / deleteMember）
  *   - fact-write.js     事实写入（addFact / updateFactConfidence / deleteFact）
  *   - policy-write.js   保单操作 + 现价表
@@ -27,7 +27,6 @@ module.exports = {
   createFamily: family.createFamily,
   updateFamily: family.updateFamilyHandler,
   deleteFamily: family.deleteFamilyHandler,
-  setStage: family.setStage,
 
   // member-write（agentic 对话工具路由）
   upsertMember: (db, openid, event) => memberRepo.upsertMember(db, event.familyId, openid, { ...event, confirmOnConflict: true }),
@@ -50,9 +49,9 @@ module.exports = {
   updatePolicy: policy.updatePolicy,
   changePolicyStatus: policy.changePolicyStatus,
   writeCashValue: policy.writeCashValue,
+  linkCashValue: policy.linkCashValue,
 
   // message-write
   writeMessage: message.writeMessage,
-  writeOpLog: message.writeOpLog,
-  submitProfiling: message.submitProfiling
+  writeOpLog: message.writeOpLog
 }

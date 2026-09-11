@@ -27,3 +27,16 @@ jest.log
 sync.log
 coverage/
 scripts/dbg*.txt
+
+# 云函数部署配置：reportAI 段落写有真实 DEEPSEEK_API_KEY，整体停止跟踪（处理同 .codebuddy）
+cloudbaserc.json
+
+# reportPdf 中文渲染字体 8MB 二进制，不入库；克隆后从字体源恢复到 cloudfunctions/reportPdf/fonts/
+cloudfunctions/reportPdf/fonts/
+
+# OCR 条款提取 POC 材料（PDF/txt 约 5MB），一次性验证产物
+scripts/poc/
+
+# 本机工作笔记 + 一次性审计报告产物
+.workbuddy/memory/
+.trae/audit/*.html

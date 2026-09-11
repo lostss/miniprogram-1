@@ -12,14 +12,43 @@
 const _ = require('wx-server-sdk').database().command
 const { detectInjection } = require('./_shared/guard')
 const { desensitize } = require('./_shared/pii-rules')
+const { normalizeInsurer } = require('./_shared/insurer-normalize')
 const { writeSeam } = require('./_shared/writeSeam')
 const { logOperation } = require('./_shared/logSeam')
 const { locatePolicy } = require('./policy-locate')
 const { policyToFacts } = require('./policyToFacts')
 const { matchPoliciesToMembers } = require('./_shared/member-matcher')
 const { matchCashToPolicies, matchOrphanCashValues } = require('./cash-value-matcher')
-const { calcStatus } = require('./_shared/policy-status')
 const { addFact } = require('./fact-write')
+
+// ---------- 金额输入归一（OCR 审计 H2） ----------
+// DB 契约：sum_assured/annual_premium 存元（数字）。OCR 直传已是元数字；人工编辑路径（OCR 确认卡/手填）可能带
+// 「万/亿」字（如 "80万"）或千分位（"80,000"）——统一在此数字化，防止字符串/NaN 落库导致报告侧出 NaN。
+// 无法解析返回 NaN，由上层 `isNaN ? 0` 兜底。
+function _toYuanAmount(v) {
+  if (v === null || v === undefined || v === '') return NaN
+  const s = String(v).trim().replace(/[,，\s]/g, '')
+  if (!s) return NaN
+  const m = s.match(/^(\d+(?:\.\d+)?)\s*(万|亿)$/)
+  if (m) return Math.round(parseFloat(m[1]) * (m[2] === '亿' ? 100000000 : 10000))
+  const n = Number(s)
+  return isNaN(n) ? NaN : n
+}
+
+// ---------- effective_date 格式规范（OCR 审计 M4） ----------
+// DB 契约：effective_date 存 YYYY-MM-DD。OCR/对话多来源偶发中文/斜杠格式（"2024年01月15日"/"2024/1/15"），
+// 统一规范；无法解析置空（状态判定按无生效日降级，但不落垃圾日期）。
+// updatePolicy 人工编辑仍走严格 400 校验（拒绝而非静默置空，提示更明确）。
+function _cleanEffectiveDate(v) {
+  const s = String(v || '').trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+  const m = s.match(/^(\d{4})[年/.\-](\d{1,2})[月/.\-](\d{1,2})日?$/)
+  if (m) {
+    const pad = n => String(n).padStart(2, '0')
+    return m[1] + '-' + pad(m[2]) + '-' + pad(m[3])
+  }
+  return ''
+}
 
 // ---------- writePolicy ----------
 async function writePolicy(db, openid, event) {
@@ -45,10 +74,13 @@ async function writePolicy(db, openid, event) {
     const mRes = await db.collection('members').where({ family_id: familyId, _openid: openid, name: resolvedInsuredName }).limit(1).get()
     if (mRes.data && mRes.data.length > 0) resolvedMemberId = mRes.data[0].member_id
   }
+  // H2：金额数字化 + 万/亿→元（人工编辑路径 "80万"→800000；OCR 直传元数字原样保留；NaN 兜底 0）
+  const saYuan = _toYuanAmount(sum_assured)
+  const apYuan = _toYuanAmount(annual_premium)
   const doc = {
     product_name: product_name || '', insurance_category: insurance_category || '', insurance_type: insurance_type || '',
-    insurance_period: insurance_period || '', sum_assured: sum_assured || 0, annual_premium: annual_premium || 0,
-    policy_number: policy_number || '', insurer: insurer || '', effective_date: effective_date || '',
+    insurance_period: insurance_period || '', sum_assured: isNaN(saYuan) ? 0 : saYuan, annual_premium: isNaN(apYuan) ? 0 : apYuan,
+    policy_number: policy_number || '', insurer: normalizeInsurer(insurer), effective_date: _cleanEffectiveDate(effective_date),
     policyholder_name: policyholder_name || '', insured_name: resolvedInsuredName, beneficiary_name: beneficiary_name || '',
     special_agreement: safeSpecialAgreement, payment_method: payment_method || '', payment_period: payment_period || '',
     id: id || 'pol_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
@@ -57,21 +89,20 @@ async function writePolicy(db, openid, event) {
     auto_confirmed: !!auto_confirmed,
     created_at: now
   }
-  // 状态：写入时按期限判定（一年期/在缴→active，明确到期→expired），显式落库；
-  // 读取层 ensureStatus 尊重显式状态，后续失效/恢复由用户/updatePolicy 显式变更
-  //（doc 组装完成后赋值，避免对象字面量内引用自身触发 TDZ）
-  doc.status = calcStatus(doc).status
+  // 用户决策（2026-08-30）：识别/表单入库一律默认 active，不做任何自动状态判断；
+  // 状态仅由用户在保单编辑中手动变更（updatePolicy），改失效/退保/理赔终止需填失效日期
+  doc.status = 'active'
   // writeSeam 接缝：silent 写入 + 末尾统一 triggerHooks（addFact 内部已自带钩子，此处 silent 避免 N 次重复 markFamilyMutated）
   const ws = writeSeam(db, openid, familyId)
-  let policyDbId, isExisting = false
+  let policyDbId, isExisting = false, exist = null
   if (doc.policy_number) {
     // policy_number 主键去重（P-DUP 修复）：同保单号 + 同产品名才判重（OCR 两次提取同保单同产品）；
     // 同保单号不同产品（主险+附加险）是独立文档，必须各自入库——原单用 policy_number 导致附加险被吞
-    const exist = await db.collection('policies').where({ policy_number: doc.policy_number, product_name: doc.product_name, family_id: familyId, _openid: openid, status: _.neq('deleted') }).limit(1).get()
+    exist = await db.collection('policies').where({ policy_number: doc.policy_number, product_name: doc.product_name, family_id: familyId, _openid: openid, status: _.neq('deleted') }).limit(1).get()
     if (exist.data && exist.data.length > 0) { policyDbId = exist.data[0]._id; isExisting = true }
   } else if (doc.product_name && doc.insured_name) {
     // 无保单号时二级去重：产品名+被保人+投保人（同样过滤软删除）
-    const exist = await db.collection('policies').where({
+    exist = await db.collection('policies').where({
       product_name: doc.product_name, insured_name: doc.insured_name,
       policyholder_name: doc.policyholder_name, family_id: familyId, _openid: openid,
       status: _.neq('deleted')
@@ -81,7 +112,8 @@ async function writePolicy(db, openid, event) {
   if (!policyDbId) { const addRes = await ws.silentAdd('policies', doc); policyDbId = addRes._id }
   // S2-1 修复：命中重复时返回库中已有保单的真实 id（doc.id 是新生成的，不存在于库中）
   // 否则下游 writePoliciesBatch 用这个 id 写入 p.id，再传给 matchOrphanCashValues，会指向不存在的保单
-  if (isExisting) return { code: 200, data: { written: false, skipped: true, policyId: exist.data[0].id || doc.id } }
+  // P1-B 修复：exist 提升为外层变量（原 const 块级作用域，dedup 命中时此处引用抛 ReferenceError）；policyId 双 fallback
+  if (isExisting) return { code: 200, data: { written: false, skipped: true, policyId: (exist.data[0].id || exist.data[0]._id) || doc.id } }
   // Phase 1：保单入库同步拆解为结构化三元组写入 facts（replace 旧单条 '购买了' 兜底；开放谓词 + policy 节点）
   // K-S2 修复：member_id 为空但有被保人姓名时也写 facts——"拥有保障"边由 addFact 按姓名解析，
   // 保单节点事实（保额/保费等）本就与成员无关；成员不存在时 addFact 返回 404，被下方 catch 兜底不阻断入库
@@ -287,7 +319,7 @@ async function deletePolicy(db, openid, event) {
   // 步骤 2：facts 已作废，现在软删保单（此时即使失败也只是"active 保单 + 已作废 facts"，报告安全降级）
   // 安全审计 M7：reason 注入检测（防提示词注入产物写入 deleted_reason 留二次注入）
   let delReason = reason || '对话确认作废'
-  if (typeof delReason === 'string' && detectInjection(delReason).detected) delReason = '对话确认作废'
+  if (typeof delReason === 'string' && detectInjection(delReason).injected) delReason = '对话确认作废'
   await ws.silentUpdateDoc('policies', target._id, {
     status: 'deleted', deleted_reason: delReason
   }).catch(e => { console.error('[dataWrite] deletePolicy 软删失败:', e.message); throw new Error('保单删除失败：' + e.message) })
@@ -318,7 +350,7 @@ async function deletePolicy(db, openid, event) {
 // 业务员可手动变更的保单状态；到期终止(expired)由系统自动判断，不在此白名单
 const POLICY_STATUS_CHANGEABLE = ['active', 'lapsed', 'surrendered', 'claim_terminated', 'cancelled']
 const POLICY_STATUS_META = ['status_reason', 'status_effective_date']
-const POLICY_EDITABLE = ['product_name', 'insurer', 'sum_assured', 'annual_premium', 'insurance_category', 'insurance_type', 'effective_date', 'premium_term', 'coverage_term', 'policyholder_name', 'beneficiary_name', 'insured_name', 'policy_number', 'status', ...POLICY_STATUS_META]
+const POLICY_EDITABLE = ['product_name', 'insurer', 'sum_assured', 'annual_premium', 'insurance_category', 'insurance_type', 'effective_date', 'insurance_period', 'payment_period', 'payment_method', 'premium_term', 'coverage_term', 'policyholder_name', 'beneficiary_name', 'insured_name', 'policy_number', 'status', ...POLICY_STATUS_META]
 
 function _isActivePolicyStatus(status) {
   return !status || status === 'active' || status === 'unknown'
@@ -357,15 +389,43 @@ async function updatePolicy(db, openid, event) {
     if (!POLICY_EDITABLE.includes(k)) continue
     let v = data[k]
     // 安全审计 M7：字符串字段注入检测（防提示词注入产物回写保单字段成二次注入载体）
-    if (typeof v === 'string' && detectInjection(v).detected) { console.warn('[dataWrite] updatePolicy 注入拦截:', k); continue }
-    if (['sum_assured', 'annual_premium', 'premium_term', 'coverage_term'].includes(k) && v !== undefined && v !== '') v = Number(v)
+    if (typeof v === 'string' && detectInjection(v).injected) { console.warn('[dataWrite] updatePolicy 注入拦截:', k); continue }
+    // 金额字段：与 writePolicy 同规则（万/亿→元 + 数字化），其余数值字段 Number
+    if (['sum_assured', 'annual_premium'].includes(k) && v !== undefined && v !== '') v = _toYuanAmount(v)
+    if (['premium_term', 'coverage_term'].includes(k) && v !== undefined && v !== '') v = Number(v)
+    // 保险公司简称统一收敛（与 writePolicy 同规则，防编辑写入新变体）
+    if (k === 'insurer' && typeof v === 'string') v = normalizeInsurer(v)
+    // 生效日期严格格式校验：防 AI 把保障期间/缴费期限误填进 effective_date（如"1年"）
+    if (k === 'effective_date' && typeof v === 'string' && v !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+      return { code: 400, msg: `生效日期格式应为 YYYY-MM-DD（收到: ${v}），保障期间/缴费期限请填 insurance_period/payment_period` }
+    }
     patch[k] = v
   }
   if (Object.keys(patch).length === 0) return { code: 400, msg: '没有可更新的合法字段' }
+  // 被保人变更 → 同步重挂 member_id（2026-09-06：防"insured_name 与 member_id 漂移"错配固化）
+  // member_id 不在 POLICY_EDITABLE：按新被保人姓名在成员中精确解析（含软删成员复用），
+  // 命中重挂；未命中清空旧关联并告警（避免旧 member_id 继续把保单错挂他人）
+  if (patch.insured_name !== undefined && String(patch.insured_name || '').trim() !== String(target.insured_name || '').trim()) {
+    const newInsured = String(patch.insured_name || '').trim()
+    const memRes = await db.collection('members').where({ _openid: openid, family_id: familyId, name: newInsured }).limit(5).get()
+    const membersHit = memRes.data || []
+    const hit = membersHit.find(x => x.status !== 'deleted') || membersHit[0]
+    if (hit && hit.member_id) {
+      patch.member_id = hit.member_id
+    } else {
+      patch.member_id = ''
+      console.warn('[dataWrite] updatePolicy 被保人不在成员列表，已解除原关联:', target.product_name, newInsured)
+    }
+  }
   const ws = writeSeam(db, openid, familyId)
     const statusChanged = patch.status !== undefined && patch.status !== target.status
     const oldActive = _isActivePolicyStatus(target.status)
     const newActive = patch.status === 'active'
+
+    // 用户决策（2026-08-30）：从有效改为失效/退保/理赔终止必须填写失效日期（status_effective_date）
+    if (statusChanged && oldActive && !newActive && !patch.status_effective_date) {
+      return { code: 400, msg: '请填写失效日期' }
+    }
 
     // 离开 active → 先作废 facts，避免"已失效保单仍显示保障"的幽灵保单
     if (statusChanged && oldActive && !newActive) {
@@ -517,4 +577,48 @@ async function writeCashValue(db, openid, event) {
   return { code: 200, data: { matched: effectiveMatched, policyId: effectivePolicyId, candidates } }
 }
 
-module.exports = { writePolicy, writePoliciesBatch, ingestPolicies, _dedupPolicies, _runConcurrent, deletePolicy, updatePolicy, changePolicyStatus, writeCashValue, POLICY_EDITABLE, POLICY_STATUS_CHANGEABLE }
+// ---------- 人工关联现价表（2026-09-11 补闭环）----------
+/**
+ * 把孤儿现价表（matched=false）人工关联到指定保单。
+ *
+ * 背景（加载现价表的历史坑）：自动匹配靠"产品名去后缀取前 8 字 + 被保人"模糊比对，
+ * 匹配不中即 matched=false 永久躺在库里——报告只读 matched:true，于是数据在库但不展示，
+ * 用户也无从补救；前端还长期提示"现价表已保存，可手动关联保单"却没有关联入口。
+ * 而 matched_by='manual' 虽在 writeCashValue 中有人工优先保护逻辑（OCR 重写不覆盖），
+ * 却从无写入路径——是个从未被激活的预留状态。本 handler 补上这一环。
+ *
+ * @param {string} event.familyId
+ * @param {string} event.cashValueId - policy_cash_values 文档 _id
+ * @param {string} event.policyId - 目标保单业务 id（policies.id）
+ */
+async function linkCashValue(db, openid, event) {
+  const { familyId, cashValueId, policyId } = event
+  if (!familyId || !cashValueId || !policyId) {
+    return { code: 400, msg: '缺少参数（familyId/cashValueId/policyId）' }
+  }
+  // 归属校验：现价表与目标保单都必须属于该家庭（_openid 防越权读取/写入）
+  const [cvRes, pRes] = await Promise.all([
+    db.collection('policy_cash_values').where({ _id: cashValueId, family_id: familyId, _openid: openid }).limit(1).get(),
+    db.collection('policies').where({ id: policyId, family_id: familyId, _openid: openid }).limit(1).get()
+  ])
+  const cash = (cvRes.data || [])[0]
+  const policy = (pRes.data || [])[0]
+  if (!cash) return { code: 404, msg: '现价表不存在或无权访问' }
+  if (!policy) return { code: 404, msg: '保单不存在或无权访问' }
+  if (policy.status === 'deleted') return { code: 400, msg: '目标保单已删除，无法关联' }
+
+  const rows = cash.cash_values || []
+  const ws = writeSeam(db, openid, familyId)
+  await ws.silentUpdateDoc('policy_cash_values', cashValueId, {
+    policy_id: policyId, matched: true, matched_by: 'manual', matched_at: new Date()
+  })
+  // 与自动匹配同口径回写保单上的现价标记，使报告「现价 / 回本」列与保障节点立即生效
+  await ws.silentUpdateWhere('policies', { id: policyId }, {
+    cash_value_available: true,
+    latest_cash_value: rows.length ? (rows[rows.length - 1].v || 0) : 0
+  })
+  await ws.triggerHooks()
+  return { code: 200, data: { matched: true, policyId, product_name: policy.product_name || '' } }
+}
+
+module.exports = { writePolicy, writePoliciesBatch, ingestPolicies, _dedupPolicies, _runConcurrent, deletePolicy, updatePolicy, changePolicyStatus, writeCashValue, linkCashValue, POLICY_EDITABLE, POLICY_STATUS_CHANGEABLE }

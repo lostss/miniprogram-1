@@ -21,6 +21,11 @@ jest.mock('../cloudfunctions/conversationAI/_shared/db-helpers', () => ({
   safeQuery: jest.fn((db, collection, where, openid, opts) =>
     Promise.resolve({ data: db._data[collection] || [] })
   ),
+  // 2026-09-10：v2-context 的 facts / policy_cash_values 查询改走 safeQueryAll（自动分页，
+  // 修「单次 get 上限 100 条被静默截断」），桩需同步提供该函数
+  safeQueryAll: jest.fn((db, collection, where, openid) =>
+    Promise.resolve({ data: db._data[collection] || [], truncated: false })
+  ),
   getFamily: jest.fn((db, familyId, openid) =>
     Promise.resolve((db._data.families || []).find(f => f._id === familyId) || null)
   )
@@ -30,7 +35,7 @@ jest.mock('../cloudfunctions/conversationAI/_shared/familyPortrait', () => ({
   renderPortraitMarkdown: jest.fn(() => '## 画像内容\n张三 经济支柱 35岁')
 }))
 
-const { safeQuery } = require('../cloudfunctions/conversationAI/_shared/db-helpers')
+const { safeQuery, safeQueryAll } = require('../cloudfunctions/conversationAI/_shared/db-helpers')
 const { renderPortraitMarkdown } = require('../cloudfunctions/conversationAI/_shared/familyPortrait')
 
 function makeDb(data) {
@@ -83,7 +88,8 @@ describe('buildFamilyContext — 返回契约', () => {
     expect(familyMeta).not.toBeNull()
     const allowedKeys = [
       'family_id', 'family_name', 'last_analysis_at',
-      'last_summary', 'last_conclusion', 'financial_snapshot', 'engagement_stage'
+      'last_summary', 'last_conclusion', 'financial_snapshot', 'engagement_stage',
+      'updated_at', 'ctx_compacted_at'
     ]
     Object.keys(familyMeta).forEach(k => {
       expect(allowedKeys).toContain(k)
@@ -162,10 +168,11 @@ describe('conversation 场景', () => {
     expect(markdown).toContain('家庭保障结论')
   })
 
-  test('7. 查 facts 且 where 含 status:active', async () => {
+  test('7. 查 facts 走 safeQueryAll 且 where 含 status:active', async () => {
     const db = makeDb({ families: [BASE_FAMILY], members: BASE_MEMBERS, finances: BASE_FINANCES, facts: [] })
     await buildFamilyContext(db, 'f1', 'openid1', 'conversation')
-    const factsCall = safeQuery.mock.calls.find(c => c[1] === 'facts')
+    // 2026-09-10：facts 查询由 safeQuery 改走 safeQueryAll（自动分页，防 100 条截断）
+    const factsCall = safeQueryAll.mock.calls.find(c => c[1] === 'facts')
     expect(factsCall).toBeDefined()
     expect(factsCall[2]).toMatchObject({ family_id: 'f1', status: 'active' })
   })
@@ -331,5 +338,72 @@ describe('边界场景', () => {
     // 标题和 last_conclusion 仍应存在
     expect(markdown).toContain('# 家庭保障档案')
     expect(markdown).toContain('结论内容')
+  })
+})
+
+// 2026-09-10 P1-3：经济状况表的取数优先级此前与 reportAI/report-context._financeSnap 相反
+// （此表 snapshot 覆盖 finances，报告侧 finances 优先）→ 同一份 prompt 里出现两个收入数。
+// 统一为「finances 优先，snapshot 仅补齐缺失字段」。
+describe('经济状况表取数口径（P1-3）', () => {
+  beforeEach(() => jest.clearAllMocks())
+
+  test('finances 与 financial_snapshot 并存 → 以 finances 为准', async () => {
+    const fam = Object.assign({}, BASE_FAMILY, {
+      financial_snapshot: { income: '99', debt: { amount: '88', type: '旧快照' } }
+    })
+    const db = makeDb({
+      families: [fam],
+      members: BASE_MEMBERS,
+      finances: [{ _id: 'fin1', family_id: 'f1', annual_income: 300000, total_debt: 500000, fixed_annual_expense: 80000, debt_type: '房贷' }]
+    })
+    const { markdown } = await buildFamilyContext(db, 'f1', 'openid1', 'analysis')
+    expect(markdown).toContain('|30|50|8|房贷|') // 元 → 万
+    expect(markdown).not.toContain('|99|')
+    expect(markdown).not.toContain('旧快照')
+  })
+
+  test('finances 缺字段 → 用 snapshot 兜底补齐（不覆盖已有值）', async () => {
+    const db = makeDb({
+      families: [BASE_FAMILY],
+      members: BASE_MEMBERS,
+      finances: [{ _id: 'fin1', family_id: 'f1', total_debt: 500000 }] // 无 annual_income
+    })
+    const { markdown } = await buildFamilyContext(db, 'f1', 'openid1', 'analysis')
+    // 收入取 snapshot（30），负债取 finances（50），负债类型取 snapshot（房贷）
+    expect(markdown).toContain('|30|50|-|房贷|')
+  })
+
+  test('无 finances 记录 → 完全用 snapshot', async () => {
+    const db = makeDb({ families: [BASE_FAMILY], members: BASE_MEMBERS, finances: [] })
+    const { markdown } = await buildFamilyContext(db, 'f1', 'openid1', 'analysis')
+    expect(markdown).toContain('|30|50|-|房贷|')
+  })
+})
+
+// 2026-09-10 上下文审计：report 场景的去重与精简
+describe('report 场景去重与精简', () => {
+  beforeEach(() => jest.clearAllMocks())
+
+  test('report 不再注入 last_conclusion 裸引用（由「上一版报告结论」块承载）', async () => {
+    const db = makeDb({ families: [BASE_FAMILY], members: BASE_MEMBERS, finances: BASE_FINANCES, facts: [], policy_cash_values: [] })
+    const { markdown } = await buildFamilyContext(db, 'f1', 'openid1', 'report')
+    // 裸 quote 无"上一版"标识，模型易误当当前结论；report 侧已由 buildPrevReportMd 承载
+    expect(markdown).not.toContain('> 家庭保障结论')
+    // analysis（无 prevMd 承载）仍保留裸引用
+    const analysis = await buildFamilyContext(db, 'f1', 'openid1', 'analysis')
+    expect(analysis.markdown).toContain('> 家庭保障结论')
+  })
+
+  test('现价块不再带逐年明细（现价/回本已由结构化清单列承载）', async () => {
+    const cashValues = [{
+      product_name: '金佑人生', insured_name: '张三', total_years: 20,
+      cash_values: [{ y: 1, v: 100 }, { y: 2, v: 200 }, { y: 3, v: 300 }, { y: 4, v: 400 }, { y: 5, v: 500 }, { y: 6, v: 600 }]
+    }]
+    const db = makeDb({ families: [BASE_FAMILY], members: BASE_MEMBERS, finances: BASE_FINANCES, facts: [], policy_cash_values: cashValues })
+    const { markdown } = await buildFamilyContext(db, 'f1', 'openid1', 'report')
+    expect(markdown).toContain('## 保单现价数据（满期值；当前现价见结构化保单清单）')
+    expect(markdown).toContain('第20年现价 600元')
+    expect(markdown).not.toContain('前5行')
+    expect(markdown).not.toContain('1年: 100元')
   })
 })

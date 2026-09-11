@@ -20,10 +20,46 @@ async function safeQuery(db, collection, where, openid, opts = {}) {
   return q.get()
 }
 
+/**
+ * 全量查询（自动分页）— 2026-09-10 新增
+ *
+ * 背景：CloudBase 服务端单次 get 上限 100 条，超出部分被**静默截断**。
+ * 2026-09-09 报告缺保障事故的根因之一就是 v2-context 查 facts 未分页（118 条只读到 100 条）。
+ * 凡"期望取全量"的业务查询都应走本函数，而不是写一个更大的 limit（limit 只是把截断点后移）。
+ *
+ * @param {object} db
+ * @param {string} collection
+ * @param {object} where
+ * @param {string} openid
+ * @param {object} [opts] { pageSize=100, maxPages=20, orderBy=[field, 'asc'|'desc'] }
+ * @returns {Promise<{data: array, truncated: boolean}>} truncated=true 表示达页数上限仍有数据
+ */
+async function safeQueryAll(db, collection, where, openid, opts = {}) {
+  const pageSize = opts.pageSize || 100
+  const maxPages = opts.maxPages || 20
+  const all = []
+  for (let p = 0; p < maxPages; p++) {
+    let q = db.collection(collection).where({ ...where, _openid: openid }).skip(p * pageSize).limit(pageSize)
+    if (opts.orderBy) q = q.orderBy(opts.orderBy[0], opts.orderBy[1])
+    const r = await q.get().catch(e => {
+      console.error('[db-helpers] safeQueryAll ' + collection + ' 第' + (p + 1) + '页失败:', (e && e.message) || e)
+      return { data: [] }
+    })
+    const rows = r.data || []
+    all.push(...rows)
+    if (rows.length < pageSize) return { data: all, truncated: false }
+  }
+  console.warn('[db-helpers] safeQueryAll ' + collection + ' 达到 ' + maxPages + ' 页上限，结果可能不完整')
+  return { data: all, truncated: true }
+}
+
 // 候选 4：families 单一读取缝，集中注入 _openid，替代 handlers 散落的
 // db.collection('families').where({ _id, _openid }).limit(1).get()
 async function getFamily(db, familyId, openid) {
-  const res = await safeQuery(db, 'families', { _id: familyId }, openid, { limit: 1 }).catch(() => ({ data: [] }))
+  // 2026-09-10：catch 补日志——原静默吞错让 DB 异常与"记录不存在"返回同一结果（null），
+  // 上层据此报 404「客户不存在」，用户会以为档案被删（实际只是查询失败）
+  const res = await safeQuery(db, 'families', { _id: familyId }, openid, { limit: 1 })
+    .catch(e => { console.error('[db-helpers] getFamily 查询失败:', (e && e.message) || e); return { data: [] } })
   return (res.data && res.data[0]) || null
 }
 
@@ -54,6 +90,7 @@ async function deleteFamily(db, familyId, openid) {
  */
 async function loadAgentByOpenid(db, openid) {
   if (!openid) return null
+  // M-2 修复：openid 已是逻辑唯一键，此处显式注入 _openid 兜底防历史数据缺 _openid 跨用户读取
   const res = await db.collection('agents')
     .where({ _openid: openid, openid })
     .limit(1)
@@ -79,4 +116,4 @@ async function loadAgentByPhone(db, phone, openid) {
   return (res.data && res.data[0]) || null
 }
 
-module.exports = { safeQuery, getFamily, updateFamily, deleteFamily, loadAgentByOpenid, loadAgentByPhone }
+module.exports = { safeQuery, safeQueryAll, getFamily, updateFamily, deleteFamily, loadAgentByOpenid, loadAgentByPhone }

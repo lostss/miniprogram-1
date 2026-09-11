@@ -25,17 +25,17 @@
     <client-card client="{{item}}" bindtap="onClientTap" bind:longpress="onClientLongPress" data-idx="{{idx}}" />
   </view>
 
-  <!-- 空态：搜索无结果 -->
-  <view class="empty" wx:if="{{!loading && families.length === 0 && keyword}}">
-    <text class="empty-text">未找到"{{keyword}}"</text>
-    <text class="empty-sub">换个关键词试试</text>
-  </view>
-
-  <!-- 错误态：加载失败（UI 审计 R-M5：不再伪装"尚无客户档案"空态） -->
-  <view class="empty" wx:elif="{{!loading && families.length === 0 && loadError}}">
+  <!-- 错误态：加载失败优先于搜索空态（客户列表审计 P1-1：网络/数据库失败不伪装"未找到"） -->
+  <view class="empty" wx:if="{{!loading && families.length === 0 && loadError}}">
     <text class="empty-text">加载失败</text>
     <text class="empty-sub">请检查网络后重试</text>
     <button class="empty-btn pressable" bindtap="onRetryLoad">重新加载</button>
+  </view>
+
+  <!-- 空态：搜索无结果 -->
+  <view class="empty" wx:elif="{{!loading && families.length === 0 && keyword}}">
+    <text class="empty-text">未找到"{{keyword}}"</text>
+    <text class="empty-sub">换个关键词试试</text>
   </view>
 
   <!-- 空态：无任何客户 -->

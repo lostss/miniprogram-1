@@ -48,7 +48,7 @@ App({
       });
     }
 
-    // 静默获取 openid（不弹窗）；正式环境首次需手机号登录（needLogin 由首页按钮触发）
+    // 静默获取 openid（不弹窗）；方案 A（个人主体）：openid 即账号，全环境统一登录
     this._silentLogin()
   },
 
@@ -70,36 +70,30 @@ App({
 
   _uploadError: _uploadError,
 
-  // 上线审计：正式环境（体验版/正式版）手机号登录引导。
-  // dev 环境 → devLogin（无需授权）；非 dev 且未登录过 → needLogin（首页显示手机号按钮）。
-  // 已登录标记存 storage（agent_logged_in），避免已建档用户每次授权。
+  // 方案 A（个人主体）：openid 静默登录，全环境统一（无需手机号授权）
+  // 登录链路审计 P1：失败恢复——网络抖动重试一次（login 幂等），仍失败才定型 ''，
+  // 避免单次故障导致 OCR 上传前缀降级 temp/anon 全链路 403 且无第二次登录机会
+  _doLogin: function () {
+    var self = this
+    return api('login', {}).then(res => {
+      // 登录链路审计 G-1：业务失败（ok=false，如 login 云函数 DB 异常返回 500）也必须走 .catch 重试，
+      // 否则 openid 直接定型 '' → OCR 上传降级 temp/anon 全链路 403 且无第二次登录机会
+      if (!(res && res.ok)) throw new Error((res && res.msg) || '登录失败')
+      var oid = (res && res.data && res.data.openid) || ''
+      self.globalData.openid = oid
+      return oid
+    })
+  },
   _silentLogin: function () {
     try {
-      var devMode = typeof __wxConfig !== 'undefined' && __wxConfig.envVersion === 'develop'
       var self = this
-      if (!devMode) {
-        var loggedIn = false
-        try { loggedIn = !!wx.getStorageSync('agent_logged_in') } catch (e) {}
-        this.globalData.needLogin = !loggedIn
-        this.globalData.openidPromise = Promise.resolve('')
-        return
-      }
-      this.globalData.openidPromise = api('login', { devMode: true }).then(res => {
-        var oid = (res && res.ok && res.data && res.data.openid) || ''
-        self.globalData.openid = oid
-        return oid
-      }).catch(e => {
-        console.error('[app] 静默登录失败:', (e && e.message) || e)
-        return ''
+      this.globalData.openidPromise = this._doLogin().catch(e => {
+        console.error('[app] 静默登录失败，重试一次:', (e && e.message) || e)
+        return self._doLogin().catch(e2 => {
+          console.error('[app] 静默登录重试仍失败:', (e2 && e2.message) || e2)
+          return ''
+        })
       })
     } catch (e) { /* 初始化阶段失败不阻塞 */ }
-  },
-
-  // 手机号登录成功回调（首页按钮触发，见 pages/index onPhoneLogin）
-  completePhoneLogin: function (res) {
-    var oid = (res && res.openid) || ''
-    this.globalData.openid = oid
-    this.globalData.needLogin = false
-    try { wx.setStorageSync('agent_logged_in', 1) } catch (e) {}
   }
 });

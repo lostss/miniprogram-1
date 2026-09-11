@@ -5,18 +5,19 @@
     <!-- 处理中 -->
     <block wx:if="{{ocrMask.phase === 'upload' || ocrMask.phase === 'recognize' || ocrMask.phase === 'recognize-stream'}}">
       <view class="proc-head">
-        <view class="ocr-done-title done-gold">正在处理 {{ocrMask.total}} 份保单</view>
-        <view class="proc-phase">{{ocrMask.phaseText || '正在上传…'}}{{ocrMask.phase === 'recognize' || ocrMask.phase === 'recognize-stream' ? ' · 已进行 ' + ocrMask.elapsed + 's' : ''}}</view>
+        <view class="ocr-done-title done-gold">正在处理 {{ocrMask.total}} 张图片</view>
+        <view class="proc-phase">{{ocrMask.phaseText || '正在上传…'}}{{ocrMask.phase === 'recognize' || ocrMask.phase === 'recognize-stream' ? ' · 已等待 ' + ocrMask.elapsed + ' 秒' : ''}}{{ocrMask.phase === 'recognize-stream' && ocrMask.elapsed >= 15 ? '（图片内容较多，正在逐字段核对）' : ''}}</view>
         <!-- UI 审计 状态 S1：识别/上传进行中可取消（放弃后清理已上传临时文件） -->
-        <view class="proc-cancel pressable" catchtap="onProcDiscardAll">取消本次</view>
+        <view class="proc-cancel pressable" catchtap="onProcDiscardAll">取消并清理</view>
       </view>
-      <!-- 全链路审计 UC3：recognize-stream 阶段改用不定式动画（AI 识别 10-40s 期间进度条满格有"卡住"误导） -->
-      <view class="proc-progress-bar"><view class="proc-progress-fill {{ocrMask.phase === 'recognize-stream' ? 'proc-progress-fill--indef' : ''}}" style="{{ocrMask.phase === 'recognize-stream' ? '' : 'width: ' + ((ocrMask.uploaded / ocrMask.total) * 100) + '%'}}"></view></view>
+      <!-- 全链路审计 UC3 + 2026-09-09：recognize 与 recognize-stream 均改不定式——
+           recognize 阶段 uploaded 已等于 total，沿用百分比会满格不动，误导"卡住" -->
+      <view class="proc-progress-bar"><view class="proc-progress-fill {{ocrMask.phase === 'recognize' || ocrMask.phase === 'recognize-stream' ? 'proc-progress-fill--indef' : ''}}" style="{{ocrMask.phase === 'recognize' || ocrMask.phase === 'recognize-stream' ? '' : 'width: ' + ((ocrMask.uploaded / ocrMask.total) * 100) + '%'}}"></view></view>
       <view class="proc-pending-cards">
         <view class="proc-pending-card" wx:for="{{ocrMask.streamSlots}}" wx:key="index">
           <image class="proc-thumb" wx:if="{{item.thumb}}" src="{{item.thumb}}" mode="aspectFill" />
           <view class="stream-pulse-bar {{item.kind === 'pending' ? '' : (item.kind === 'error' ? 'is-error' : 'is-ok')}}"></view>
-          <text class="proc-pending-state" wx:if="{{item.kind !== 'pending'}}">{{item.kind === 'error' ? '失败' : '已识别'}}</text>
+          <text class="proc-pending-state">{{item.kind === 'pending' ? '等待中' : (item.kind === 'error' ? '失败' : '已识别')}}</text>
         </view>
       </view>
     </block>
@@ -24,7 +25,9 @@
     <block wx:elif="{{ocrMask.phase === 'done'}}">
       <view class="proc-head">
         <view class="ocr-done-title done-gold">识别完成</view>
-        <view class="ocr-done-sub">识别到 {{ocrMask._policies.length}} 份保单{{ocrMask._cashValues.length > 0 ? ' + ' + ocrMask._cashValues.length + ' 份现价表' : ''}}</view>
+        <view class="ocr-done-sub">识别到 {{ocrMask._policies.length}} 份保单{{ocrMask._cashValues.length > 0 ? ' + ' + ocrMask._cashValues.length + ' 份现价表' : ''}}{{ocrMask.procError.length > 0 ? '，' + ocrMask.procError.length + ' 张未识别' : ''}}</view>
+        <!-- 2026-09-09 UX：预告后续步骤，避免"全部确认"被误认为终点（点后还需选归属/角色） -->
+        <view class="ocr-done-sub" wx:if="{{!skipMatch || !familyId}}">1 确认保单 › 2 选择归属 › 3 保存</view>
       </view>
       <scroll-view class="proc-list" scroll-y>
         <!-- UI 审计 交互 L3：三组全空时兜底（正常业务不易触发，防御性） -->
@@ -50,6 +53,8 @@
             <view class="proc-info">
               <text class="proc-name">{{item.product_name}}<text class="proc-cat" wx:if="{{item.insurance_category}}"> · {{item.insurance_category}}</text></text>
               <text class="proc-date" wx:if="{{item.effective_date}}">{{item.effective_date}}</text>
+              <!-- 2026-09-09 UX：标出具体待确认字段（来自 field_confidence <0.9） -->
+              <text class="proc-date" wx:if="{{item.lowFields}}">{{item.lowFields}}</text>
             </view>
             <view class="proc-side">
               <text class="ocr-badge badge-warn">需核对</text>
@@ -67,59 +72,65 @@
             <view class="proc-info">
               <!-- 失败原因横滚：单行横向滚动展示完整文案（原 ellipsis 截断空间不足） -->
               <scroll-view class="proc-err-scroll" scroll-x enhanced show-scrollbar="{{false}}">
-                <text class="proc-err">{{item.error}}</text>
+                <text class="proc-err">{{item.error}} · 点此手动录入</text>
               </scroll-view>
             </view>
             <view class="proc-side">
-              <text class="proc-ignore-btn pressable" data-fileid="{{item.fileId}}" catchtap="onProcIgnore">移除</text>
+              <text class="proc-ignore-btn pressable" data-fileid="{{item.fileId}}" catchtap="onProcIgnore">移除这一张</text>
               <text class="proc-retry-btn pressable {{item.retrying ? 'is-busy' : ''}}" data-fileid="{{item.fileId}}" catchtap="onProcRetryOne">{{item.retrying ? '重试中' : '重试'}}</text>
             </view>
           </view>
         </block>
       </scroll-view>
       <view class="ocr-actions-row">
-        <button class="ocr-modify-btn pressable" catchtap="onProcDiscardAll" aria-label="丢弃全部结果">全部放弃</button>
-        <button class="ocr-confirm-btn pressable {{ocrMask.confirming ? 'is-loading' : ''}}" bindtap="onProcConfirm" disabled="{{ocrMask.confirming || ocrMask.procBusy}}" aria-label="确认全部保单">{{ocrMask.confirming ? '保存中...' : (ocrMask.procError.length > 0 ? '智能确认' : '全部确认')}}</button>
+        <button class="ocr-modify-btn pressable" catchtap="onProcDiscardAll" aria-label="丢弃全部结果">放弃全部</button>
+        <button class="ocr-confirm-btn pressable {{ocrMask.confirming ? 'is-loading' : ''}}" bindtap="onProcConfirm" disabled="{{ocrMask.confirming || ocrMask.procBusy}}" aria-label="确认全部保单">{{ocrMask.confirming ? '保存中...' : (skipMatch && familyId ? '确认 ' + ocrMask._policies.length + ' 份' : '下一步：选择归属')}}</button>
       </view>
     </block>
-    <!-- 写入中 -->
+    <!-- 写入中（wrap 增高：进度条阶段留白稍大，避免卡片过矮） -->
     <block wx:elif="{{ocrMask.phase === 'saving'}}">
-      <view class="proc-head">
-        <view class="ocr-done-title done-gold">正在保存保单信息</view>
-        <view class="proc-phase">请勿离开当前页面</view>
+      <view class="ocr-saving-wrap">
+        <view class="proc-head">
+          <view class="ocr-done-title done-gold">正在保存保单信息</view>
+          <view class="proc-phase">请勿离开当前页面</view>
+        </view>
+        <view class="proc-save-bar"><view class="proc-progress-fill proc-progress-fill--indef"></view></view>
       </view>
-      <view class="proc-save-bar"><view class="proc-progress-fill proc-progress-fill--indef"></view></view>
     </block>
     <!-- 写入失败 -->
     <block wx:elif="{{ocrMask.phase === 'failed'}}">
       <view class="proc-head">
         <view class="ocr-done-title done-red">保存失败</view>
         <view class="proc-phase">{{ocrMask.saveError || '请检查网络后重试'}}</view>
+        <!-- 2026-09-09 UX：明确结果未丢，降低"白干"焦虑 -->
+        <view class="ocr-phase-sub">已识别的结果已保留，重试不会丢失</view>
       </view>
       <view class="ocr-actions-row">
-        <button class="ocr-modify-btn pressable" bindtap="onFailedBack" aria-label="放弃本次">放弃本次</button>
+        <button class="ocr-modify-btn pressable" bindtap="onFailedBack" aria-label="放弃全部">放弃全部</button>
         <button class="ocr-confirm-btn pressable" bindtap="onFailedRetry" aria-label="重新保存">重试</button>
       </view>
     </block>
-    <!-- 保存成功 -->
+    <!-- 保存成功（wrap 承载 min-height：本阶段内容最少，其他阶段内容多自适应，无需最小高） -->
     <block wx:elif="{{ocrMask.phase === 'saved'}}">
-      <view class="ocr-saved-head">
-        <view class="ocr-done-title done-green">✓ 保存成功</view>
-        <view class="ocr-sheet-close pressable" catchtap="onSavedEnter" aria-label="{{skipMatch ? '查看报告' : '立即进入保障报告'}}"><image class="ocr-sheet-close-icon" src="/images/close.svg" mode="aspectFit" /></view>
-      </view>
-      <view class="ocr-done-sub">已保存 {{ocrMask.savedPolicies}} 份保单{{ocrMask.savedCash > 0 ? ' + ' + ocrMask.savedCash + ' 份现价表' : ''}}</view>
-      <view class="ocr-phase-sub">{{skipMatch ? '报告即将刷新' : '2s 后进入保障报告'}}</view>
-      <view class="ocr-saved-progress"></view>
-      <view class="ocr-actions-row">
-        <button wx:if="{{!skipMatch}}" class="ocr-modify-btn pressable" bindtap="onSavedHome" aria-label="返回首页">返回首页</button>
-        <button class="ocr-confirm-btn pressable" bindtap="onSavedEnter" aria-label="完成查看">{{skipMatch ? '查看报告' : '立即进入'}}</button>
+      <view class="ocr-saved-wrap">
+        <view class="ocr-saved-head">
+          <view class="ocr-done-title done-green">✓ 保存成功</view>
+          <view class="ocr-sheet-close pressable" catchtap="onSavedEnter" aria-label="{{skipMatch ? '查看报告' : '立即进入保障报告'}}"><image class="ocr-sheet-close-icon" src="/images/close.svg" mode="aspectFit" /></view>
+        </view>
+        <view class="ocr-done-sub">已保存 {{ocrMask.savedPolicies}} 份保单{{ocrMask.savedCash > 0 ? ' + ' + ocrMask.savedCash + ' 份现价表' : ''}}</view>
+        <view class="ocr-phase-sub">{{skipMatch ? '报告即将刷新' : '3s 后进入保障报告'}}</view>
+        <view class="ocr-saved-progress"></view>
+        <view class="ocr-actions-row">
+          <button wx:if="{{!skipMatch}}" class="ocr-modify-btn pressable" bindtap="onSavedHome" aria-label="返回首页">返回首页</button>
+          <button class="ocr-confirm-btn pressable" bindtap="onSavedEnter" aria-label="完成查看">{{skipMatch ? '查看报告' : '立即进入'}}</button>
+        </view>
       </view>
     </block>
     <!-- 匹配弹窗 -->
     <block wx:elif="{{ocrMask.phase === 'match'}}">
       <view class="proc-head">
         <view class="ocr-done-title">选择归属家庭</view>
-        <view class="proc-phase">确定这批保单归入哪个家庭</view>
+        <view class="proc-phase">{{ocrMask.matchSummary || '确定这批保单归入哪个家庭'}}</view>
       </view>
       <scroll-view class="proc-list" scroll-y>
         <view class="match-card {{ocrMask.matchPick === item._id ? 'match-card--on' : ''}}" wx:for="{{ocrMask.matchCandidates}}" wx:key="_id" data-pick="{{item._id}}" bindtap="onMatchPick">

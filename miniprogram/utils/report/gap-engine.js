@@ -97,14 +97,24 @@ function buildGaps(family) {
   }
 
   var gaps = []
+  // 2026-09-10：家庭收入与负债在成员循环内不变，提到循环外避免重复解析
+  // 2026-09-11：Number 替代 parseInt——收入可为小数（如 80.5 万），parseInt 会截断为 80（丢 5000 元），
+  // 而本链路其他地方（成员收入、保额、负债）均按 Number 处理，统一避免精度口径不一致
+  var familyIncome = Number(family.family_income) || 0
   for (var j = 0; j < members.length; j++) {
     var mb = members[j]
     var isPillar = !!(pillar && mb.name === pillar.name)
-    var familyIncome = parseInt(family.family_income) || 0
     var rawMemIncome = mb.income || 0
-    var hasMemIncome = rawMemIncome > 0 || familyIncome > 0
-    var isEstimatedIncome = rawMemIncome === 0 && familyIncome > 0
-    var memIncome = rawMemIncome > 0 ? rawMemIncome : Math.round(familyIncome / Math.max(1, members.length))
+    // P1-A 修复（2026-09-05）：成员收入口径专业化，替换"按成员数均摊家庭收入"——
+    //   1) 成员有个人收入 → 用个人收入；
+    //   2) 支柱个人收入缺失 → 用家庭年收入全额兜底（原均摊会把支柱收入摊薄，系统性低估寿险/意外缺口）；
+    //   3) 非支柱（全职配偶/子女）收入缺失 → 按 0（不再均摊出"虚假收入"，避免虚高依赖方保额参考）；
+    //   4) 家庭收入也缺失 → 成员收入视为缺失（寿险/意外走 blocked 待补，见 _gapReliability）
+    var hasOwnIncome = rawMemIncome > 0
+    var useFamilyFallback = !hasOwnIncome && isPillar && familyIncome > 0
+    var hasMemIncome = hasOwnIncome || useFamilyFallback
+    var isEstimatedIncome = useFamilyFallback
+    var memIncome = hasOwnIncome ? rawMemIncome : (useFamilyFallback ? familyIncome : 0)
     var existing = {}
     for (var k = 0; k < active.length; k++) {
       var p = active[k]
@@ -114,8 +124,10 @@ function buildGaps(family) {
         existing[c] = (existing[c] || 0) + yuanToWan(p.sum_assured || 0)
       }
     }
-    for (var l = 0; l < _neededCats(mb.role).length; l++) {
-      var cat = _neededCats(mb.role)[l]
+    // 2026-09-10：原实现循环条件与取值各调一次 _neededCats（同参数纯函数），缓存避免重复计算
+    var neededCats = _neededCats(mb.role)
+    for (var l = 0; l < neededCats.length; l++) {
+      var cat = neededCats[l]
       var exist = existing[cat] || 0
       var relBase = _gapReliability(cat, hasMemIncome, hasDebt)
       var rel = isEstimatedIncome && relBase === 'confirmed' ? 'estimated' : relBase

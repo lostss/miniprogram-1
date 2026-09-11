@@ -32,8 +32,8 @@ const REPORT_COLUMNS = [
   {
     header: '保障到期',
     get: (p, ctx) => {
-      // 双字段兼容：OCR 文本（insurance_period）优先，兜底对话数字（coverage_term，0=终身）
-      const periodText = p.insurance_period || (p.coverage_term === 0 || p.coverage_term === '0' ? '终身' : (p.coverage_term ? String(p.coverage_term) + '年' : ''))
+      // 双字段兼容：OCR 文本（insurance_period）优先，兜底对话数字（coverage_term，105=终身，兼容旧 0）
+      const periodText = p.insurance_period || ((p.coverage_term === 105 || p.coverage_term === '105' || p.coverage_term === 0 || p.coverage_term === '0') ? '终身' : (p.coverage_term ? String(p.coverage_term) + '年' : ''))
       if (!periodText) return '-'
       const r = parseExpiry(periodText, p.effective_date, 0)
       if (!r.year) return '-'

@@ -13,7 +13,8 @@ const { setMemberField } = require('./_shared/memberRepo')
 
 // 高置信度 fact → members 反向同步（与表单直写 members 互为镜像，消除跨源矛盾）
 // 负债为家庭级（存 finances），members 无对应字段，故不在此列
-const FACT_TO_MEMBER_FIELD = { '健康异常': 'health', '职业': 'occupation', '个人年收入': 'income' }
+// P2-B 修复：补 '年龄'/'性别'（memberRepo._MEMBER_FIELDS 白名单已含 age/gender，setMemberField 可直接写）
+const FACT_TO_MEMBER_FIELD = { '健康异常': 'health', '职业': 'occupation', '个人年收入': 'income', '年龄': 'age', '性别': 'gender' }
 
 async function _syncFactToMember(db, familyId, openid, memberId, predicate, value, confidence) {
   if (!memberId || confidence < 0.8) return

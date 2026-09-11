@@ -57,7 +57,7 @@ const TARGET_FUNCTIONS = fs.readdirSync(CF_DIR, { withFileTypes: true })
 
 // 跨树契约文件：_shared 权威源 → miniprogram/utils/，使前端与云函数共用同一事实源
 // ponytail: 只列确需前端引用的文件，避免把云函数专用逻辑泄漏进小程序
-const CONTRACT_FILES = ['thresholds.js', 'pii-rules.js', 'parse-expiry.js', 'ocr-confidence.js', 'injection-guard.js']
+const CONTRACT_FILES = ['thresholds.js', 'pii-rules.js', 'parse-expiry.js', 'ocr-confidence.js', 'injection-guard.js', 'readiness.js', 'calc-age.js']
 
 // 扫描一个 .js 文件中、解析到 _shared/ 下的 require 目标（返回相对 _shared 的路径，'/' 分隔）
 // fileAbs 可能是：
@@ -110,6 +110,42 @@ function requiredShared(fnDir) {
     }
   }
   return seen
+}
+
+// ========== 第三方依赖闭包校验（候选 3）==========
+// sync-shared 只同步代码文件；依赖守护：函数根 .js 与闭包 _shared 内 require 的第三方包，
+// 必须声明在函数 package.json dependencies。缺声明 → [missing-dep]（--check 时 exit 1）；
+// 跨函数同包声明版本不一致 → 漂移警告（不 exit，提示统一）。
+const NODE_BUILTINS = new Set(['fs', 'path', 'util', 'crypto', 'http', 'https', 'stream', 'url', 'zlib', 'os', 'child_process', 'events', 'querystring', 'string_decoder', 'timers', 'tty', 'assert', 'buffer', 'net', 'dns', 'tls', 'dgram', 'readline', 'module', 'worker_threads', 'perf_hooks', 'async_hooks', 'cluster', 'constants', 'domain', 'v8', 'vm', 'punycode', 'repl', 'trace_events', 'wasi'])
+
+function scanPkgReqs(fileAbs) {
+  let src
+  try { src = fs.readFileSync(fileAbs, 'utf-8') } catch (_) { return [] }
+  const out = []
+  const re = /require\(\s*['"]([^'"]+)['"]\s*\)/g
+  let m
+  while ((m = re.exec(src))) {
+    const spec = m[1]
+    if (spec.startsWith('.') || NODE_BUILTINS.has(spec) || out.includes(spec)) continue
+    out.push(spec)
+  }
+  return out
+}
+
+// 某函数实际第三方依赖 = 根目录 .js + 闭包 _shared 文件（读权威源）require 的并集
+function collectThirdPartyDeps(fnDir, sharedClosure) {
+  const deps = new Set()
+  for (const rf of fs.readdirSync(fnDir).filter(f => f.endsWith('.js') && fs.statSync(path.join(fnDir, f)).isFile())) {
+    scanPkgReqs(path.join(fnDir, rf)).forEach(p => deps.add(p))
+  }
+  for (const rel of sharedClosure) {
+    scanPkgReqs(path.join(SHARED_SRC, rel)).forEach(p => deps.add(p))
+  }
+  return deps
+}
+
+function readDependencies(fnDir) {
+  try { return (JSON.parse(fs.readFileSync(path.join(fnDir, 'package.json'), 'utf-8')).dependencies) || {} } catch (_) { return {} }
 }
 
 function getAllFiles(dir, base = '') {
@@ -188,6 +224,8 @@ console.log('Syncing _shared/ to cloud functions...')
 console.log(`mode: ${broadcast ? 'broadcast' : 'closure'}${prune ? ' + prune' : ' (no-prune)'}${dryRun ? ' (dry-run)' : ''}${check ? ' (check)' : ''}\n`)
 
 let totalCreated = 0, totalUpdated = 0, totalSkipped = 0, totalPruned = 0
+let totalMissingDeps = 0
+const depVersions = {} // pkg → Set(声明版本)，跨函数漂移检测
 for (const fn of TARGET_FUNCTIONS) {
   console.log(`\n${fn}/_shared/`)
   const { created, updated, skipped, pruned } = syncFunction(fn)
@@ -195,7 +233,27 @@ for (const fn of TARGET_FUNCTIONS) {
   totalUpdated += updated
   totalSkipped += skipped
   totalPruned += pruned
+
+  // 依赖守护（候选 3）：闭包 require 的第三方包必须声明在 package.json
+  const fnDir = path.join(CF_DIR, fn)
+  const needed = collectThirdPartyDeps(fnDir, requiredShared(fnDir))
+  const declared = readDependencies(fnDir)
+  const missing = Array.from(needed).filter(p => !declared[p])
+  for (const p of Array.from(needed)) {
+    if (declared[p]) {
+      if (!depVersions[p]) depVersions[p] = new Set()
+      depVersions[p].add(declared[p])
+    }
+  }
+  if (missing.length) {
+    totalMissingDeps += missing.length
+    console.log(`  [missing-dep] ${fn} 声明缺失: ${missing.join(', ')}（sync-shared 只同步代码，依赖需在 package.json 声明）`)
+  }
 }
+
+// 跨函数同包版本漂移 → 提示（不阻断，reportAI 等补声明后人工统一）
+const depDrift = Object.keys(depVersions).filter(p => depVersions[p].size > 1).map(p => `${p}(${Array.from(depVersions[p]).join(' / ')})`)
+if (depDrift.length) console.log(`\n⚠ 跨函数依赖版本漂移: ${depDrift.join(', ')}（建议统一后部署）`)
 
 // 跨树契约：把 _shared 权威源中的契约文件同步到小程序 utils/
 let contractCreated = 0, contractUpdated = 0, contractSkipped = 0
@@ -222,13 +280,13 @@ console.log(`\nDone: ${totalCreated} created, ${totalUpdated} updated, ${totalSk
 if (CONTRACT_FILES.length > 0) console.log(`Contract: ${contractCreated} created, ${contractUpdated} updated, ${contractSkipped} unchanged (miniprogram/utils/)`)
 if (dryRun && !check) console.log('(dry-run — no files were written)')
 
-// CI / precommit 守护：检测到任何漂移则非 0 退出
+// CI / precommit 守护：检测到任何文件漂移或依赖声明缺失则非 0 退出
 if (check) {
-  const drift = totalCreated + totalUpdated + totalPruned + contractCreated + contractUpdated
+  const drift = totalCreated + totalUpdated + totalPruned + contractCreated + contractUpdated + totalMissingDeps
   if (drift > 0) {
-    console.error(`\n❌ Check failed: ${drift} file(s) would change. Run 'node scripts/sync-shared.js' to sync.`)
+    console.error(`\n❌ Check failed: ${drift} issue(s) (${totalCreated + totalUpdated + totalPruned + contractCreated + contractUpdated} file drift, ${totalMissingDeps} missing dep). Run 'node scripts/sync-shared.js' to sync.`)
     process.exit(1)
   } else {
-    console.log('\n✓ Check passed: _shared/ in sync.')
+    console.log('\n✓ Check passed: _shared/ in sync, deps declared.')
   }
 }

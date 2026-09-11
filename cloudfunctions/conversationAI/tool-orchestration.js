@@ -1,38 +1,42 @@
 /**
  * tool-orchestration.js — 工具编排内核（深模块）
  *
- * 解决问题：postProcess 内联 ~120 行工具编排逻辑（构建消息→429 退避→并发 dispatch
- * →suggestion 生成→summary 拼接），与消息持久化/审计/CONFIRM 拦截纠缠，
- * 难以针对"工具链失败"场景单测。
+ * 单通道 v10（2026-08-29 改造）：放弃流式/双通道，一次 function calling 一步到位。
+ * 解决 A 通道 {TOOL_INTENT} 标识 malformed 整类缺陷 + v9.0 断言误导（5 轮修复）根因。
  *
  * 接口契约：
  *   orchestrate({
- *     familyId, openid, sid, userText, auditText, aText, history, intent,  // 输入
+ *     familyId, openid, sid, userText, auditText, history,  // 输入（无 intent/aText 协议）
  *     dispatch, ctxCache, toolDefs,                  // 依赖注入（路由 + 缓存 + schema）
  *     toolSummaries, buildToolSystemPrompt           // 依赖注入（摘要表 + prompt 构建器）
  *   }) → { cleanText, suggestions, pending_confirms, toolResults }
  *
- *   - aText: 通道 A 的整理后回复（工具执行成功后原样返回，避免覆盖 A 的断言文本；失败时由 B 提示替换）
- *   - history: 最近对话历史（[{role, content}]），function calling 兜底时用于理解上下文
- *   - intent: 通道 A 已决策的工具意图 [{name, args}]（v9.1：A 决策 → B 只执行，不走 function calling，
- *     消除"B 看到 A 断言文本误以为已写入而不调工具"的根因）；为空时回退 function calling 兜底
+ *   - history: 最近对话历史（[{role, content}]），function calling 决策上下文
  *   - dispatch(tool, params, openid) → result         （由调用方注入，便于测试）
- *   - ctxCache.get(familyId + ':' + openid) / ctxCache.invalidate(familyId + ':' + openid)（R3v2 #3 多租户隔离）
+ *   - ctxCache.get(familyId + ':' + openid) / invalidate（R3v2 #3 多租户隔离）
  *   - toolDefs: TOOL_DEFINITIONS（工具 schema 单一事实源）
- *   - toolSummaries: { [toolName]: (tr) => string|null }  仅 summary 函数（架构审计第 13 轮：接口收窄）
- *   - buildToolSystemPrompt: prompts.js 导出（通道 B 工具执行 prompt）
+ *   - toolSummaries: { [toolName]: (tr) => string|null }  仅 summary 函数
+ *   - buildToolSystemPrompt: prompts.js 导出（单通道主 prompt）
+ *
+ * 工具分类（确认策略，2026-08-29 用户决策）：
+ *   - CONFIRM_TOOLS（写入成员/财务/保单/新建家庭）→ 不 dispatch，构造 write_confirm 确认卡，前端确认后二次执行
+ *   - addFact（facts 写入）→ 免确认直接执行
+ *   - delete* → dispatch 时 409 待确认（现状保留）
+ *   - query* / triggerAnalysis → 直接执行
  *
  * 设计要点：
  *   - 模块内部 lazy require ai-client/ai-gateway/policyFactSplitter，避免启动期炸裂
- *   - suggestion 生成委托 suggestion-builder.buildSuggestions（纯函数）
+ *   - suggestion 生成委托 suggestion-builder（buildSuggestions / buildWriteConfirms，纯函数）
  *   - 429 退避重试封装在内部，调用方不感知
- *   - toolSummaries 经参数注入，避免与 index.js 形成循环依赖
  */
 const cloud = require('wx-server-sdk')
-const { buildSuggestions } = require('./suggestion-builder')
+const { buildSuggestions, buildWriteConfirms } = require('./suggestion-builder')
 const { withRetry } = require('./_shared/retry')
 
-// token 成本审计 P2：按用户意图裁剪工具 schema（TOOL_DEFINITIONS 11+ 个全量注入是每消息固定 9-12K tokens 开销）
+// 需前端确认的写入类工具（用户决策：家庭结构/家庭财务/保单信息均要确认；facts 写入免确认）
+const CONFIRM_TOOLS = ['upsertMember', 'updateFinances', 'addPolicy', 'updatePolicy', 'createFamily']
+
+// token 成本审计 P2：按用户意图裁剪工具 schema（全量 14 个注入是每消息固定 9-12K tokens 开销）
 // 高频查询工具常驻；写/管理工具按意图关键词追加；无意图命中或用户主动要求"全部"时回退全量（保能力优先）
 const BASE_TOOLS = ['queryPolicies', 'queryMembers', 'queryFacts', 'queryMemberProfile']
 const INTENT_TOOLS = [
@@ -47,7 +51,6 @@ function filterToolDefs(defs, userText) {
   if (!defs || !Array.isArray(defs) || !userText) return defs
   const t = String(userText)
   if (t.includes('全部') || t.includes('所有') || t.includes('帮助')) return defs
-  // 修复：TOOL_DEFINITIONS 结构为 {type, function:{name}}，原 d.name 取不到导致裁剪恒回退全量（意图裁剪从未生效）
   const nameOf = (d) => (d.function ? d.function.name : d.name)
   const base = defs.filter(d => BASE_TOOLS.indexOf(nameOf(d)) !== -1)
   const extra = new Set()
@@ -59,21 +62,109 @@ function filterToolDefs(defs, userText) {
   return base.concat(rest)
 }
 
-/**
- * 工具编排主流程
- * @returns {Promise<{cleanText: string, suggestions: array, pending_confirms: array, toolResults: array}>}
- */
-// 工具结果回流（v9.3）：把执行结果（成功=模板句，失败=错误详情）回流模型再生成最终回复。
-// - 失败场景：生成失败提示（"为什么没写成 + 下一步"），覆盖 A 的断言文本
-// - 成功场景：基于真实执行结果组织确认语，消除 A 执行前断言的细节偏差（如部分字段落库差异）
-// v9.4：注入最近对话历史（≤4 条）——回流模型需理解"这次为准"类确认语的所指，
-// 否则孤立消息导致文本与执行结果矛盾（实测：工具已成功更新，文本却说"无法执行"）。
-// 注意：不注入本轮 A 的断言文本（v9.0 根因），历史仅限之前轮次。
-// query* 类工具：回流时携带精简结果数据（B 据此组织明细回复；summary 只有计数，模型看不到数据）
+// P2-D 修复（2026-08-29 线上实测）：hy3 对"修改家庭收入"未调 updateFinances，却回复
+// "已为您安排更新…(系统将展示确认卡,您确认后正式写入)" → toolResults=[] 且无确认卡，
+// 代理人误以为已修改实际未写入。检测"写声称 + 无工具调用"→ 强指令重试一次兜底。
+const WRITE_CLAIM_RE = /(已(为您|经)?(安排|更新|修改|调整|保存|完成)|确认卡|正式写入)/
+function _isWriteClaim(text, userText) {
+  if (!text || !userText) return false
+  if (!WRITE_CLAIM_RE.test(text)) return false
+  // 用户输入需含写意图，防止纯问答（如复述确认卡机制）误触发重试
+  return /(修改|更新|调整|改成|改为|变更|设置|新增|补录|录入|收入|支出|负债|财务|年薪|月薪|成员|家人|保单|保险|投保|保额|新建|创建)/.test(userText)
+}
+
+// 强指令重试：hy3/hunyuan-exp 工具遵从差（2026-08-29 两轮实测"修改家庭收入"均不输出
+// tool_calls，连强指令重试也拒调），重试优先切 DeepSeek 直连 function calling
+// （OpenAI 兼容、遵从度高）；无 DEEPSEEK_API_KEY 或直连失败时 fallback 回 hy3 强指令重试。
+async function _retryForceToolCall({ toolMessages, filteredDefs, userText, ctx, familyId, openid, sid }) {
+  const forceMsg = '\n\n【系统强制提示】你上一条回复声称已为用户安排修改，但没有调用任何工具，这是错误的。' +
+    '修改档案必须调用对应工具，否则系统不会展示确认卡、也不会写入任何数据。' +
+    '若用户要求修改数据，必须调用对应的写工具（updateFinances/upsertMember/addPolicy/updatePolicy/createFamily），并输出 tool_calls，不得只输出文字。'
+  const retryMsgs = (toolMessages || []).map(m =>
+    m.role === 'system' ? { ...m, content: m.content + forceMsg } : m
+  )
+
+  // 通道 1：DeepSeek 直连 function calling
+  try {
+    const { callChatWithToolsDirect } = require('./_shared/ai-client')
+    // openid 透传观测归因（裸直连不经 ai-gateway，须显式传）
+    const directPhase = await callChatWithToolsDirect(retryMsgs, filteredDefs, { maxTokens: 1200, openid })
+    console.log('[tool-orchestration] 强指令重试(DeepSeek 直连): toolCalls=%d text=%s',
+      (directPhase.toolCalls || []).length, String(directPhase.text || '').slice(0, 300))
+    if (directPhase.toolCalls && directPhase.toolCalls.length > 0) return directPhase
+    console.warn('[tool-orchestration] 强指令重试(DeepSeek 直连) 仍无 tool_calls，回退 hy3 强指令重试')
+  } catch (e) {
+    console.warn('[tool-orchestration] 强指令重试(DeepSeek 直连) 失败，回退 hy3 强指令重试:', (e && e.message) || e)
+  }
+
+  // 通道 2：hy3 强指令重试（直连不可用/失败时）
+  try {
+    const { callChatWithTools } = require('./_shared/ai-client')
+    const { safeCallChatWithTools } = require('./_shared/ai-gateway')
+    return await withRetry(
+      () => safeCallChatWithTools(
+        retryMsgs, filteredDefs, callChatWithTools,
+        { cloud, db: cloud.database(), openid, familyId, sessionId: sid, model: 'hy3', action: 'conversation_tools_retry', skipRateLimit: true },
+        { maxTokens: 1200 }
+      ),
+      { maxAttempts: 2, backoff: 'exponential', delayMs: 2000, retryOn: (e) => (e.message || '').includes('429'), label: 'tool-orchestration 强制工具调用重试(hy3)' }
+    )
+  } catch (e) {
+    console.warn('[tool-orchestration] 强指令重试失败:', (e && e.message) || e)
+    return null
+  }
+}
+
+// 主通道 ①（2026-08-30 极简重构）：DeepSeek 直连 function calling 优先（OpenAI 兼容、遵从高、
+// 429 罕见、DEEPSEEK_API_KEY 已配置），hy3/SDK 作 fallback。两通道共用同一 toolMessages/filteredDefs，
+// 返回结构均为 { text, toolCalls, usage }（toolCalls 为 {id,type,function:{name,arguments}} 规范化格式）。
+async function _callPhase1(toolMessages, filteredDefs, ctx, sid) {
+  const { callChatWithToolsDirect, callChatWithTools } = require('./_shared/ai-client')
+  const { safeCallChatWithTools } = require('./_shared/ai-gateway')
+
+  // 通道 1：DeepSeek 直连（仅 429 退避重试；缺 key/网络/格式错误直接回退 hy3，不空耗重试）
+  try {
+    const direct = await withRetry(
+      () => callChatWithToolsDirect(toolMessages, filteredDefs, { maxTokens: 1200 }),
+      {
+        maxAttempts: 2,
+        backoff: 'exponential',
+        delayMs: 1500,
+        retryOn: (e) => (e && (e.code === '429' || String(e.message || '').includes('429'))),
+        label: 'phase1 direct 429 退避'
+      }
+    )
+    if (direct && Array.isArray(direct.toolCalls)) {
+      console.log('[tool-orchestration] phase1(DeepSeek 直连): toolCalls=%d text=%s',
+        direct.toolCalls.length, String(direct.text || '').slice(0, 200))
+      return direct
+    }
+    console.warn('[tool-orchestration] phase1 直连返回异常，回退 hy3')
+  } catch (e) {
+    console.warn('[tool-orchestration] phase1 直连失败，回退 hy3:', (e && e.message) || e)
+  }
+
+  // 通道 2：hy3（SDK）；skipRateLimit 保留（工具调用 60/60s 用户级限流会误伤多工具并发）
+  return withRetry(
+    () => safeCallChatWithTools(
+      toolMessages, filteredDefs, callChatWithTools,
+      { cloud, db: cloud.database(), openid: ctx.openid, familyId: ctx.familyId, sessionId: sid, model: 'hy3', action: 'conversation_tools', skipRateLimit: true },
+      { maxTokens: 1200 }
+    ),
+    {
+      maxAttempts: 3,
+      backoff: 'exponential',
+      delayMs: 2000,
+      retryOn: (e) => (e.message || '').includes('429'),
+      label: 'tool-orchestration 429 退避'
+    }
+  )
+}
+
+// 工具结果回流：把执行结果（成功=模板句，失败=错误详情）回流模型再生成最终回复
 const REFLOW_QUERY_TOOLS = ['queryPolicies', 'queryMembers', 'queryFacts', 'queryMemberProfile']
 function _reflowToolContent(tr, toolSummaries) {
   if (!tr.success) return JSON.stringify({ error: tr.error || '执行失败' })
-  // query* 类：序列化精简数据（截断 2000 字符，去除大字段），让 B 能看到实际查询结果
   if (REFLOW_QUERY_TOOLS.indexOf(tr.toolName) !== -1) {
     const d = (tr.result && tr.result.data) || {}
     const brief = { query: tr.toolName, count: 0, items: [] }
@@ -95,27 +186,21 @@ function _reflowToolContent(tr, toolSummaries) {
     }
     return '查询结果: ' + JSON.stringify(brief).substring(0, 2000)
   }
-  // 非 query 类：summary 模板句（写类确认语）
   return toolSummaries[tr.toolName] ? toolSummaries[tr.toolName](tr) : '执行成功'
 }
-async function _reflowWithResults({ toolResults, userText, aText, cleanText, ctxCache, familyId, openid, sid, history, toolSummaries, buildToolSystemPrompt }) {
-  const ctx = ctxCache.get(familyId + ':' + openid) || ''
+
+// ③④ 结果回流统一（2026-08-30 极简重构）：成功/失败回流共用同一消息序列
+// system → hist → user → assistant(tool_calls) → tool → safeCallChat；返回文本或空串（回退由调用方决定）
+async function _refineReply({ ctx, familyId, openid, sid, userText, histMsgs, toolCallMsgs, toolResultMsgs, systemHint, stateBlock, buildToolSystemPrompt }) {
   try {
     const { callChat } = require('./_shared/ai-client')
     const { safeCallChat } = require('./_shared/ai-gateway')
-    const toolResultMsgs = toolResults.map(tr => ({
-      role: 'tool',
-      tool_call_id: tr.toolCallId,
-      content: _reflowToolContent(tr, toolSummaries)
-    }))
-    const histMsgs = (history || []).slice(-4).map(h => ({
-      role: h.role === 'assistant' ? 'assistant' : 'user',
-      content: (h.content || '').substring(0, 500)
-    }))
+    const sb = stateBlock || ''
     const refineMsgs = [
-      { role: 'system', content: buildToolSystemPrompt() + '\n\n工具已执行完成，请基于工具执行结果组织回复并确认已执行的操作；若用户输入不完整，以工具实际执行结果为准，不要声称"未执行"。\n\n当前客户信息：\n' + ctx },
-      ...histMsgs,
-      { role: 'user', content: userText },
+      { role: 'system', content: buildToolSystemPrompt() + (systemHint || '') + '\n\n当前客户信息（基础档案，可能滞后于最近对话）：\n' + ctx },
+      ...(histMsgs || []),
+      { role: 'user', content: sb ? sb + '\n\n' + userText : userText },
+      ...toolCallMsgs,
       ...toolResultMsgs
     ]
     const phase2 = await safeCallChat(
@@ -125,74 +210,129 @@ async function _reflowWithResults({ toolResults, userText, aText, cleanText, ctx
     )
     if (phase2.text && phase2.text.trim()) return phase2.text.trim()
   } catch (e) {
-    console.warn('[tool-orchestration] 失败回流再生成失败，回退模板:', (e && e.message) || e)
+    console.warn('[tool-orchestration] 结果回流失败:', (e && e.message) || e)
   }
-  return cleanText || aText || ''
+  return ''
 }
 
-// 工具结果 → 归一化 toolResult 记录（L3 校验 + dispatch + 成功判定；与 function calling 分支共用）
-async function _dispatchIntentTools({ intent, toolDefs, dispatch, familyId, openid }) {
+// 成功回流：工具全部成功 → 组织最终回复（失败回流用 _refineReply 的同构序列）
+async function _reflowWithResults({ toolResults, userText, phase1Text, cleanText, ctxCache, familyId, openid, sid, history, stateBlock, toolSummaries, buildToolSystemPrompt }) {
+  const cv = ctxCache.get(familyId + ':' + openid)
+  const ctx = (cv && typeof cv === 'object' && cv.markdown) ? cv.markdown : (cv || '')
+  const sb = stateBlock || ctxCache.get('state:' + familyId + ':' + openid) || ''
+  const toolResultMsgs = toolResults.map(tr => ({
+    role: 'tool',
+    tool_call_id: tr.toolCallId,
+    content: _reflowToolContent(tr, toolSummaries)
+  }))
+  // 2026-09-10 P2-2：与 phase-1 决策上下文（下方 slice(-6)）对齐——原为 -4，导致工具执行后生成最终答复时
+  // 看到的历史比决策时更少，用户 5-6 条前给出的约束可能在落笔时丢失
+  const histMsgs = (history || []).slice(-6).map(h => ({
+    role: h.role === 'assistant' ? 'assistant' : 'user',
+    content: (h.content || '').substring(0, 500)
+  }))
+  // 审计 P2-A（2026-08-29）：assistant tool_calls 前置（tool 消息须跟在含 tool_calls 的 assistant 之后）
+  const toolCallMsgs = [{
+    role: 'assistant',
+    content: phase1Text || null,
+    tool_calls: toolResults.map(tr => ({
+      id: tr.toolCallId,
+      type: 'function',
+      function: { name: tr.toolName, arguments: JSON.stringify(tr.args || {}) }
+    }))
+  }]
+  const systemHint = '\n\n工具已执行完成，请基于工具执行结果组织回复并确认已执行的操作；若用户输入不完整，以工具实际执行结果为准，不要声称"未执行"。'
+  const text = await _refineReply({ ctx, familyId, openid, sid, userText, histMsgs, toolCallMsgs, toolResultMsgs, systemHint, stateBlock: sb, buildToolSystemPrompt })
+  // 单通道：优先回流文本，再退 AI 第一版文本，最后退 auditText（通常为空）
+  return text || phase1Text || cleanText || ''
+}
+
+// 工具结果 → 归一化 toolResult 记录（L3 校验 + dispatch + 成功判定）
+async function _dispatchDirectTools({ directTools, toolDefs, dispatch, familyId, openid }) {
   const { validateArgs } = require('./schema-validate')
-  const results = await Promise.all((intent || []).map(async it => {
-    const toolName = it.name
-    const args = (it.args && typeof it.args === 'object') ? it.args : {}
+  return Promise.all((directTools || []).map(async p => {
+    const { toolName, args, toolCallId } = p
     const val = validateArgs(toolName, args, toolDefs)
     if (!val.ok) {
-      return { toolName, toolCallId: toolName, success: false, error: '参数校验失败：' + val.errors.join('；'), validation: true, args }
+      return { toolName, toolCallId, success: false, error: '参数校验失败：' + val.errors.join('；'), validation: true, args }
     }
     // S3-8 修复：familyId 放在 ...args 之后，防止 AI 被提示注入在工具参数塞 familyId 覆盖显式值
     return dispatch(toolName, { ...args, familyId }, openid)
       // T-M3 修复：needsConfirm（code 409）是"待确认"而非失败，不应记 success:false
-      .then(r => ({ toolName, toolCallId: toolName, success: !(r && (r.success === false || ((r.code && r.code !== 200) && !r.needsConfirm))), result: r, args }))
-      .catch(e => ({ toolName, toolCallId: toolName, success: false, error: e.message, args }))
+      .then(r => ({ toolName, toolCallId, success: !(r && (r.success === false || ((r.code && r.code !== 200) && !r.needsConfirm))), result: r, args }))
+      .catch(e => ({ toolName, toolCallId, success: false, error: e.message, args }))
   }))
-  return results
 }
 
+// ② 默认执行+撤销（2026-08-30 极简重构）：A 类写工具（updateFinances/upsertMember/addFact）
+// 执行前取 before 快照 → dispatch → 成功后落 undo_logs（op_id, pending 5min）并携带 undo 摘要给前端。
+async function _dispatchUndoTools({ tools, toolDefs, dispatch, familyId, openid, toolSummaries }) {
+  const { validateArgs } = require('./schema-validate')
+  const { createUndo, UNDO_TTL_MS } = require('./undo-store')
+  const { snapshotFinance, snapshotMember } = require('./_shared/memberRepo')
+  const db = cloud.database()
+  return Promise.all((tools || []).map(async p => {
+    const { toolName, args, toolCallId } = p
+    const val = validateArgs(toolName, args, toolDefs)
+    if (!val.ok) {
+      return { toolName, toolCallId, success: false, error: '参数校验失败：' + val.errors.join('；'), validation: true, args }
+    }
+    let before = null
+    try {
+      if (toolName === 'updateFinances') before = await snapshotFinance(db, familyId, openid)
+      else if (toolName === 'upsertMember') before = await snapshotMember(db, familyId, openid, args)
+    } catch (e) { console.warn('[tool-orchestration] 快照失败(继续执行):', (e && e.message) || e) }
+    const result = await dispatch(toolName, { ...args, familyId }, openid)
+      .then(r => r)
+      .catch(e => ({ success: false, error: e.message }))
+    const success = !(result && (result.success === false || ((result.code && result.code !== 200) && !result.needsConfirm)))
+    if (!success) {
+      const errMsg = (result && result.error) || (result && result.msg) || '执行失败'
+      return { toolName, toolCallId, success, result, args, error: errMsg }
+    }
+    if (success) {
+      // after：撤销定位用（新建成员的 member_id / 新建事实的 factId）
+      let after = null
+      if (toolName === 'upsertMember' && result.data && result.data.memberId) after = { member_id: result.data.memberId, action: result.data.action }
+      else if (toolName === 'addFact' && result.data && result.data.factId) after = { factId: result.data.factId }
+      const opId = await createUndo(db, { familyId, openid, toolName, args, before, after })
+      if (opId) {
+        const summary = toolSummaries && toolSummaries[toolName]
+          ? toolSummaries[toolName]({ toolName, success: true, result, args })
+          : '已执行'
+        return { toolName, toolCallId, success: true, result, args, undo: { opId, summary, ttlSec: Math.floor(UNDO_TTL_MS / 1000) } }
+      }
+    }
+    return { toolName, toolCallId, success, result, args }
+  }))
+}
+
+/**
+ * 单通道编排主流程
+ * @returns {Promise<{cleanText: string, suggestions: array, pending_confirms: array, toolResults: array}>}
+ */
 async function orchestrate({
-  familyId, openid, sid, userText, auditText, aText, history, intent,
-  dispatch, ctxCache, toolDefs,
+  familyId, openid, sid, userText, auditText, history, stateBlock,
+  dispatch, ctxCache, stateCache, toolDefs,
   toolSummaries, buildToolSystemPrompt
 }) {
-  // 默认值：通道 A 的整理回复优先（工具成功后原样返回）；未传时退化 auditText
-  let cleanText = aText || auditText || ''
+  let cleanText = auditText || ''
   let toolResults = []
+  let suggestions = []
+  let pending_confirms = []
 
   if (!userText) {
-    return { cleanText, suggestions: [], pending_confirms: [], toolResults }
+    return { cleanText, suggestions, pending_confirms, toolResults }
   }
 
   try {
-    // v9.2：通道 A 只输出意图（工具判定），B function calling 在 schema 约束下填参数。
-    // - intent 带 args（旧协议兼容）→ 直接校验执行
-    // - intent 只带 name（B 方向）→ 预选工具 schema，B 填参数（intentNames 供主链路限定）
-    // 根因对齐：B 决策时注入 A 的"意图已判定"提示但不注入 A 的断言文本（v9.0 被断言误导的根因已消除）
-    const intentNames = (intent || []).map(it => it.name).filter(Boolean)
-    const intentHasArgs = (intent || []).some(it => it.args && Object.keys(it.args).length > 0)
-    if (intent && intent.length > 0 && intentHasArgs) {
-      // 旧协议兼容：intent 带 args 直接校验+执行（A 手写参数的过渡形态；新协议只带 name 走 function calling）
-      toolResults = await _dispatchIntentTools({ intent, toolDefs, dispatch, familyId, openid })
-      if (toolResults.some(tr => tr.success)) ctxCache.invalidate(familyId + ':' + openid)
-      const { suggestions, pending_confirms } = buildSuggestions(toolResults)
-      const failedResults = toolResults.filter(tr => !tr.success)
-      const hasPending = suggestions.length > 0
-      if (hasPending) {
-        // v9.5 待确认：清空 A 断言（A 断言"已删除"会与实际待确认矛盾），由前端确认卡承载确认交互
-        cleanText = ''
-      } else if (failedResults.length > 0) {
-        cleanText = await _reflowWithResults({ toolResults, userText, aText, cleanText, ctxCache, familyId, openid, sid, history, toolSummaries, buildToolSystemPrompt })
-      }
-      return { cleanText, suggestions, pending_confirms, toolResults }
-    }
+    // 基础摘要（长期记忆）——缓存 value 兼容 { version, markdown } 与旧字符串
+    const cv = ctxCache.get(familyId + ':' + openid)
+    const ctx = (cv && typeof cv === 'object' && cv.markdown) ? cv.markdown : (cv || '')
+    // 状态块（权威最新值）：拼在 user 消息前缀，保证 system+历史 前缀稳定
+    const sb = stateBlock || ctxCache.get('state:' + familyId + ':' + openid) || ''
 
-    const { callChatWithTools } = require('./_shared/ai-client')
-    const { safeCallChatWithTools } = require('./_shared/ai-gateway')
-
-    // tool context 由调用方预构建并缓存于 ctxCache，此处仅取
-    // R3v2 #3：key 与 _buildToolContext 一致，带 openid（防跨租户污染）
-    const ctx = ctxCache.get(familyId + ':' + openid) || ''
-
-    // Phase 6：规则预提取保障描述，作为 AI 工具调用的参考
+    // 规则预提取保障描述，作为 AI 工具调用的参考
     let coverageHint = ''
     try {
       const { policyFactSplitter } = require('./policyFactSplitter')
@@ -203,125 +343,116 @@ async function orchestrate({
       }
     } catch (e) { console.warn('[tool-orchestration] policyFactSplitter 失败:', e.message) }
 
-    // token 成本审计 P2：按用户意图裁剪工具 schema（固定 9-12K 的 TOOL_DEFINITIONS 不再每消息全量注入）
+    // 意图裁剪工具 schema（token 成本审计 P2）
     let filteredDefs = filterToolDefs(toolDefs, userText)
-    // v9.2（B 方向）：通道 A 已判定工具 → 预选该工具 schema，B function calling 只需填参数
-    //（工具选型不漂移；参数由 schema 约束，消除 A 手写字段名不可控问题）
-    // 预选基于全量 toolDefs 而非裁剪集——A 判定的工具必须保留（即使关键词裁剪未命中）
-    if (intentNames.length > 0) {
-      const nameOf = (d) => (d.function ? d.function.name : d.name)
-      const intentDefs = toolDefs.filter(d => intentNames.indexOf(nameOf(d)) !== -1)
-      if (intentDefs.length > 0) filteredDefs = intentDefs
+    // coverageHint 指示"用 addFact 写入"时，保证 addFact 在可用工具列表（防裁剪后模型想调但工具不存在 → 放弃调用/文本幻觉）
+    if (coverageHint && !filteredDefs.some(d => (d.function ? d.function.name : d.name) === 'addFact')) {
+      const addFactDef = toolDefs.find(d => (d.function ? d.function.name : d.name) === 'addFact')
+      if (addFactDef) filteredDefs = filteredDefs.concat(addFactDef)
     }
-    // v9 双通道：注入最近对话历史（≤6 条，截断 500 字）+ 用户原输入。
-    // 注意：不注入 A 的断言文本（v9.0 根因——B 看到 assistant 断言"已更新"误以为已写入而不调工具）。
+
+    // 注入最近对话历史（≤6 条，截断 500 字）+ 用户原输入
     const histMsgs = (history || []).slice(-6).map(h => ({
       role: h.role === 'assistant' ? 'assistant' : 'user',
       content: (h.content || '').substring(0, 500)
     }))
-    // v9.2：注入 A 的意图判定提示（B 据此填参数，不自己判断是否该调工具）
-    const intentHint = intentNames.length > 0
-      ? '\n\n【意图已判定】本轮必须调用工具：' + intentNames.join('、') + '。参数从用户消息中提取，按 schema 填写，不要调用其他工具，不要只回复不调用。'
-      : ''
     const toolMessages = [
-      { role: 'system', content: buildToolSystemPrompt() + '\n\n当前客户信息：\n' + ctx + coverageHint + intentHint },
+      { role: 'system', content: buildToolSystemPrompt() + '\n\n当前客户信息（基础档案，可能滞后于最近对话）：\n' + ctx + coverageHint },
       ...histMsgs,
-      { role: 'user', content: userText }
+      { role: 'user', content: sb ? sb + '\n\n' + userText : userText }
     ]
 
-    // 429 退避重试（架构审计第 14 轮候选 #3：委托 withRetry，原指数退避 delayMs*attempt 由 backoff='exponential' 实现）
-    // token 成本审计 P1：去掉 skipLog 使本调用落 usage 日志（最高频计费点可观测）；skipRateLimit 保留（工具调用 60/60s 用户级限流会误伤多工具并发）
-    const phase1 = await withRetry(
-      () => safeCallChatWithTools(
-        toolMessages, filteredDefs, callChatWithTools,
-        { cloud, db: cloud.database(), openid, familyId, sessionId: sid, model: 'hy3', action: 'conversation_tools', skipRateLimit: true },
-        { maxTokens: 800 }
-      ),
-      {
-        maxAttempts: 3,
-        backoff: 'exponential',
-        delayMs: 2000,
-        retryOn: (e) => (e.message || '').includes('429'),
-        label: 'tool-orchestration 429 退避'
-      }
-    )
+    // 主通道：DeepSeek 直连优先，hy3 fallback（见 _callPhase1）
+    let phase1 = await _callPhase1(toolMessages, filteredDefs, { openid, familyId }, sid)
 
-    if (phase1.toolCalls && phase1.toolCalls.length > 0) {
-      const dispatchPromises = []
-      for (const tc of phase1.toolCalls) {
-        if (tc.type === 'function' && tc.function) {
-          const toolName = tc.function.name
-          let args = {}
-          try { args = JSON.parse(tc.function.arguments || '{}') } catch (_) {}
-          // L3 参数校验：必填/枚举/数字类型，失败 → 结构化错误 → P2.5 失败回流让 AI 修正重试
-          const { validateArgs } = require('./schema-validate')
-          const val = validateArgs(toolName, args, filteredDefs)
-          if (!val.ok) {
-            dispatchPromises.push(Promise.resolve({
-              toolName, toolCallId: tc.id || tc.function.name,
-              success: false, error: '参数校验失败：' + val.errors.join('；'), validation: true, args
-            }))
-            continue
-          }
-          dispatchPromises.push(
-            // S3-8 修复：familyId 放在 ...args 之后，防止 AI 被提示注入在工具参数塞 familyId 覆盖显式值
-            // 原实现 { familyId, ...args } 中 args 的 familyId 会覆盖前面显式的 familyId，可误写同 openid 下其他家庭
-            dispatch(toolName, { ...args, familyId }, openid)
-              // T-M3 修复：needsConfirm（code 409）是"待确认"而非失败，不应记 success:false，
-              // 避免 agent_logs 与客户端契约将待确认误报为失败
-              .then(r => ({ toolName, toolCallId: tc.id || tc.function.name, success: !(r && (r.success === false || ((r.code && r.code !== 200) && !r.needsConfirm))), result: r, args }))
-              .catch(e => ({ toolName, toolCallId: tc.id || tc.function.name, success: false, error: e.message, args }))
-          )
+    let phase1Text = (phase1.text || '').trim()
+
+    // ===== 无工具调用：纯问答 =====
+    if (!phase1.toolCalls || phase1.toolCalls.length === 0) {
+      // P2-D 修复：模型声称"已安排修改/将展示确认卡"却未调用工具 → 强指令重试一次，
+      // 防止"假更新"空气卡误导代理人（档案实际未变）。重试仍无工具调用 → 诚实失败提示。
+      if (_isWriteClaim(phase1Text, userText)) {
+        const retry = await _retryForceToolCall({ toolMessages, filteredDefs, userText, ctx, familyId, openid, sid })
+        if (retry && retry.toolCalls && retry.toolCalls.length > 0) {
+          phase1 = retry
+          phase1Text = (phase1.text || '').trim()
+        } else {
+          cleanText = '抱歉，系统未能完成该修改操作，档案未发生变化。请重试，或手动在档案页修改。'
+          return { cleanText, suggestions, pending_confirms, toolResults }
         }
+      } else {
+        cleanText = phase1Text
+        return { cleanText, suggestions, pending_confirms, toolResults }
       }
-      toolResults = await Promise.all(dispatchPromises)
-      // 数据变更后失效上下文缓存（R3v2 #3：key 与 _buildToolContext 一致，带 openid）
-      if (toolResults.some(tr => tr.success)) ctxCache.invalidate(familyId + ':' + openid)
+    }
 
-      // suggestion 生成委托纯函数（架构审计第 13 轮：抽取局部性）
-      const { suggestions, pending_confirms } = buildSuggestions(toolResults)
+    // ===== 有工具调用：解析 + 分类（需确认 vs 直接执行） =====
+    const parsed = []
+    for (const tc of phase1.toolCalls) {
+      if (tc.type === 'function' && tc.function) {
+        let args = {}
+        try { args = JSON.parse(tc.function.arguments || '{}') } catch (_) {}
+        parsed.push({ toolName: tc.function.name, args, toolCallId: tc.id || tc.function.name })
+      }
+    }
+    // ② 工具分流：A 类默认执行+撤销 / B 类保留确认 / 直接执行（query/delete/triggerAnalysis/writeMessage）
+    const DEFAULT_EXEC_UNDO_TOOLS = ['updateFinances', 'upsertMember', 'addFact']
+    const CONFIRM_TOOLS_KEEP = ['addPolicy', 'updatePolicy', 'createFamily']
+    const undoableTools = parsed.filter(p => DEFAULT_EXEC_UNDO_TOOLS.indexOf(p.toolName) !== -1)
+    const confirmTools = parsed.filter(p => CONFIRM_TOOLS_KEEP.indexOf(p.toolName) !== -1)
+    const directTools = parsed.filter(p => DEFAULT_EXEC_UNDO_TOOLS.indexOf(p.toolName) === -1 && CONFIRM_TOOLS_KEEP.indexOf(p.toolName) === -1)
 
-      // P2：phase1 文本 + 模板化工具结果摘要
-      const phase1Text = (phase1.text || '').trim()
+    // 1) B 类确认卡（保单/新建家庭）→ 构造 write_confirm 确认卡（不 dispatch）
+    if (confirmTools.length > 0) {
+      const wc = buildWriteConfirms(confirmTools)
+      suggestions = wc.suggestions
+      pending_confirms = wc.pending_confirms
+    }
+
+    // 2) A 类默认执行 + 撤销（before 快照 → dispatch → 落 undo_logs）
+    if (undoableTools.length > 0) {
+      toolResults = toolResults.concat(await _dispatchUndoTools({ tools: undoableTools, toolDefs: filteredDefs, dispatch, familyId, openid, toolSummaries }))
+    }
+
+    // 3) 直接执行工具（query/delete/triggerAnalysis/writeMessage）→ dispatch（校验 + 执行）
+    if (directTools.length > 0) {
+      toolResults = toolResults.concat(await _dispatchDirectTools({ directTools, toolDefs: filteredDefs, dispatch, familyId, openid }))
+    }
+
+    // 数据变更后仅失效状态块（2026-08-30 长期记忆）：基础摘要为稳定前缀，保 DeepSeek context caching 命中；
+    // 写后最新状态由下一轮状态块重建承载（本轮回流已携带 tool 执行结果）
+    // P1-C1 修复：状态块实际存于 _stateCache（index 传入 stateCache），失效须打在它上面；
+    // 旧调用（测试/历史路径）只传 ctxCache 时回退 ctxCache，保证兼容
+    if (toolResults.some(tr => tr.success)) (stateCache || ctxCache).invalidate('state:' + familyId + ':' + openid)
+
+    // 执行结果处理（待确认项合并 + 回流/文本生成）
+    if (toolResults.length > 0) {
+      // 执行结果里的待确认项（delete* 409 / 低置信度冲突）合并进确认卡
+      const dRes = buildSuggestions(toolResults)
+      suggestions = suggestions.concat(dRes.suggestions)
+      pending_confirms = pending_confirms.concat(dRes.pending_confirms)
+
+      // 回流处理
+      const hasPending = dRes.pending_confirms.length > 0
+      const failedResults = toolResults.filter(tr => !tr.success)
       const summaryParts = toolResults
         .filter(tr => tr.success)
-        .map(tr => {
-          const summaryFn = toolSummaries[tr.toolName]
-          return summaryFn ? summaryFn(tr) : null
-        })
+        .map(tr => toolSummaries[tr.toolName] ? toolSummaries[tr.toolName](tr) : null)
         .filter(Boolean)
       const summary = summaryParts.length > 0 ? '\n\n' + summaryParts.join('\n') : ''
-      const summaryText = ((phase1Text || cleanText) + summary).trim() // 模板兜底（不含 A 断言）
-      const hasPending = suggestions.length > 0
-      const failedResults = toolResults.filter(tr => !tr.success)
-      // v9.5 成功回流排除项：triggerAnalysis（fire-and-forget，无数据可组织）、writeMessage（内部写消息）。
-      // query* 从排除名单移除——用户主动查询时（如"看看保单信息"）工具结果必须回流展示实际数据，
-      // 否则回复停在 A 的"为您查询..."过程语，数据丢失（实测 queryPolicies 返回 4 张保单未展示）。
+      const summaryText = (phase1Text + summary).trim()
+
+      // 成功回流排除项：triggerAnalysis（fire-and-forget，无数据可组织）、writeMessage（内部写消息）
       const REFLOW_SKIP = ['triggerAnalysis', 'writeMessage']
       const reflowable = toolResults.filter(tr => tr.success && REFLOW_SKIP.indexOf(tr.toolName) === -1)
+
       if (hasPending) {
         // 待确认：phase1 文本 + 确认卡
-        cleanText = phase1Text || cleanText
+        cleanText = phase1Text
       } else if (failedResults.length > 0) {
-        // v9 失败场景：不保留通道 A 的断言文本（A 可能断言了未发生的操作），先用成功项模板兜底，
-        // P2.5 失败回流再生成失败提示覆盖（"为什么没写成 + 下一步"）
+        // 失败场景：先用成功项模板兜底，失败回流再生成失败提示覆盖（与成功回流共用 _refineReply 序列）
         cleanText = summaryText
-      } else if (reflowable.length > 0) {
-        // v9.3 成功回流：写类工具全部成功 → 工具结果回流 B 生成最终回复
-        // （B 基于真实执行结果组织确认语，消除 A 执行前断言的细节偏差，如部分字段落库差异）
-        cleanText = await _reflowWithResults({ toolResults, userText, aText, cleanText, ctxCache, familyId, openid, sid, history, toolSummaries, buildToolSystemPrompt })
-      } else {
-        // v9 全部成功但无可回流工具（如仅 triggerAnalysis/query）：保留通道 A 的断言文本原样
-        cleanText = aText || summaryText
-      }
-
-      // P2.5 失败回流：存在工具失败时，把执行结果（成功=模板句，失败=错误详情）回流模型再生成，
-      // 让 AI 解释失败原因并给出下一步（重试/澄清/改法），而非模板丢弃错误（原 filter(success) 丢失败信息）。
-      // 写类成功仍走模板（省 token），仅失败场景多一次调用（低频，成本可接受）。
-      if (failedResults.length > 0 && !hasPending) {
         try {
-          const { callChat } = require('./_shared/ai-client')
-          const { safeCallChat } = require('./_shared/ai-gateway')
           const toolCallMsgs = (phase1.toolCalls || []).map(tc => ({
             role: 'assistant',
             content: phase1Text || null,
@@ -338,30 +469,29 @@ async function orchestrate({
               ? (toolSummaries[tr.toolName] ? toolSummaries[tr.toolName](tr) : '执行成功')
               : JSON.stringify({ error: tr.error || '执行失败' })
           }))
-          const refineMsgs = [
-            { role: 'system', content: buildToolSystemPrompt() + '\n\n当前客户信息：\n' + ctx },
-            { role: 'user', content: userText },
-            ...toolCallMsgs,
-            ...toolResultMsgs
-          ]
-          const phase2 = await safeCallChat(
-            refineMsgs, callChat,
-            { cloud, db: cloud.database(), openid, familyId, sessionId: sid, model: 'hy3', action: 'conversation_tool_refine', skipRateLimit: true },
-            { maxTokens: 800 }
-          )
-          if (phase2.text && phase2.text.trim()) cleanText = phase2.text.trim()
+          const refined = await _refineReply({ ctx, familyId, openid, sid, userText, histMsgs: [], toolCallMsgs, toolResultMsgs, systemHint: '', buildToolSystemPrompt })
+          if (refined) cleanText = refined
         } catch (e) {
           console.warn('[tool-orchestration] 失败回流再生成失败，回退模板拼接:', (e && e.message) || e)
         }
+      } else if (reflowable.length > 0) {
+        // 全部成功 → 工具结果回流 B 生成最终回复
+        cleanText = await _reflowWithResults({ toolResults, userText, phase1Text, cleanText, ctxCache, familyId, openid, sid, history, stateBlock: sb, toolSummaries, buildToolSystemPrompt })
+      } else {
+        // 全部成功但无可回流工具（如仅 triggerAnalysis/query）
+        cleanText = phase1Text || summaryText
       }
-
-      return { cleanText, suggestions, pending_confirms, toolResults }
+    } else {
+      // 无执行结果（仅 B 类确认卡）：phase1 文本 + 确认卡
+      cleanText = phase1Text
     }
+
+    return { cleanText, suggestions, pending_confirms, toolResults }
   } catch (e) {
     console.warn('[tool-orchestration] function calling 失败:', e.message)
   }
 
-  return { cleanText, suggestions: [], pending_confirms: [], toolResults }
+  return { cleanText, suggestions, pending_confirms, toolResults }
 }
 
-module.exports = { orchestrate, filterToolDefs }
+module.exports = { orchestrate, filterToolDefs, CONFIRM_TOOLS, DEFAULT_EXEC_UNDO_TOOLS: ['updateFinances', 'upsertMember', 'addFact'], CONFIRM_TOOLS_KEEP: ['addPolicy', 'updatePolicy', 'createFamily'] }

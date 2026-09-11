@@ -1,0 +1,10 @@
+{
+  "name": "reportPdf",
+  "version": "1.0.0",
+  "description": "报告 PDF 导出（pdfkit）",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3",
+    "pdfkit": "^0.15.0"
+  }
+}

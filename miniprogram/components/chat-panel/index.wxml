@@ -1,4 +1,4 @@
-<!-- AI 对话面板 -->
+<!-- AI 对话面板（单通道 v10：无流式；写入类工具确认卡） -->
 <view class="chat-root" wx:if="{{!collapsed}}">
   <view class="chat-overlay" catchtap="onCollapse" catchtouchmove="onNoop"></view>
   <view class="chat-panel" catchtouchmove="onNoop">
@@ -10,40 +10,50 @@
         <view wx:if="{{!messages.length && !thinking}}" class="msg-empty">
           <view class="msg-empty-title">小秘可以帮你</view>
           <view class="msg-empty-sub">试试这样问</view>
-          <view class="msg-empty-chip pressable" wx:for="{{emptyHints}}" wx:key="*this" catchtap="onEmptyHintTap" data-q="{{item}}" aria-label="问小秘：{{item}}">{{item}}</view>
+          <view class="msg-empty-chip pressable" wx:for="{{presetHints.length ? presetHints : emptyHints}}" wx:key="*this" catchtap="onEmptyHintTap" data-q="{{item}}" aria-label="问小秘：{{item}}">{{item}}</view>
         </view>
         <view wx:for="{{messages}}" wx:key="index" id="{{item._scrollId}}" class="msg-row {{item.role}}">
-          <!-- AI 回复：平铺无气泡，充分利用横向空间 -->
-          <view wx:if="{{item.role === 'assistant'}}" class="ai-msg {{item.isError ? 'ai-msg--err' : ''}}">
+          <!-- AI 回复：气泡格式（UX-3 修复）+ content 为空时不渲染避免与 thinking-bubble 冗余（UX-1 修复） -->
+          <block wx:if="{{item.role === 'assistant'}}">
+          <view wx:if="{{item.content || item.isError || item.pendingConfirms || (item.undoOps && item.undoOps.length)}}" class="ai-msg {{item.isError ? 'ai-msg--err' : ''}}">
             <markdown-render content="{{item.content || ''}}" compact="{{true}}" bind:linkTap="onLinkTap" />
-            <view wx:if="{{item.suggestions && item.suggestions.length > 0}}" class="sug-bar">
-              <view wx:for="{{item.suggestions}}" wx:key="*this" class="sug-chip pressable" catchtap="onSugTap" data-sug="{{item}}" aria-label="发送建议：{{item}}">{{item}}</view>
+            <!-- 确认卡（写入成员/财务/保单类工具待代理人确认） -->
+            <!-- 每张卡只渲染 CONFIRM 记录：后端按写操作生成 CONFIRM/KEEP 成对记录（共用同一 pendingId），
+                 此处过滤 KEEP 防重复卡片；取消按钮仍可用 CONFIRM 记录的 pendingId 发 {KEEP} -->
+            <view wx:if="{{item.pendingConfirms && item.pendingConfirms.length > 0}}" class="confirm-card">
+              <view wx:for="{{item.pendingConfirms}}" wx:for-item="pc" wx:for-index="cIdx" wx:key="pendingId" wx:if="{{pc.action === 'CONFIRM'}}" class="confirm-card-item">
+                <view class="confirm-card-head">
+                  <text class="confirm-card-target">{{pc.target || pc.toolName}}</text>
+                  <text class="confirm-card-badge">待确认</text>
+                </view>
+                <text class="confirm-card-summary">{{pc.summary}}</text>
+                <view class="confirm-card-actions">
+                  <view class="confirm-btn confirm-btn--cancel pressable" catchtap="onCardCancel" data-idx="{{index}}" data-cidx="{{cIdx}}" aria-label="取消写入">取消</view>
+                  <view class="confirm-btn confirm-btn--ok pressable" catchtap="onCardConfirm" data-idx="{{index}}" data-cidx="{{cIdx}}" aria-label="确认写入">确认</view>
+                </view>
+              </view>
+            </view>
+            <!-- 默认执行+撤销（②）：执行结果 + 撤销按钮 -->
+            <view wx:if="{{item.undoOps && item.undoOps.length > 0}}" class="undo-bar">
+              <view wx:for="{{item.undoOps}}" wx:for-item="op" wx:for-index="uIdx" wx:key="opId" class="undo-item">
+                <text class="undo-text">{{op.undoing ? '已提交撤销…' : op.summary}}</text>
+                <view wx:if="{{!op.undoing && op.ttl > 0}}" class="undo-btn pressable" catchtap="onUndo" data-idx="{{index}}" data-uidx="{{uIdx}}" aria-label="撤销该操作">撤销 · {{op.ttlText}}</view>
+              </view>
             </view>
             <text wx:if="{{!item.isError && item.time}}" class="ai-msg-time">{{item.time}}</text>
             <!-- 错误重试按钮 -->
             <view wx:if="{{item.isError}}" class="retry-btn pressable" catchtap="onRetrySend" data-idx="{{index}}" aria-label="重试发送">重试</view>
           </view>
+          </block>
           <!-- 用户消息：保留气泡右对齐 -->
           <view wx:else class="bubble user">
             <text>{{item.content}}</text>
           </view>
         </view>
-        <!-- P0修复6: 三点仅在 thinking 且非 B 处理中时显示（chat-source 首字到达时已置 thinking=false，此条件覆盖"首字前"场景） -->
-        <view wx:if="{{thinking && !bProcessing}}" class="ai-msg thinking-row">
+        <!-- 处理中指示：气泡 + 三点动画（单通道：AI 生成 + 工具执行 + 回流均在此态） -->
+        <view wx:if="{{bProcessing}}" class="thinking-bubble">
           <view class="thinking-dots"><view class="thinking-dot"></view><view class="thinking-dot"></view><view class="thinking-dot"></view></view>
-        </view>
-        <!-- 流式生成中停止入口 -->
-        <view wx:if="{{streaming && !thinking}}" class="streaming-row">
-          <text class="streaming-text">正在生成…</text>
-          <view class="stop-generate pressable" catchtap="onStopGenerate" aria-label="停止生成">停止</view>
-        </view>
-        <!-- P0修复1: B通道处理中（工具执行+回流），三点+进度文案，替代"文本与三点并存" -->
-        <view wx:if="{{bProcessing}}" class="streaming-row">
-          <view class="processing-left">
-            <view class="thinking-dots"><view class="thinking-dot"></view><view class="thinking-dot"></view><view class="thinking-dot"></view></view>
-            <text class="streaming-text">正在处理…</text>
-          </view>
-          <view class="stop-generate pressable" catchtap="onStopGenerate">停止</view>
+          <text class="streaming-text">正在处理…</text>
         </view>
         <view id="msg-bottom-anchor"></view>
       </view>

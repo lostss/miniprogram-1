@@ -8,9 +8,14 @@ const flow = require('../../utils/ocr-flow')
 const session = require('../../utils/session-store')
 const api = require('../../utils/apiClient')
 const errorHandler = require('../../utils/errorHandler')
+// 角色推断纯规则（候选 2 下沉，可单测：utils/role-infer.js）
+const roleInfer = require('../../utils/role-infer')
+// 领域写薄层（候选 5）：成员字段写收敛 field/value 语义
+const { saveMemberField } = require('../../utils/domain-writes')
 
-// UI 审计 A-S1/A-S2/A-S3：OCR 编辑/手动录入共用的数值字段清单（弹数字键盘 + 校验）
-const SHEET_NUMERIC_KEYS = ['sum_assured', 'annual_premium', 'payment_period', 'guaranteed_years']
+// UI 审计 A-S1/A-S2/A-S3：OCR 编辑/手动录入共用的数值字段清单（弹数字键盘 + 校验）。
+// 注意：payment_period 是文本（"20年/交至60岁/月交"），不能用数字键盘
+const SHEET_NUMERIC_KEYS = ['sum_assured', 'annual_premium']
 
 Component({
   properties: {
@@ -39,6 +44,8 @@ Component({
       clearTimeout(this._navTimer); clearTimeout(this._savedTick); clearInterval(this._ocrTick)
       if (this._roleResolve) { this._roleResolve(null); this._roleResolve = null }
       if (this._matchResolve) { this._matchResolve(null); this._matchResolve = null }
+      // 返回键防护兜底：组件销毁时撤销 enableAlertBeforeUnload，防残留拦截正常返回
+      try { if (typeof wx.disableAlertBeforeUnload === 'function') wx.disableAlertBeforeUnload() } catch (e) {}
     }
   },
   methods: {
@@ -76,7 +83,7 @@ Component({
       }
       wx.showModal({
         title: '检测到未完成的保单处理',
-        content: '上次处理进度：已识别 ' + batch.policies.length + ' 份保单，等待家庭匹配。是否继续？',
+        content: _timeAgo(savedTs) + '识别了 ' + batch.policies.length + ' 份保单，等待家庭匹配。是否继续？',
         confirmText: '继续处理', cancelText: '放弃',
         success: function(r) {
           if (self._disposed) return
@@ -102,13 +109,30 @@ Component({
       try { wx.setStorageSync('ocrBatch', { policies: this._procPolicies || [], cashValues: this._procCash || [], errors: (this._procErrors || []).map(function(e) { return { fileId: e.fileId, thumb: e.thumb || '', error: e.error || '识别失败' } }), savedAt: Date.now() }) } catch (e) { console.error('[ocr-flow] persistBatch:', e) }
     },
     _clearBatch() { try { wx.removeStorageSync('ocrBatch') } catch (e) {} },
-    _emitBusy() { this.triggerEvent('busychange', { busy: !!this.data.ocrMask.visible }) },
+    // 返回键防护（替代已失效的宿主 onBackPress 死代码）：OCR 遮罩展开时启用系统返回询问，
+    // 防误按返回退页丢进度；关闭时撤销。enableAlertBeforeUnload 为页面级、离开页面自动失效，
+    // 此处按遮罩显隐同步开关 + detached 兜底撤销，避免残留拦截正常返回。
+    _applyBackGuard() {
+      try {
+        const busy = !!(this.data.ocrMask && this.data.ocrMask.visible)
+        if (busy && typeof wx.enableAlertBeforeUnload === 'function') {
+          wx.enableAlertBeforeUnload({ message: '识别尚未完成，确定退出吗？' })
+        } else if (typeof wx.disableAlertBeforeUnload === 'function') {
+          wx.disableAlertBeforeUnload()
+        }
+      } catch (e) { /* 基础库过低无此 API 时静默降级 */ }
+    },
+    _emitBusy() { this.triggerEvent('busychange', { busy: !!this.data.ocrMask.visible }); this._applyBackGuard() },
 
     // ============ 主流程 ============
     async _startOCR(tempFiles) {
       // UI 审计 F-S4：确认卡/结果卡打开（visible=true）时禁止新 OCR，防覆盖当前处理中的批
       if (this._ocrBusy || this.data.ocrMask.visible) return
       this._ocrBusy = true
+      // Bug-A 修复（2026-09-09）：_savedEmitted 不随新批次重置——上一批保存触发跳转后，
+      // 本批 saved 弹窗的自动倒计时与「进入报告」被永久拦截（只有不检查它的「返回首页」可点）。
+      // 每个新 OCR 会话必须复位。
+      this._savedEmitted = false
       // UI 审计 交互 S1/状态 S1：进行中取消标志（返回键/放弃时置位，await 后检查点提前退出）
       this._ocrCancelled = false
       var tStart = Date.now(), total = tempFiles.length, setData = this.setData.bind(this), allFileIds = []
@@ -139,6 +163,15 @@ Component({
           if (upResult.fileIds[i]) { allFileIds.push(upResult.fileIds[i]); validThumbs.push(upResult.localPaths[i] || tempFiles[i]) }
         }
         var validIds = allFileIds.filter(function(id) { return !!id })
+        var uploadFailed = (upResult && upResult.failures) || 0
+        // 审计修复：上传失败不再落入"识别完成 0 份"的空卡（原 failures 返回后从未被读取，全失败无任何反馈）
+        if (validIds.length === 0) {
+          this.setData(flow.hide())
+          this._emitBusy()
+          wx.showToast({ title: uploadFailed > 0 ? ('有 ' + uploadFailed + ' 张图片上传失败') : '没有可识别的图片', icon: 'none', duration: 2500 })
+          return
+        }
+        if (uploadFailed > 0) wx.showToast({ title: uploadFailed + ' 张图片上传失败，已跳过', icon: 'none', duration: 2000 })
         if (validIds.length > 0) {
           var t0 = Date.now()
           clearInterval(this._ocrTick)
@@ -152,7 +185,8 @@ Component({
         }
         console.log('[OCR] 全批次收齐, 耗时:' + (Date.now() - tStart) + 'ms, 产品:' + allPolicies.length + ', 失败:' + errors.length)
         if (this._disposed || this._ocrCancelled) return
-        if (allPolicies.length === 0 && cashValues.length > 0) {
+        // 纯现价表分支：无保单且无失败项时直接入库。有失败项时必须停列表等人工处理（错误项也要展示，否则静默丢失）
+        if (allPolicies.length === 0 && cashValues.length > 0 && errors.length === 0) {
           var activeFid = this.properties.familyId || session.getActiveFamily()
           if (!activeFid) {
             wx.showModal({ title: '需要先创建家庭', content: '现价表需关联到家庭，请先上传保单或创建家庭后再试。', showCancel: false, confirmText: '知道了' })
@@ -320,6 +354,15 @@ Component({
           var removed = (self._procErrors || []).filter(function(x) { return x.fileId !== fileId })
           if (removed.length === (self._procErrors || []).length) return
           self._procErrors = removed
+          // UX 场景：无待确认记录（错误/待核对/成功三组全空）时自动关闭卡片，不必再点"全部放弃"
+          if (!(self._procPolicies || []).length && !(self.data.ocrMask.procReview || []).length && !self._procErrors.length) {
+            self.setData(Object.assign(flow.hide(), { 'ocrMask._policies': [], 'ocrMask._cashValues': [], 'ocrMask._familyId': '' }))
+            self._clearBatch()
+            self._emitBusy()
+            self.triggerEvent('discarded')
+            wx.showToast({ title: '已移除，无待确认记录', icon: 'none' })
+            return
+          }
           self._procRefresh(); self._persistBatch()
           wx.showToast({ title: '已移除', icon: 'none' })
         }
@@ -348,7 +391,14 @@ Component({
       this._saving = true
       try {
       var policies = this._procPolicies || [], cashValues = this._procCash || []
-      if (!policies.length && !cashValues.length) { this.setData(flow.hide()); this._emitBusy(); return }
+      if (!policies.length && !cashValues.length) {
+        // 审计修复：空批确认原为静默关卡（无 toast、无 _clearBatch）→ 用户误以为已保存，且残留 batch 下次 onShow 又弹恢复提示
+        this._clearBatch()
+        this.setData(flow.hide())
+        this._emitBusy()
+        wx.showToast({ title: '没有可保存的保单', icon: 'none' })
+        return
+      }
       var pick = null
       if (this.properties.skipMatch && this.properties.familyId) {
         pick = this.properties.familyId
@@ -363,7 +413,8 @@ Component({
         if (this._disposed) return
         if (!roleOut) {
           // skipMatch（报告页内上传）：角色卡"上一步"无返回路径，直接关遮罩，避免蒙层卡死
-          if (this.properties.skipMatch) { this.setData(flow.hide()); return }
+          // 组件审计 P1-2：必须 _emitBusy()——撤销 enableAlertBeforeUnload（否则返回键残留拦截）+ 上抛 busychange
+          if (this.properties.skipMatch) { this.setData(flow.hide()); this._emitBusy(); return }
           pick = await this._rerunMatch()
           if (this._disposed) return
           if (!pick) { this._openDone(); return }
@@ -382,6 +433,15 @@ Component({
         errorHandler.handle({ msg: errText }, { silent: true, context: 'ocrSave' })
         this.setData(flow.setFailed(errText)); return
       }
+      // Bug-B 对账（2026-09-09）：后端校验失败项仍返回 200；written=0 时不得再显示"保存成功"
+      var writtenN = (ok && typeof ok.written === 'number') ? ok.written : policies.length
+      var totalN = (ok && typeof ok.total === 'number') ? ok.total : policies.length
+      if (totalN > 0 && writtenN === 0) {
+        var failedN = totalN - (ok.dedupSkipped || 0)
+        errorHandler.handle({ msg: '保单未能落库' }, { silent: true, context: 'ocrSave' })
+        this.setData(flow.setFailed('保单未能保存：' + failedN + ' 份未通过校验，请检查后重试'))
+        return
+      }
       // 写入成功后回写 familyId（_procRefresh 时匹配未定，_familyId 仍为空；
       // saved 事件依赖它跳转报告页，缺失会导致"缺少客户信息"）
       this._procFamilyId = familyId
@@ -393,7 +453,7 @@ Component({
         if (fam) {
           await Promise.all(newRoles.map(function(rp) {
             var m = (fam.members || []).find(function(x) { return x.name === rp.name })
-            if (m && m.member_id) return api('updateMember', { familyId: familyId, memberId: m.member_id, field: 'role', value: rp.role }).catch(function() {})
+            if (m && m.member_id) return saveMemberField({ familyId: familyId, memberId: m.member_id, field: 'role', value: rp.role }).catch(function() {})
           }))
         } else {
           // UI 审计 F-S3：角色补写失败不再静默吞错（保单已写入，提示用户稍后可手动调整角色）
@@ -401,7 +461,8 @@ Component({
           wx.showToast({ title: '保单已保存，角色信息待同步', icon: 'none' })
         }
       }
-      var savedCount = policies.length, cashCount = (cashValues || []).length, self = this
+      // Bug-B：savedCount 用后端真实 written（含库中命中重复），不再用前端数组长度
+      var savedCount = writtenN, cashCount = (cashValues || []).length, self = this
       wx.nextTick(function() { if (!self._disposed) self._showSaved(savedCount, cashCount) })
       // 悬空修复：保存链任何环节抛错（匹配/角色/写入）→ 进 failed 相（有放弃/重试出口），不再无反馈悬空
       } catch (e) {
@@ -447,12 +508,19 @@ Component({
           }
         }
       }
-      var defaultPick = candidates.length > 0 ? candidates[0]._id : 'new'
+      // 2026-09-09 回滚：恢复默认预选（产品要求）。缓存命中优先，否则预选第一候选；
+      // 用户可直接"下一步"，也可改选——不再强制空选
+      var cachedValid = !!(cachedId && candidates.some(function(c) { return c._id === cachedId }))
+      var defaultPick = cachedValid ? cachedId : (candidates.length > 0 ? candidates[0]._id : 'new')
       this._stageCtx = { primaryHolder: primaryHolder, bloodNames: bloodNames }
       var candsUI = candidates.map(function(c) {
         return { _id: c._id, name: c.name, membersText: (c.members || []).map(function(m) { return m.name + (m.role ? '(' + m.role + ')' : '') }).join('、') }
       })
-      this.setData({ 'ocrMask.visible': true, 'ocrMask.phase': 'match', 'ocrMask.matchCandidates': candsUI, 'ocrMask.matchPick': defaultPick })
+      this.setData({
+        'ocrMask.visible': true, 'ocrMask.phase': 'match',
+        'ocrMask.matchCandidates': candsUI, 'ocrMask.matchPick': defaultPick,
+        'ocrMask.matchSummary': primaryHolder + ' · ' + allPolicies.length + ' 份保单'
+      })
       return await new Promise(function(resolve) { self._matchResolve = resolve })
     },
     onMatchPick(e) { this.setData({ 'ocrMask.matchPick': e.currentTarget.dataset.pick }) },
@@ -491,42 +559,25 @@ Component({
         if (this._disposed) return null
         if (!family) { wx.showToast({ title: '读取家庭失败，请重试', icon: 'none' }); return null }
       }
-      var birthMap = {}
-      ;(allPolicies || []).forEach(function(p) {
-        if (p.policyholder_name && p.policyholder_birth_date) birthMap[p.policyholder_name] = p.policyholder_birth_date
-        if (p.insured_name && p.insured_birth_date) birthMap[p.insured_name] = p.insured_birth_date
-        if (p.beneficiary_name && p.beneficiary_birth_date) birthMap[p.beneficiary_name] = p.beneficiary_birth_date
-      })
-      function _age(b) { if (!b) return NaN; var d = new Date(b); if (isNaN(d.getTime())) return NaN; return new Date().getFullYear() - d.getFullYear() }
-      function _infer(name, sa) {
-        var a = _age(birthMap[name])
-        if (isNaN(a) || isNaN(sa)) return null
-        var d = sa - a
-        if (d > 18) return '子女'
-        if (d < -18) return '父母'
-        return '配偶'
-      }
-      var selfAge = _age(birthMap[ctx.primaryHolder])
+      var birthMap = roleInfer.buildBirthMap(allPolicies)
+      var selfAge = roleInfer.ageFromBirth(birthMap[ctx.primaryHolder])
       // 家庭既有角色占用（本人/配偶 全局唯一），携带 memberId 供替换清除
-      var occupied = {}
-      ;(family.members || []).forEach(function(m) {
-        if (m.role === '本人' || m.role === '配偶') occupied[m.role] = { name: m.name, memberId: m.member_id }
-      })
-      // 默认推测：跳过已被占用的角色
-      function _inferRole(name, sa) {
-        var r = _infer(name, sa) || '其他'
-        if ((r === '本人' || r === '配偶') && occupied[r]) return '其他'
-        return r
-      }
-      var roleList = [], existingNames = {}
-      ;(family.members || []).forEach(function(m) { existingNames[m.name] = true })
+      var occupied = roleInfer.occupiedRoles(family.members)
+      var roleList = []
+      var memberByName = {}
+      ;(family.members || []).forEach(function(m) { memberByName[m.name] = m })
       if (isNew) {
-        ;(family.members || []).forEach(function(m) { roleList.push({ name: m.name, memberId: m.member_id, role: m.role === '本人' ? '本人' : _inferRole(m.name, selfAge), isNew: false }) })
+        ;(family.members || []).forEach(function(m) { roleList.push({ name: m.name, memberId: m.member_id, role: m.role === '本人' ? '本人' : roleInfer.inferRelation(m.name, selfAge, birthMap, occupied), isNew: false }) })
       } else {
-        ;(family.members || []).forEach(function(m) { if (!m.role || m.role === '') roleList.push({ name: m.name, memberId: m.member_id, role: _inferRole(m.name, selfAge), isNew: false }) })
+        // 2026-09-09 产品调整：本批保单涉及的人（primaryHolder + 被保人 + 非身故受益人）每次入库都显示角色确认，
+        // 已配角色作为默认值展示、可调整——不再只问"无角色/新成员"，杜绝角色静默错误
         ctx.bloodNames.forEach(function(n) {
-          if (!existingNames[n]) {
-            var role = _inferRole(n, selfAge)
+          if (!n) return
+          var m = memberByName[n]
+          if (m) {
+            roleList.push({ name: n, memberId: m.member_id, role: m.role || roleInfer.inferRelation(n, selfAge, birthMap, occupied), isNew: false })
+          } else {
+            var role = roleInfer.inferRelation(n, selfAge, birthMap, occupied)
             // 默认规则：投保人 → 本人（本人未被占用时）
             if (n === ctx.primaryHolder && !occupied['本人']) role = '本人'
             roleList.push({ name: n, memberId: 'new_' + roleList.length, role: role, isNew: true })
@@ -544,10 +595,10 @@ Component({
       confirmed.forEach(function(r) { if (r.clearMemberId) clearIds.push(r.clearMemberId) })
       var uniqIds = clearIds.filter(function(v, i, a) { return a.indexOf(v) === i })
       await Promise.all(uniqIds.map(function(mid) {
-        return api('updateMember', { familyId: familyId, memberId: mid, field: 'role', value: '' }).catch(function() {})
+        return saveMemberField({ familyId: familyId, memberId: mid, field: 'role', value: '' }).catch(function() {})
       }))
       var updates = confirmed.filter(function(r) { return r.role && !r.isNew && r.memberId }).map(function(rr) {
-        return api('updateMember', { familyId: familyId, memberId: rr.memberId, field: 'role', value: rr.role }).catch(function() {})
+        return saveMemberField({ familyId: familyId, memberId: rr.memberId, field: 'role', value: rr.role }).catch(function() {})
       })
       await Promise.all(updates)
       if (this._disposed) return null
@@ -556,21 +607,9 @@ Component({
       var newRoles = confirmed.filter(function(r) { return r.isNew && r.role }).map(function(rr) { return { name: rr.name, role: rr.role } })
       return { familyId: familyId, newRoles: newRoles }
     },
-    // 实时互斥：家庭占用 + 列表内已选 → 每项 conflict { 角色: 占用者姓名 }
+    // 实时互斥：家庭占用 + 列表内已选 → 每项 conflict { 角色: 占用者姓名 }（规则在 utils/role-infer.js，候选 2 下沉）
     _applyRoleState(list) {
-      var occ = {}
-      var occupied = this._roleOccupied || {}
-      Object.keys(occupied).forEach(function(k) { occ[k] = occupied[k].name })
-      for (var i = 0; i < list.length; i++) {
-        var r = list[i]
-        if (r.role === '本人' || r.role === '配偶') occ[r.role] = r.name
-      }
-      return list.map(function(r) {
-        var conflict = {}
-        if (occ['本人'] && occ['本人'] !== r.name) conflict['本人'] = occ['本人']
-        if (occ['配偶'] && occ['配偶'] !== r.name) conflict['配偶'] = occ['配偶']
-        return Object.assign({}, r, { conflict: conflict })
-      })
+      return roleInfer.applyRoleConflicts(list, this._roleOccupied || {})
     },
     onRolePick(e) {
       var idx = e.currentTarget.dataset.idx, role = e.currentTarget.dataset.role
@@ -627,7 +666,8 @@ Component({
       var data = e.detail || {}
       if (sheet.policyIndex === -1) {
         // 手动录入新增：保留非空字段，清空项不入库
-        var np = {}
+        // M2：人工录入视为人工核对过，置 auto_confirmed=true（避免待核对组残留）
+        var np = { auto_confirmed: true }
         Object.keys(data).forEach(function(k) {
           var v = String(data[k] || '').trim()
           if (v) { np[k] = v; np.field_confidence = np.field_confidence || {}; np.field_confidence[k] = 0.99 }
@@ -647,6 +687,9 @@ Component({
       if (!p) { this.setData({ 'ocrSheet.visible': false, 'ocrSheet.mode': 'view' }); return }
       var np2 = Object.assign({}, p)
       if (!np2.field_confidence) np2.field_confidence = {}
+      // M2：人工编辑核对过 → auto_confirmed=true（确认卡按 auto_confirmed 判定，
+      // 否则编辑后仍滞留"待核对"组；field_confidence=0.99 不联动该判定）
+      np2.auto_confirmed = true
       Object.keys(data).forEach(function(k) {
         var v = String(data[k] || '').trim()
         if (v) { np2[k] = v; np2.field_confidence[k] = 0.99 }
@@ -689,7 +732,8 @@ Component({
       this._clearBatch()
       this.setData({ 'ocrMask.visible': true, 'ocrMask.phase': 'saved', 'ocrMask.confirming': false, 'ocrMask.savedPolicies': savedPolicies || 0, 'ocrMask.savedCash': savedCash || 0 })
       this._emitBusy()
-      this._savedTick = setTimeout(function() { self._finishSaved(false) }, self.properties.skipMatch ? 1000 : 2000)
+      // 2026-09-09 UX：2s → 3s（原文案"已保存 N 份"常来不及读完就被跳走）
+      this._savedTick = setTimeout(function() { self._finishSaved(false) }, self.properties.skipMatch ? 1000 : 3000)
     },
     _finishSaved(manual) {
       if (this._disposed || this._savedEmitted) return
@@ -709,9 +753,9 @@ Component({
     _fieldLabels() {
       return {
         product_name: '产品名称', insurance_category: '险种', policy_number: '保单号', insurer: '保险公司',
-        effective_date: '保障期限', insured_name: '被保险人', policyholder_name: '投保人', beneficiary_name: '受益人',
+        effective_date: '生效日期', insured_name: '被保险人', policyholder_name: '投保人', beneficiary_name: '受益人',
         sum_assured: '保额', payment_method: '缴费方式', payment_period: '缴费年限', annual_premium: '年缴保费',
-        guaranteed: '保证领取', guaranteed_years: '保证领取年限'
+        insurance_period: '保障期限'
       }
     },
     // 置信度三档 → 底色 tone（设计稿：高白/中淡黄/低淡橙/已修改浅蓝）
@@ -739,7 +783,7 @@ Component({
         { title: '基础信息', keys: ['product_name', 'insurance_category', 'policy_number', 'insurer', 'effective_date'] },
         { title: '人员信息', keys: ['insured_name', 'policyholder_name', 'beneficiary_name'] },
         { title: '缴费信息', keys: ['payment_method', 'payment_period', 'annual_premium'] },
-        { title: '保障信息', keys: ['sum_assured', 'guaranteed', 'guaranteed_years'] }
+        { title: '保障信息', keys: ['sum_assured', 'insurance_period'] }
       ]
       // 保单基本必填：产品名称/被保人/保额/保障期限(effective_date)/年缴保费/缴费年期
       var REQUIRED_KEYS = ['product_name', 'insured_name', 'sum_assured', 'effective_date', 'annual_premium', 'payment_period']
@@ -772,8 +816,14 @@ Component({
         var ocrRes = null
         if (newFileId) {
           // S3-2：优先用云端 fileId 直 OCR（跨会话仍有效，不重传）
-          // S2-3：沿用 batchOCR 自动分流（避免 DEEPSEEK_API_KEY 未配置时 parallel 报错）
-          ocrRes = await flow.batchOCR([newFileId], null, opts)
+          // 2026-09-09：优先复用已缓存的 OCR 文本 → 只重跑 AI，省一次 OCR 计费（约 0.5 元/张）
+          // 无缓存（跨会话恢复/新上传）时回退完整链路 batchOCR
+          var cached = flow.getCachedOcrText(newFileId)
+          if (cached) {
+            ocrRes = await flow.retryAiOnly([{ fileId: newFileId, ocrText: cached.ocrText, ocrConfInfo: cached.ocrConfInfo }], opts)
+          } else {
+            ocrRes = await flow.batchOCR([newFileId], null, opts)
+          }
           var firstErr = (ocrRes.errors || [])[0]
           var fileGone = !!(ocrRes.errors && ocrRes.errors.length && firstErr && firstErr.error_code && /file|not_found|no_such/.test(firstErr.error_code))
           if (fileGone) newFileId = ''
@@ -799,6 +849,14 @@ Component({
     }
   }
 })
+// 相对时间文案（恢复弹窗：让用户知道"这批"是什么时候的）
+function _timeAgo(ts) {
+  var mins = Math.max(1, Math.round((Date.now() - (ts || 0)) / 60000))
+  if (mins < 60) return mins + ' 分钟前'
+  var hours = Math.round(mins / 60)
+  if (hours < 24) return hours + ' 小时前'
+  return Math.round(hours / 24) + ' 天前'
+}
 function apiGetFamily(familyId) {
   return api('getFamily', { familyId: familyId }).then(function(r) { return r.ok ? r.data : null }).catch(function() { return null })
 }

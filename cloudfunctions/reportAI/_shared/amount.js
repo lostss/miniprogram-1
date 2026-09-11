@@ -25,7 +25,8 @@ function fmtYuan(v) {
   if (isNaN(n)) return String(v)
   if (n >= 10000) {
     const x = Math.round(n / 100) / 100
-    return `${Number.isInteger(x) ? x : x}万`
+    // 2026-09-11：原 `${Number.isInteger(x) ? x : x}万` 是恒等死三元（两个分支相同），清理
+    return `${x}万`
   }
   return `${n}元`
 }

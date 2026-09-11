@@ -15,8 +15,7 @@ const { getFamily, updateFamily, deleteFamily, safeQuery } = require('./_shared/
 const { writeSeam, advanceStage, markFamilyMutated } = require('./_shared/writeSeam')
 const { calcCompletenessScore } = require('./_shared/completeness')
 const { ALLOWED_FIELDS, isSafeKey } = require('./constants')
-const { STAGES } = require('./_shared/domain/stageMachine')
-const { upsertFinances, createMembersForFamily } = require('./_shared/memberRepo')
+const { upsertFinances, createMembersForFamily, _MEMBER_FIELDS } = require('./_shared/memberRepo')
 const { loadFamilyView } = require('./_shared/familyView')
 const { wrapError } = require('./_shared/errorHandler')
 const { wanToYuan } = require('./_shared/amount')
@@ -130,18 +129,15 @@ async function _syncMembers(db, familyId, openid, incoming) {
     const ex = existingMap.get(mid)
     if (ex) {
       // 原地更新（仅写传入字段，保留 _id 与 member_id）
+      // 候选 4：字段白名单单源（memberRepo._MEMBER_FIELDS），age/income 数字归一语义保留
       const patch = { updated_at: now }
       // S3-6 修复：重添同 member_id 的已软删成员时恢复 status='active'
       // 原实现不写 status，用户重新添加后得到"更新成功"但成员仍处于 deleted 状态，前端列表看不到
       if (ex.status === 'deleted') patch.status = 'active'
-      if (m.name !== undefined) patch.name = m.name
-      if (m.age !== undefined) patch.age = Number(m.age) || 0
-      if (m.income !== undefined) patch.income = Number(m.income) || 0
-      if (m.role !== undefined) patch.role = m.role
-      if (m.gender !== undefined) patch.gender = m.gender
-      if (m.occupation !== undefined) patch.occupation = m.occupation
-      if (m.health !== undefined) patch.health = m.health
-      if (m.birth_date !== undefined) patch.birth_date = m.birth_date
+      for (const f of _MEMBER_FIELDS) {
+        if (m[f] === undefined) continue
+        patch[f] = (f === 'age' || f === 'income') ? (Number(m[f]) || 0) : m[f]
+      }
       await ws.silentUpdateDoc('members', ex._id, patch)
     } else {
       // 新成员 → 创建（member_id 非 mem_ 前缀则生成，防前端 m_ 临时 id 入库）
@@ -183,7 +179,7 @@ async function _updateFamilyDelete(db, familyId, openid) {
     // 全链路审计 PM5：先 batchTx 删关联数据，再删 family 文档——原顺序先删 family，
     // batchTx 失败时残留 policies/facts 等孤儿（family 已不存在，无入口再清理）
     const ws = writeSeam(db, openid, familyId, { markMutated: false, advanceStageHook: false })
-    const txResult = await ws.batchTx([
+    const cascadeSteps = [
       { name: 'members', exec: () => ws.batchRemove('members', { family_id: familyId }, 100, true) },
       { name: 'messages', exec: () => ws.batchRemove('messages', { family_id: familyId }, 100, true) },
       { name: 'facts', exec: () => ws.batchRemove('facts', { family_id: familyId }, 100, true) },
@@ -198,11 +194,19 @@ async function _updateFamilyDelete(db, familyId, openid) {
       // 级联删除审计 #4：agent_logs 的 '' 孤儿与 operation_logs 对齐一并清理
       { name: 'orphan_logs', exec: () => ws.batchRemove('operation_logs', { family_id: '' }, 100, true) },
       { name: 'orphan_agent_logs', exec: () => ws.batchRemove('agent_logs', { family_id: '' }, 100, true) }
-    ])
+    ]
+    let txResult = await ws.batchTx(cascadeSteps)
+    // 2026-09-09 修复：部分级联失败（瞬时单文档异常/日志量大）→ 幂等自动重试一次，
+    // 避免一次抖动让用户看到 207"删除失败"且家庭半删除（policies/facts 已清、family 残留）
+    if (txResult.failed > 0) {
+      console.warn('[dataWrite] deleteFamily 首轮部分级联失败，自动重试:', JSON.stringify((txResult.errors || []).map(function(e) { return (e && e.name) || e })))
+      await new Promise(function(r) { setTimeout(r, 300) })
+      txResult = await ws.batchTx(cascadeSteps)
+    }
     const total = (txResult.results || []).reduce((a, b) => a + (b || 0), 0)
     // 部分失败时返回 partial 标记：保留 family 文档（可重试清理），避免孤儿数据
     if (txResult.failed > 0) {
-      console.error('[dataWrite] deleteFamily 部分级联失败:', JSON.stringify(txResult.errors))
+      console.error('[dataWrite] deleteFamily 部分级联失败（自动重试后仍失败）:', JSON.stringify(txResult.errors))
       return { code: 207, msg: '部分级联数据清理失败，家庭未删除，可重试', partial: true, cascadeCleaned: total, errors: txResult.errors }
     }
     // 全链路审计 PM5：关联数据全部清理成功后，最后删 family 文档
@@ -219,15 +223,4 @@ async function deleteFamilyHandler(db, openid, event) {
   return _updateFamilyDelete(db, familyId, openid)
 }
 
-// ---------- setStage ----------
-async function setStage(db, openid, event) {
-  const { familyId, stage } = event
-  if (!familyId) return { code: 400, msg: '缺少参数 familyId' }
-  if (!STAGES.includes(stage)) return { code: 400, msg: '不支持的阶段：' + stage }
-  // setStage 直接设置阶段，无需 advanceStage 钩子
-  const ws = writeSeam(db, openid, familyId, { advanceStageHook: false })
-  await ws.updateWhere('families', { _id: familyId }, { engagement_stage: stage })
-  return { code: 200, data: { stage } }
-}
-
-module.exports = { createFamily, updateFamilyHandler, deleteFamilyHandler, setStage }
+module.exports = { createFamily, updateFamilyHandler, deleteFamilyHandler }

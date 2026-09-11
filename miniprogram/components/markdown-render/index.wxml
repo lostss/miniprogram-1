@@ -1,4 +1,4 @@
-<view class="markdown-container {{compact ? 'markdown-container--compact' : ''}}">
+<view class="markdown-container {{compact ? 'markdown-container--compact' : ''}}{{variant ? ' markdown-container--' + variant : ''}}">
   <block wx:for="{{ nodes }}" wx:key="index">
     <!-- 标题 -->
     <view wx:if="{{ item.type === 'heading' }}" class="md-heading md-heading--{{ item.level }}">

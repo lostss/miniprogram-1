@@ -9,9 +9,9 @@
  *
  * 不变量：
  *   1. _openid 注入（防越权，所有 where 必须带 _openid）
- *   2. 错误吞并返回 null（sug 拦截是非关键路径，不应阻断主流程）
+ *   2. 错误吞并返回空值（非关键路径，不应阻断主流程）
  *
- * 导出：getLatestAssistantMsg
+ * 导出：getLatestAssistantMsg、getFamilyHistory（2026-08-30 长期记忆增量历史）
  */
 
 /**
@@ -29,4 +29,49 @@ async function getLatestAssistantMsg(db, familyId, openid) {
   return (r.data && r.data[0]) || null
 }
 
-module.exports = { getLatestAssistantMsg }
+// 内部拦截指令（CONFIRM/KEEP/UNDO/sug 点击）会以 user 角色落库，AI 读全量历史时不可见原始指令
+const CMD_RE = /^\{[A-Z]+:[\w-]+\}$/
+function _friendlyContent(content) {
+  const c = String(content || '')
+  if (CMD_RE.test(c.trim())) return '（用户操作了界面按钮）'
+  return c
+}
+
+/**
+ * 取 family 全量对话历史（append-only 增量记忆，2026-08-30）
+ *
+ * 契约：
+ *   - 返回 [{ role: 'user'|'assistant', content }]，按 created_at 升序（时间正序）
+ *   - after：压缩游标（families.ctx_compacted_at）——压缩后只读该时间点之后的消息，
+ *     保证注入前缀在压缩后重新稳定（基础摘要含压缩前全部状态）
+ *   - 内部指令消息（{CONFIRM:..}/{UNDO:..}）替换为可读占位，防 AI 误读
+ *   - desc + limit 再 reverse：防御性上限（READ_LIMIT）截断时保留最新消息
+ *
+ * @param {object} db
+ * @param {string} familyId
+ * @param {string} openid
+ * @param {object} [opts] - { after: Date|string|null, limit: number }
+ * @returns {Promise<Array<{role: string, content: string}>>}
+ */
+async function getFamilyHistory(db, familyId, openid, opts = {}) {
+  try {
+    const { after, limit } = opts
+    let where = { family_id: familyId, _openid: openid }
+    if (after) {
+      const _ = db.command
+      where.created_at = _.gt(new Date(after))
+    }
+    let q = db.collection('messages').where(where).orderBy('created_at', 'desc')
+    if (limit) q = q.limit(limit)
+    const r = await q.get()
+    return (r.data || []).slice().reverse().map(m => ({
+      role: m.role === 'user' ? 'user' : 'assistant',
+      content: _friendlyContent(m.content).substring(0, 500)
+    }))
+  } catch (e) {
+    console.warn('[message-read] getFamilyHistory 失败:', (e && e.message) || e)
+    return []
+  }
+}
+
+module.exports = { getLatestAssistantMsg, getFamilyHistory }

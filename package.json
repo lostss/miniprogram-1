@@ -4,7 +4,7 @@
   "private": true,
   "description": "微信小程序保单管理 - 单元测试",
   "scripts": {
-    "test": "jest --verbose",
+    "test": "node scripts/sync-shared.js --check && jest --verbose",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "sync:shared": "node scripts/sync-shared.js",

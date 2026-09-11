@@ -86,7 +86,8 @@ Component({
       this.data.fields.forEach(f => {
         // 分组标题项（isGroup）无 key/value，跳过不收集
         if (f.isGroup) return
-        data[f.key] = f.value
+        // 业务转换钩子（如期限"终身"→ 编码 99），通用组件不做类型推断
+        data[f.key] = f.transform ? f.transform(f.value) : f.value
       })
       this.triggerEvent('save', data)
     },

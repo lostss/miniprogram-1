@@ -37,6 +37,15 @@ function _fmtDate(d) {
   return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate() + '到期'
 }
 
+// 一年期判定：起止日相差约 1 年（345~385 天，容忍闰年/起止边界偏移）
+function _isOneYearSpan(effStr, expiryDate) {
+  if (!expiryDate || !effStr) return false
+  const eff = new Date(effStr)
+  if (isNaN(eff.getTime())) return false
+  const diffDays = (expiryDate.getTime() - eff.getTime()) / 86400000
+  return diffDays >= 345 && diffDays <= 385
+}
+
 /**
  * 计算保单状态
  * @param {object} policy - 保单对象 { effective_date, insurance_period, payment_period, insured_age }
@@ -56,7 +65,9 @@ function calcStatus(policy) {
 
   // 用户决策：自动到期判断只对一年期以上产品生效，排除一年期产品
   //（一年期通常为灵活续保/保证续保，不因生效满一年自动判 expired；有明确到期日时由 OCR/表单 coverage_term 承载）
-  if (period === '1年' || /^1\s*年/.test(period)) {
+  // 文本形态：'1年' / '1年期' / '一年' / '壹年'；日期区间形态（如"自2024年01月15日...至2025年01月14日"）由下方
+  // _isOneYearSpan 语义判定兜底（parseExpiry 会先解析出精确到期日，须在 expired 判断前拦截）
+  if (/^(1|一|壹)\s*年/.test(period)) {
     return { status: 'active', expiryInfo: '一年期', expiry_year: null }
   }
 
@@ -64,6 +75,10 @@ function calcStatus(policy) {
 
   // 判断是否过期
   if (expiry.year !== null) {
+    // 日期区间形态的一年期（如 2024-01-15 至 2025-01-14）：保证续保场景，不因到期日已过自动判 expired
+    if (expiry.date && _isOneYearSpan(eff, expiry.date)) {
+      return { status: 'active', expiryInfo: '一年期', expiry_year: expiry.year }
+    }
     // 有精确到期日则按日期比较
     if (expiry.date && expiry.date < now) {
       return { status: 'expired', expiryInfo: _fmtDate(expiry.date), expiry_year: expiry.year }

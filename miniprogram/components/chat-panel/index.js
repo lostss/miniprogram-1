@@ -2,39 +2,39 @@ const api = require('../../utils/apiClient')
 const errorHandler = require('../../utils/errorHandler')
 // P0 安全防护：复用 _shared/pii-rules.js（由 sync-shared.js CONTRACT_FILES 同步到 utils/）
 const { sanitize, desensitize } = require('../../utils/pii-rules')
-// 注入检测（R3v2 #1）：与后端 guard 共用同一规则源
+// 注入检测：与后端 guard 共用同一规则源
 const { detectInjection } = require('../../utils/injection-guard')
 // 全角标点转换：复用 md-inline 公共引擎，与 report-markdown/markdown-render 行为一致
 const { _toFullwidth: _fullWidthPunct } = require('../../utils/md-inline')
-// AI 输出标记清理（兜底 + 流式 partial）：复用 markers.js 单一事实源
+// AI 输出标记清理（兜底）：复用 markers.js 单一事实源
 const { cleanMarkers } = require('../../utils/markers')
-// 架构审计 C：抽 3 个深模块（chat-source / history-store / prompt-cache）
-// 接缝显形：stream/generate 是双 adapter，history 分页状态独立，prompt TTL 可测
-const { createChatSource } = require('../../utils/chat-source')
-const { createHistoryStore } = require('../../utils/history-store')
-const { createPromptCache } = require('../../utils/prompt-cache')
+// 历史分页加载 + TTL 缓存；fmtTime/fmtCountdown 为公共格式化（C2 2026-08-30 审计）
+const { createHistoryStore, fmtTime, fmtCountdown } = require('../../utils/history-store')
 
-// 兜底清理（落库前）：与 cleanMarkers() 默认行为一致
-function _stripMarkers(s) { return cleanMarkers(s) }
-
-/** AI 对话面板 — FAB 吸底（三步流程 v5.0） */
+/**
+ * AI 对话面板 — FAB 吸底（单通道 v10）
+ * 架构变化（2026-08-29）：
+ *  - 放弃流式 + 双通道：不再 streamText/{TOOL_INTENT} 标识，前端一次调用 conversationAI mode:'chat'
+ *  - 后端原生 function calling 一步到位；写入成员/财务/保单类工具返回确认卡（pendingConfirms），
+ *    代理人确认后二次调用走 CONFIRM 拦截执行；facts 写入无需确认
+ *  - 删除：chat-source（流式 adapter）、prompt-cache（getPrompt 已下线）、onStopGenerate/streaming
+ */
 Component({
   options: { styleIsolation: 'apply-shared' },
-  properties: { familyId: { type: String, value: '' } },
-  data: { collapsed: true, inputText: '', messages: [], thinking: false, scrollIntoView: '', refreshingMore: false, bProcessing: false, emptyHints: ['查看当前家庭的保障情况', '记录家庭成员信息', '分析保障缺口'] },
-  // 审计：原文件存在两个 observers 键（对象字面量后者覆盖前者），'thinking, bProcessing' 监听实际失效，合并修复
+  properties: {
+    familyId: { type: String, value: '' },
+    // 空态预埋问题：父页面从缺口引擎生成"您可能想问"；空数组时回退默认 emptyHints
+    presetHints: { type: Array, value: [] }
+  },
+  data: { collapsed: true, inputText: '', messages: [], thinking: false, bProcessing: false, scrollIntoView: '', refreshingMore: false, emptyHints: ['查看当前家庭的保障情况', '记录家庭成员信息', '分析保障缺口'] },
   observers: {
-    // AI 回复期间上抛处理态：父级 FAB 发送按钮联动置灰（逻辑守卫已在 onSend，此处补视觉）
+    // AI 处理期间上抛处理态：父级 FAB 发送按钮联动置灰（逻辑守卫已在 onSend，此处补视觉）
     'thinking, bProcessing'(t, b) { this.triggerEvent('busy', { busy: !!(t || b) }) },
     'familyId'(id) {
       if (!id) return
       this._historyStore.reset()
-      this._promptCache.invalidate()
       this._sessionId = 's_' + Date.now().toString(36)
-      // 审计 P0-2：中止旧 family 的在途流式（chat-source sessionId 检查 + _streamAborted 双保险）
-      this._streamSession = null
-      this._streamAborted = true
-      this.setData({ messages: [], scrollIntoView: '', bProcessing: false, thinking: false, streaming: false })
+      this.setData({ messages: [], scrollIntoView: '', bProcessing: false, thinking: false })
       if (!this.data.collapsed) {
         wx.nextTick(() => { this._loadHistory().then(() => this._scrollAfterRender()) })
       }
@@ -42,10 +42,7 @@ Component({
   },
   lifetimes: {
     created() {
-      // 模块初始化提到 created：observer 在 attached 前触发，此时 _historyStore 必须已存在
-      this._chatSource = createChatSource(this)
       this._historyStore = createHistoryStore()
-      this._promptCache = createPromptCache()
     },
     attached() {
       this._timers = []
@@ -54,26 +51,20 @@ Component({
       this._postProcessing = false
       // P2-4：组件被页面 wx:if 重挂时 _disposed 残留 true 会静默吞掉所有消息，必须重置
       this._disposed = false
+      // 撤销倒计时：组件存活期间每秒递减 undoOps.ttl
+      this._startUndoTimer()
     },
-    detached() { this._disposed = true; this._streamSession = null; this._timers.forEach(t => clearTimeout(t)); this._timers = [] }
+    detached() {
+      this._disposed = true
+      this._timers.forEach(t => clearTimeout(t))
+      this._timers = []
+      if (this._undoTimer) { clearInterval(this._undoTimer); this._undoTimer = null }
+    }
   },
   methods: {
-    // 时间格式：当天 → 刚刚/X分钟前/HH:mm；跨天 → 昨天/M月D日 + HH:mm（区分跨天会话）
-    _fmtTime(d) {
-      const n = new Date(), mins = Math.floor((n - d) / 60000)
-      const pad = v => ('0' + v).slice(-2)
-      const hhmm = pad(d.getHours()) + ':' + pad(d.getMinutes())
-      if (mins < 1) return '刚刚'
-      if (n.toDateString() === d.toDateString()) {
-        if (mins < 60) return mins + '分钟前'
-        return hhmm
-      }
-      const y = new Date(n); y.setDate(y.getDate() - 1)
-      if (y.toDateString() === d.toDateString()) return '昨天 ' + hhmm
-      return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hhmm
-    },
+    // 时间格式化：公共实现 history-store.fmtTime（C2 2026-08-30 审计，消除两处重复）
     onNoop() {},
-    // 空态引导点击 → 直接作为预设问题发送（与 onHintTap 同链路）
+    // 空态引导点击 → 直接作为预设问题发送
     onEmptyHintTap(e) {
       const q = e.currentTarget.dataset.q || ''
       if (!q || this._postProcessing) return
@@ -93,13 +84,11 @@ Component({
     _scrollAfterRender() {
       if (this._disposed) return
       this.scrollToBottom()
-      // markdown 异步渲染后延时重试
       this._timers.push(setTimeout(() => { if (!this._disposed) this.scrollToBottom() }, 300))
       this._timers.push(setTimeout(() => { if (!this._disposed) this.scrollToBottom() }, 800))
     },
 
     async _loadHistory(mode) {
-      // 下拉加载更多：记录原顶部消息锚点，加载后定位回该消息（保持阅读位置不跳变）
       const anchorId = (mode === 'more' && this.data.messages[0] && this.data.messages[0]._scrollId) || ''
       const r = await this._historyStore.load(this.data.familyId, mode)
       if (this._disposed || !r) return 0
@@ -109,7 +98,6 @@ Component({
         this._scrollAfterRender()
       } else if (r.prepend) {
         this.setData({ messages: [...r.prepend, ...this.data.messages] })
-        // 定位回原顶部消息：等 DOM 渲染后用 scroll-into-view 锚定
         if (anchorId) {
           this.setData({ scrollIntoView: '' })
           this._timers.push(setTimeout(() => {
@@ -132,10 +120,11 @@ Component({
     onFabTap() { this._expandPanel() },
     onFocus() { this._expandPanel() },
     // UI 审计 交互 M3：收起时清空输入（PII 残留 + 下次展开显示旧输入），并通知父级清 FAB 栏
-    onCollapse() { this._historyStore.reset(); this.setData({ collapsed: true, inputText: '', bProcessing: false, thinking: false, streaming: false }); this.triggerEvent('collapse') },
+    onCollapse() { this._historyStore.reset(); this.setData({ collapsed: true, inputText: '', bProcessing: false, thinking: false }); this.triggerEvent('collapse') },
     // 供父页面调用：若面板展开则收起并返回 true，否则返回 false
+    // B2（2026-08-30 审计）：与 onCollapse 行为一致——reset historyStore，下次展开重新拉取
     tryCollapse() {
-      if (!this.data.collapsed) { this.setData({ collapsed: true, inputText: '' }); this.triggerEvent('collapse'); return true }
+      if (!this.data.collapsed) { this._historyStore.reset(); this.setData({ collapsed: true, inputText: '' }); this.triggerEvent('collapse'); return true }
       return false
     },
     // 供父页面调用：预设问题展开面板并发送（缺口卡"问小秘"接缝）
@@ -152,165 +141,54 @@ Component({
     },
     onInput(e) { this.setData({ inputText: e.detail.value }) },
 
-    // 返回 boolean：守卫拦截/注入拦截/页面销毁返回 false（供 FAB 决定是否清空输入框，F-S4）
-    async onSend() {
-      var text = this.data.inputText.trim()
-      if (!text || this.data.thinking || this._postProcessing) return false
-      // UI 审计 状态 S2：每轮开始重置停止标志
-      this._streamAborted = false
-
-      // P0 安全防护：sanitize → desensitize → detectInjection 三步（R3v2 #1 补输入注入检测）
-      text = desensitize(sanitize(text))
-      const inj = detectInjection(text)
-      if (inj.injected) {
-        this.setData({ inputText: '' })
-        wx.showToast({ title: '内容包含敏感指令，已拦截', icon: 'none', mask: true })
-        return false
-      }
-
-      const now = new Date(), nowStr = this._fmtTime(now)
-      const ms = [...this.data.messages, { role: 'user', content: text, time: nowStr }]
-      // 注意：不在此处调 _saveMsg('user', text)，由 postProcess 统一写，避免双写
-      this.setData({ inputText: '', messages: ms, thinking: true, streaming: true })
-      this.scrollToBottom()
-      try {
-        // v9 双通道：prompt-cache 返回 { systemPrompt, context, toolDefs }，sp 拼接画像
-        const p = await this._promptCache.get(this.data.familyId)
-        const sp = p.systemPrompt + (p.context ? '\n\n## 当前客户信息\n' + p.context : '')
-        // streamText 用含当前用户消息的 hist；generateText 用不含的，由 text 单独传
-        // S2-7 修复：slice(0, -1) 只去掉当前用户消息；原 slice(0, -2) 多去掉了上一轮 AI 回复，
-        // 导致 429/超时降级到 generateText 时 AI 看不到自己上一轮回复，多轮对话上下文断裂
-        const streamHist = ms.slice(-15).map(m => ({ role: m.role, content: (m.content || '').substring(0, 1500) }))
-        // P1-6：genHist 同样截断最后 15 条（原全量在 429/超时降级 generateText 时 token 可能超限）
-        const genHist = ms.slice(-15, -1).map(m => ({ role: m.role, content: (m.content || '').substring(0, 1500) }))
-        const ms2 = [...ms, { role: 'assistant', content: '', time: '' }]
-        this.setData({ messages: ms2 })
-        this.scrollToBottom()
-        const lastIdx = ms2.length - 1
-
-        // 通道 A：流式输出回复文本 + （可能）工具意图标识；send 返回剥离标识后的 { text, toolIntent, malformed }
-        const result = await this._chatSource.send({ sp, streamHist, genHist, userText: text, ms2, lastIdx })
-        const fullText = result.text
-        const toolIntent = result.toolIntent
-        const malformed = !!result.malformed
-        if (this._disposed) {
-          // 消息链路审计 P0：页面销毁时仍须完成 DB 落库（user+assistant 已生成，不落库则整轮丢失）。
-          this._finalizeConversation(text, fullText, ms, ms2, lastIdx, toolIntent, malformed)
-          return false
-        }
-        // 流式完成：有工具意图（含 malformed——识别到疑似意图但标识解析失败）→ A 文本替换为占位；纯问答 → 直接渲染
-        const hasTool = malformed || !!(toolIntent && toolIntent.tools && toolIntent.tools.length > 0)
-        if (hasTool) {
-          // P0修复1: 有工具意图时不保留 A 的流式文本，替换为简短占位
-          // 用户预期：看到"正在处理"而非完整回复，B 回流后填充真实结果（无"改写"感）
-          this.setData({
-            ['messages[' + lastIdx + '].content']: '正在为您处理…',
-            thinking: true,
-            streaming: false,
-            bProcessing: true
-          })
-        } else {
-          this.setData({
-            ['messages[' + lastIdx + '].content']: _fullWidthPunct(fullText),
-            ['messages[' + lastIdx + '].time']: this._fmtTime(new Date()),
-            thinking: false,
-            streaming: false,
-            bProcessing: false
-          })
-        }
-        // 收尾：有工具意图（含 malformed）→ B 通道 postProcess（工具执行 + 落库）；无 → record（纯问答落库）
-        this._finalizeConversation(text, fullText, ms, ms2, lastIdx, toolIntent, malformed)
-        return true
-      } catch (e) {
-        console.error('[chat-panel] onSend 错误:', e)
-        if (this._disposed) return false
-        const info = errorHandler.getErrorInfo(e)
-        // F-S3 修复：流式失败时 this.data.messages 最后一条是空 AI 占位消息（ms2 尾项），
-        // 直接替换为错误消息而非追加，避免"空消息+错误消息"双条残留
-        const base = this.data.messages
-        const last = base[base.length - 1]
-        const ms3 = (last && last.role === 'assistant' && !last.content)
-          ? base.slice(0, -1).concat([{ role: 'assistant', content: info.tip + '（可点击重试）', isError: true, retryText: text, errorCode: info.code }])
-          : base.concat([{ role: 'assistant', content: info.tip + '（可点击重试）', isError: true, retryText: text, errorCode: info.code }])
-        this.setData({ messages: ms3, thinking: false, streaming: false, bProcessing: false })
-        return false
-      }
-    },
-
-    // UI 审计 状态 S2：AI 生成中手动停止（chat-source onText 感知后提前 resolve，保留已生成部分）
-    onStopGenerate() {
-      if (!this.data.streaming && !this.data.thinking) return
-      this._streamAborted = true
-      wx.showToast({ title: '已停止生成', icon: 'none' })
-    },
-
-    // 错误消息重试：用原用户文本重新发送
-    onRetrySend(e) {
-      // F-S5 修复：record/后处理进行中时禁止重试，避免错误消息被移除后 onSend 被守卫拦截、
-      // 用户看到"消息消失但未发出"的静默失败
-      if (this._postProcessing || this.data.thinking) return
-      const idx = e.currentTarget.dataset.idx
-      const msgs = this.data.messages
-      if (idx < 0 || idx >= msgs.length) return
-      const retryText = msgs[idx].retryText
-      if (!retryText) return
-      // 审计 P0-1：同时移除错误消息及其前一条 user 消息，防重试后两条相同 user 消息污染上下文
-      let removeFrom = idx
-      if (idx > 0 && msgs[idx - 1] && msgs[idx - 1].role === 'user') removeFrom = idx - 1
-      const newMsgs = msgs.slice(0, removeFrom).concat(msgs.slice(idx + 1))
-      this.setData({ messages: newMsgs, inputText: retryText })
-      // 重新触发发送
-      wx.nextTick(() => this.onSend())
-    },
-
-    // v9 双通道收尾：有工具意图 → postProcess（B 通道工具执行 + 落库）；无 → record（纯问答落库）。
-    // 二值渲染：postProcess 全部成功 → cleanText=A 原样（前端无变化）；有失败 → 后端失败提示替换 A。
-    async _finalizeConversation(userText, aText, ms, ms2, lastIdx, toolIntent, forcePost) {
-      if (this._postProcessing) return  // 防重入
+    /**
+     * 单通道核心调用：conversationAI mode:'chat'
+     * userText: 实际发送文本（普通消息原文 / 确认动作 {CONFIRM:xx}/{KEEP:xx}）
+     * lastIdx: 该轮 assistant 占位消息索引
+     * P1-1（2026-08-30 审计）：不再传 history——后端以 messages 集合为单真相源（getFamilyHistory），
+     * 前端截断历史会误导维护者且浪费带宽
+     */
+    async _postChat({ userText, lastIdx }) {
+      if (this._postProcessing) return
       this._postProcessing = true
+      this.setData({ thinking: true, bProcessing: true })
       try {
-        const hasTool = forcePost || !!(toolIntent && toolIntent.tools && toolIntent.tools.length > 0)
-        const payload = {
-          mode: hasTool ? 'postProcess' : 'record',
+        const r = await api('conversationAI', {
+          mode: 'chat',
           familyId: this.data.familyId,
-          userText: userText,
-          text: aText,
+          userText,
           sessionId: this._sessionId
-        }
-        if (hasTool) {
-          // B 通道（v9.2）：A 只出工具判定 → 透传 intent（仅 name），B function calling 按 schema 填参数。
-          // 不传 A 的 args（A 手写字段名不可控，曾致 liability 等别名入库）；A 的断言文本也不注入 B 决策
-          // （v9.0 根因：B 看到"已更新"断言误以为已写入而不调工具）。
-          payload.aText = aText
-          // P1-6：历史截断最后 15 条（原全量历史在降级 generateText 时 token 可能超限）
-          payload.history = ms.slice(-15, -1).map(m => ({ role: m.role, content: (m.content || '').substring(0, 1500) }))
-          // malformed（标识解析失败）：不传 intent → orchestrate 走 function calling 兜底，B 自判工具
-          if (toolIntent && toolIntent.tools && toolIntent.tools.length > 0) {
-            payload.intent = toolIntent.tools.map(t => ({ name: t.name }))
-          }
-        }
-        // 审计 P0：postProcess 链路过长（上下文构建+AI phase1+工具+回流），前端 30s 先超时且 retries=1
-        // 会"前端报错→重试→工具重复执行"。显式 60s 超时（对齐后端 SCF）+ 禁重试（与写操作原则一致）
-        const r = await api('conversationAI', payload, { timeout: 60000, retries: 0 })
+        }, { timeout: 60000, retries: 0 })
         if (this._disposed) return
         if (r.ok && r.data) {
           const d = r.data
-          // v9.6 渲染权威化：B 回流文本无条件覆盖 A（A 仅流式预览的中性理解/过程语）。
-          // 消除"改写"（A 断言被 B 换掉）与"悬空"（查询类 A 停在"正在查询"无下文）——
-          // 工具执行后 B 的 cleanText 是最终答复（成功=基于真实结果/失败=失败提示），必覆盖。
-          // 例外：待确认（delete* 409）→ 后端返回空 cleanText（A 已清空），由确认卡承接交互，不覆盖
+          const patch = {}
+          // 最终回复（无条件覆盖占位；确认卡动作返回的确认语也走这里）
           if (d.cleanText && d.cleanText.trim()) {
-            this.setData({
-              ['messages[' + lastIdx + '].content']: _fullWidthPunct(d.cleanText),
-              ['messages[' + lastIdx + '].time']: this._fmtTime(new Date())
-            })
+            patch['messages[' + lastIdx + '].content'] = _fullWidthPunct(d.cleanText)
+            patch['messages[' + lastIdx + '].time'] = fmtTime(new Date())
+          } else if (!d.pending_confirms || !d.pending_confirms.length) {
+            // P2-A 修复：后端异常吞错返回空 cleanText → 补错误态而非空气泡
+            patch['messages[' + lastIdx + '].content'] = '小秘处理出错了，请重试'
+            patch['messages[' + lastIdx + '].isError'] = true
+            patch['messages[' + lastIdx + '].retryText'] = userText
+            patch['messages[' + lastIdx + '].time'] = fmtTime(new Date())
           }
-          // v9.5 确认卡渲染：delete* 409 待确认 → 后端返回 suggestions/pending_confirms，
-          // 挂到该条 assistant 消息上（wxml sug-bar 渲染 + onSugTap 走 CONFIRM 拦截）
-          if (d.suggestions && d.suggestions.length > 0) {
-            this.setData({ ['messages[' + lastIdx + '].suggestions']: d.suggestions })
+          // 确认卡（写入成员/财务/保单类工具待代理人确认）
+          if (d.pending_confirms && d.pending_confirms.length > 0) {
+            patch['messages[' + lastIdx + '].pendingConfirms'] = d.pending_confirms
           }
-          // 工具执行结果 → 报告刷新联动（B 通道在 postProcess 内执行，返回 toolResults）
+          // 默认执行+撤销（②）：执行结果带 undo 信息 → 渲染撤销按钮（含倒计时）
+          if (d.toolResults && d.toolResults.some(tr => tr.undo && tr.undo.opId)) {
+            patch['messages[' + lastIdx + '].undoOps'] = d.toolResults
+              .filter(tr => tr.undo && tr.undo.opId)
+              .map(tr => {
+                const ttl = tr.undo.ttlSec || 300
+                return { opId: tr.undo.opId, summary: tr.undo.summary || '操作已执行', undoing: false, ttl, ttlText: fmtCountdown(ttl) }
+              })
+          }
+          this.setData(patch)
+          // 工具执行结果 → 报告刷新联动
           if (d.toolResults && d.toolResults.length > 0) {
             const hasWrite = d.toolResults.some(tr =>
               ['upsertMember', 'updateFinances', 'addPolicy', 'addFact', 'updatePolicy'].includes(tr.tool) && tr.success
@@ -322,16 +200,163 @@ Component({
               this._debouncedReportRefresh()
             }
           }
+        } else {
+          // 业务失败（后端返回非 200）
+          const info = errorHandler.getErrorInfo({ code: r.code || 500, msg: r.msg || '处理失败' })
+          // P2-B 修复：优先展示后端可读 msg（如"该确认操作已失效"），替代泛化 tip
+          // P2 修复：确认卡指令业务失败不设重试——重试拦截指令无意义
+          const isCardAction = /^\{CONFIRM:|^\{KEEP:/.test(userText)
+          const failText = (info.detail || info.tip) + (isCardAction ? '' : '（可点击重试）')
+          const failPatch = {
+            ['messages[' + lastIdx + '].content']: failText,
+            ['messages[' + lastIdx + '].isError']: true
+          }
+          if (!isCardAction) failPatch['messages[' + lastIdx + '].retryText'] = userText
+          this.setData(failPatch)
         }
       } catch (e) {
-        console.error('[chat-panel] 对话收尾失败:', e)
-        // 后端未写入任何消息时的兜底
-        if (userText) this._saveMsg('user', userText)
-        this._saveMsg('assistant', _stripMarkers(aText))
+        console.error('[chat-panel] 对话失败:', e)
+        if (this._disposed) return
+        const info = errorHandler.getErrorInfo(e)
+        this.setData({
+          ['messages[' + lastIdx + '].content']: info.tip + '（可点击重试）',
+          ['messages[' + lastIdx + '].isError']: true,
+          ['messages[' + lastIdx + '].retryText']: userText
+        })
+        // 仅网络/服务硬失败才前端兜底补写（前端 60s 超时 ≠ 后端失败，后端可能最终落库，补写会双份）
+        const isTimeout = String((e && e.message) || '').indexOf('超时') !== -1
+        if (!isTimeout) {
+          if (userText && !/^\{CONFIRM:|^\{KEEP:/.test(userText)) this._saveMsg('user', userText)
+          this._saveMsg('assistant', cleanMarkers('抱歉，小秘遇到了一点问题，请重试。'))
+        }
       } finally {
         this._postProcessing = false
         if (!this._disposed) this.setData({ thinking: false, bProcessing: false })
       }
+    },
+
+    // 发送按钮：返回 boolean（守卫拦截/注入拦截/页面销毁返回 false，供 FAB 决定是否清空输入框）
+    async onSend() {
+      var text = this.data.inputText.trim()
+      if (!text || this.data.thinking || this._postProcessing) return false
+      // P0 安全防护：sanitize → desensitize → detectInjection 三步
+      text = desensitize(sanitize(text))
+      const inj = detectInjection(text)
+      if (inj.injected) {
+        this.setData({ inputText: '' })
+        wx.showToast({ title: '内容包含敏感指令，已拦截', icon: 'none', mask: true })
+        return false
+      }
+      const now = new Date(), nowStr = fmtTime(now)
+      // 不在此处 _saveMsg('user')，由 chat 模式统一写，避免双写
+      // 性能审计：user + assistant 占位一次 setData（原两次全列表深拷贝 + 双序列化），回复更新走索引 patch
+      const ms2 = [...this.data.messages, { role: 'user', content: text, time: nowStr }, { role: 'assistant', content: '', time: '' }]
+      const lastIdx = ms2.length - 1
+      this.setData({ inputText: '', messages: ms2 })
+      this.scrollToBottom()
+      this._postChat({ userText: text, lastIdx })
+      return true
+    },
+
+    // ======================== 确认卡（写入成员/财务/保单类工具） ========================
+    onCardConfirm(e) {
+      const idx = e.currentTarget.dataset.idx
+      const cIdx = e.currentTarget.dataset.cidx
+      const msg = this.data.messages[idx]
+      const pc = msg && msg.pendingConfirms && msg.pendingConfirms[cIdx]
+      if (!pc || this._postProcessing || this.data.thinking) return
+      this._sendCardAction(pc.pendingId, 'confirm', idx)
+    },
+    onCardCancel(e) {
+      const idx = e.currentTarget.dataset.idx
+      const cIdx = e.currentTarget.dataset.cidx
+      const msg = this.data.messages[idx]
+      const pc = msg && msg.pendingConfirms && msg.pendingConfirms[cIdx]
+      if (!pc || this._postProcessing || this.data.thinking) return
+      this._sendCardAction(pc.pendingId, 'keep', idx)
+    },
+    // 确认/取消 → 发送 {CONFIRM}/{KEEP} 拦截指令（后端直接执行，不走 AI），并发起新的 assistant 占位
+    _sendCardAction(pendingId, action, srcIdx) {
+      const sendText = action === 'keep' ? ('{KEEP:' + pendingId + '}') : ('{CONFIRM:' + pendingId + '}')
+      const displayText = action === 'keep' ? '取消' : '确认'
+      const now = new Date(), nowStr = fmtTime(now)
+      // P2 修复：立即清除原确认卡，防止过期卡片重复点击
+      const msgs = this.data.messages.slice()
+      if (msgs[srcIdx]) msgs[srcIdx] = { ...msgs[srcIdx], pendingConfirms: [] }
+      const ms = [...msgs, { role: 'user', content: displayText, time: nowStr }]
+      const ms2 = [...ms, { role: 'assistant', content: '', time: '' }]
+      const lastIdx = ms2.length - 1
+      this.setData({ messages: ms2 })
+      this.scrollToBottom()
+      this._postChat({ userText: sendText, lastIdx })
+    },
+
+    // ======================== 默认执行+撤销（② 2026-08-30） ========================
+    // 倒计时格式化：公共实现 history-store.fmtCountdown（C2 2026-08-30 审计）
+    // 每秒递减 undoOps.ttl（仅更新有变化的消息），到 0 后前端隐藏撤销按钮（后端同样校验过期）
+    _startUndoTimer() {
+      if (this._undoTimer) return
+      this._undoTimer = setInterval(() => {
+        if (this._disposed) { clearInterval(this._undoTimer); this._undoTimer = null; return }
+        const msgs = this.data.messages
+        const patch = {}
+        let changed = false
+        msgs.forEach((m, i) => {
+          if (m && m.undoOps && m.undoOps.length) {
+            let dirty = false
+            const list = m.undoOps.map(op => {
+              if (op.undoing || op.ttl <= 0) return op
+              dirty = true
+              const ttl = op.ttl - 1
+              return { ...op, ttl, ttlText: fmtCountdown(ttl) }
+            })
+            if (dirty) { patch['messages[' + i + '].undoOps'] = list; changed = true }
+          }
+        })
+        if (changed) this.setData(patch)
+      }, 1000)
+    },
+    onUndo(e) {
+      const idx = e.currentTarget.dataset.idx
+      const uIdx = e.currentTarget.dataset.uidx
+      const msg = this.data.messages[idx]
+      const op = msg && msg.undoOps && msg.undoOps[uIdx]
+      if (!op || op.undoing || this._postProcessing || this.data.thinking) return
+      this._sendUndo(op.opId, idx, uIdx)
+    },
+    // 撤销 → 发送 {UNDO:op_id} 拦截指令（后端直接恢复，不走 AI），并发起新的 assistant 占位
+    _sendUndo(opId, srcIdx, uIdx) {
+      const sendText = '{UNDO:' + opId + '}'
+      const now = new Date(), nowStr = fmtTime(now)
+      // 立即标记该 op 为"撤销中"，按钮置灰防重复点击
+      const msgs = this.data.messages.slice()
+      if (msgs[srcIdx] && msgs[srcIdx].undoOps) {
+        const list = msgs[srcIdx].undoOps.slice()
+        list[uIdx] = { ...list[uIdx], undoing: true }
+        msgs[srcIdx] = { ...msgs[srcIdx], undoOps: list }
+      }
+      const ms = [...msgs, { role: 'user', content: '撤销', time: nowStr }]
+      const ms2 = [...ms, { role: 'assistant', content: '', time: '' }]
+      const lastIdx = ms2.length - 1
+      this.setData({ messages: ms2 })
+      this.scrollToBottom()
+      this._postChat({ userText: sendText, lastIdx })
+    },
+
+    // 错误消息重试：用原用户文本重新发送
+    onRetrySend(e) {
+      if (this._postProcessing || this.data.thinking) return
+      const idx = e.currentTarget.dataset.idx
+      const msgs = this.data.messages
+      if (idx < 0 || idx >= msgs.length) return
+      const retryText = msgs[idx].retryText
+      if (!retryText) return
+      // 同时移除错误消息及其前一条 user 消息，防重试后两条相同 user 消息污染上下文
+      let removeFrom = idx
+      if (idx > 0 && msgs[idx - 1] && msgs[idx - 1].role === 'user') removeFrom = idx - 1
+      const newMsgs = msgs.slice(0, removeFrom).concat(msgs.slice(idx + 1))
+      this.setData({ messages: newMsgs, inputText: retryText })
+      wx.nextTick(() => this.onSend())
     },
 
     // 防抖触发报告刷新（记录类工具成功后调用，避免单轮多次刷新）
@@ -349,21 +374,6 @@ Component({
       this.setData({ refreshingMore: false })
       if (count === -1) wx.showToast({ title: '加载失败，请稍后重试', icon: 'none', duration: 1500 })
       else if (count === 0) wx.showToast({ title: '没有更多了', icon: 'none', duration: 1000 })
-    },
-    // 快捷建议/确认卡点击 → 直接 postProcess（CONFIRM/KEEP/sug 拦截不经 AI，不消耗流式）
-    // 审计修复：补 thinking 守卫——流式回复期间（_postProcessing=false、thinking=true）上轮残留 sug-chip 仍可点，
-    // 会导致流式输出与新 postProcess 并发（_finalizeConversation 的 _postProcessing 防重入无法拦截此窗口）
-    onSugTap(e) {
-      const sug = e.currentTarget.dataset.sug || ''
-      if (!sug || this._postProcessing || this.data.thinking) return
-      const now = new Date(), nowStr = this._fmtTime(now)
-      const ms = [...this.data.messages, { role: 'user', content: sug, time: nowStr }]
-      const ms2 = [...ms, { role: 'assistant', content: '', time: '' }]
-      const lastIdx = ms2.length - 1
-      // 处理中反馈：置 thinking 显示三点，postProcess 完成时复位
-      this.setData({ inputText: '', messages: ms2, thinking: true, bProcessing: false })
-      this.scrollToBottom()
-      this._finalizeConversation(sug, '', ms, ms2, lastIdx, null, true)
     },
     _saveMsg(role, content) {
       if (!this.data.familyId) return

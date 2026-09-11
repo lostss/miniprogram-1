@@ -126,14 +126,13 @@ describe('getHomeList (via dataQuery) 云函数', function() {
     })
   })
 
-  test('DB 异常时吞错返回空列表', function() {
+  // 客户列表审计 P1-1：主查询失败必须传播错误（前端错误态），不再吞错伪装"尚无客户/未找到"
+  test('DB 异常时传播错误（500，不伪装空列表）', function() {
     var cloud = require('wx-server-sdk')
     cloud.__famCol.get.mockRejectedValue(new Error('DB error'))
 
     return dataQuery.main({ action: 'listFamilies' }).then(function(res) {
-      expect(res.code).toBe(200)
-      expect(res.data.families).toEqual([])
-      expect(res.data.family_count).toBe(0)
+      expect(res.code).toBe(500)
     })
   })
 

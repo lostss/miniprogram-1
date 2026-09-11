@@ -43,7 +43,8 @@ const TOOL_SUMMARIES = {
     return '✅ 已记录' + pred + (val ? '：' + val.substring(0, 30) : '')
   },
   updateFactConfidence: () => null,
-  triggerAnalysis: (tr) => _ok(tr) ? '🔄 正在生成分析报告，完成后可刷新查看' : null,
+  // 2026-09-10：触发改为等待真实结果（原 fire-and-forget 会丢调用，文案"正在生成"与事实不符）
+  triggerAnalysis: (tr) => _ok(tr) ? '✅ 已更新保障分析，下拉刷新即可查看' : null,
   writeMessage: () => null,
   queryPolicies: (tr) => (_ok(tr) && tr.result.data && tr.result.data.policies) ? ('📋 共 ' + tr.result.data.policies.length + ' 张保单') : null,
   queryMembers: (tr) => (_ok(tr) && tr.result.data && tr.result.data.members) ? ('👥 共 ' + tr.result.data.members.length + ' 位成员') : null,

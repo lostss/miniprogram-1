@@ -29,7 +29,7 @@ const mockDb = {
   }
 }
 
-const { matchPoliciesToMembers } = require('../cloudfunctions/ocrService/_shared/ocr-core')
+const { matchPoliciesToMembers, extractOne } = require('../cloudfunctions/ocrService/_shared/ocr-core')
 
 describe('matchPoliciesToMembers', () => {
   test('精确匹配被保人到成员', async () => {
@@ -48,5 +48,50 @@ describe('matchPoliciesToMembers', () => {
     const policies = [{ insured_name: '李牧云', policyholder_name: '李牧云', product_name: '医疗险' }]
     await matchPoliciesToMembers({ db: mockDb, familyId: 'f1', openid: 'o1', allPolicies: policies })
     expect(policies[0].member_id).toBe('m1')
+  })
+})
+
+// 现价表片段拦截（2026-09-09）：mixed 丢弃 + cash_value 完整性校验
+describe('extractOne 现价表片段拦截', () => {
+  function buildExtract(documentType, cashValues) {
+    return {
+      result: 'success',
+      document_type: documentType,
+      data: {
+        contract_basic: { policy_number: 'P1', insurance_company: '安心人寿', insured_name: '李阳勇' },
+        products: [{ product_name: '安心保臻选版定期重大疾病保险', insurance_category: '重疾', sum_assured: 500000, annual_premium: 1830 }],
+        field_confidence: { product_name: 0.95 },
+        overall_confidence: 0.9
+      },
+      cash_value_data: cashValues ? { header_info: {}, cash_values: cashValues, overall_confidence: 0.9 } : undefined
+    }
+  }
+
+  // 2026-09-11：mixed 不再无条件丢弃现价表——完整表保留（原策略会误杀"保单正页 + 现价表同屏"的真表）
+  test('mixed：同图含完整现价表 → 保留现价表，docType 仍降级为 policy', () => {
+    const cv = [1, 2, 3, 4, 5].map(y => ({ y, v: y * 100 }))
+    const ex = extractOne(buildExtract('mixed', cv), [])
+    expect(ex.cashValueData).not.toBeNull()
+    expect(ex.cashValueData.cash_values).toHaveLength(5)
+    expect(ex.docType).toBe('policy') // 同图以保单主体为主，分组仍按 policy
+  })
+
+  test('mixed：现价表为残留片段（年度不连续/行数不足）→ 仍丢弃', () => {
+    const ex = extractOne(buildExtract('mixed', [{ y: 12, v: 100 }, { y: 13, v: 200 }]), [])
+    expect(ex.cashValueData).toBeNull()
+    expect(ex.docType).toBe('policy')
+  })
+
+  test('cash_value：年度不从 1 起 / 行数不足 → 不提取', () => {
+    const ex = extractOne(buildExtract('cash_value', [{ y: 12, v: 100 }, { y: 13, v: 200 }]), [])
+    expect(ex.cashValueData).toBeNull()
+  })
+
+  test('cash_value：自 1 起连续且 ≥5 行 → 保留', () => {
+    const cv = [1, 2, 3, 4, 5].map(y => ({ y, v: y * 100 }))
+    const ex = extractOne(buildExtract('cash_value', cv), [])
+    expect(ex.cashValueData).not.toBeNull()
+    expect(ex.cashValueData.cash_values).toHaveLength(5)
+    expect(ex.docType).toBe('cash_value')
   })
 })

@@ -159,14 +159,36 @@ function writeSeam(db, openid, familyId, opts = {}) {
       try {
         let deleted = 0, hasMore = true
         while (hasMore) {
-          const res = await db.collection(collection).where({ ...where, _openid: openid }).limit(batchSize).get()
+          let res
+          try {
+            res = await db.collection(collection).where({ ...where, _openid: openid }).limit(batchSize).get()
+          } catch (e) {
+            // 2026-09-09 修复：集合从未创建时 CloudBase 查询直接抛 ResourceNotFound（而非返回空），
+            // 原实现 → strict 抛错 → deleteFamily 永远 207（线上 reports 集合即此情况）。视为空集合跳过。
+            if (/not exist|ResourceNotFound|COLLECTION_NOT_EXIST/i.test(e.message || '')) {
+              console.warn('[writeSeam] batchRemove 集合不存在，跳过:', collection)
+              return deleted
+            }
+            throw e
+          }
           if (!res.data || res.data.length === 0) { hasMore = false; break }
-          const results = await Promise.all(res.data.map(d =>
-            db.collection(collection).doc(d._id).remove()
-              .then(() => true)
-              .catch(e => { console.error('[writeSeam] batchRemove 单文档失败:', e.message); return false })
-          ))
-          const actuallyDeleted = results.filter(Boolean).length
+          // 2026-09-09：批内删除失败重试最多 3 次（200ms 间隔）——deleteFamily 的 batchTx 12 步全并发
+          // 易触发数据库限流/瞬时错误，原实现一次单文档失败即 strict 抛错 → 207 半删除；重试可自愈
+          let actuallyDeleted = 0
+          for (let attempt = 0; attempt < 3 && actuallyDeleted < res.data.length; attempt++) {
+            const results = await Promise.all(res.data.map(d =>
+              db.collection(collection).doc(d._id).remove()
+                .then(() => true)
+                .catch(e => {
+                  if (attempt === 0) console.warn('[writeSeam] batchRemove 单文档失败(将重试):', collection, e.message)
+                  return false
+                })
+            ))
+            actuallyDeleted = results.filter(Boolean).length
+            if (attempt < 2 && actuallyDeleted < res.data.length) {
+              await new Promise(r => setTimeout(r, 200))
+            }
+          }
           deleted += actuallyDeleted
           // 全批失败：文档未减少，继续循环会查到同样的数据 → 死循环，终止
           if (actuallyDeleted === 0) {
@@ -174,9 +196,9 @@ function writeSeam(db, openid, familyId, opts = {}) {
             console.error('[writeSeam] batchRemove 本批全部失败，终止避免死循环:', collection)
             hasMore = false; break
           }
-          // strict：单文档失败即抛错（级联删除不允许部分删）
+          // strict：重试耗尽后仍部分失败才抛错（级联删除不允许部分删）
           if (strict && actuallyDeleted < res.data.length) {
-            throw new Error('batchRemove 部分失败: ' + collection)
+            throw new Error('batchRemove 重试后仍部分失败: ' + collection + ' 剩' + (res.data.length - actuallyDeleted) + '条')
           }
           if (res.data.length < batchSize) hasMore = false
         }
