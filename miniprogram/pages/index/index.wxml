@@ -62,7 +62,7 @@
 
   <!-- 空态无客户：底部提示 -->
   <view class="empty-hint" wx:if="{{recentClients.length === 0 && !ocrBusy && !loadingClients}}">
-    <text>支持 JPG / PNG · 一次最多 9 张</text>
+    <text class="empty-hint-text">支持 JPG / PNG · 一次最多 9 张</text>
   </view>
 </view>
 

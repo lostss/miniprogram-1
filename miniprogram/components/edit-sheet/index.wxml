@@ -45,7 +45,7 @@
       <button class="cancel-btn pressable" bindtap="onClose" disabled="{{saving}}" aria-label="取消">取消</button>
       <!-- 查看态：编辑按钮；编辑态：保存按钮（互斥切换） -->
       <button wx:if="{{mode === 'view'}}" class="edit-btn pressable" bindtap="onSwitchEdit" disabled="{{saving}}" aria-label="编辑">编辑</button>
-      <button wx:else class="save-btn pressable {{saving ? 'is-loading' : ''}}" bindtap="onSave" disabled="{{saving}}" aria-label="保存">{{saving ? '保存中...' : '保存'}}</button>
+      <button wx:else class="save-btn pressable {{saving ? 'is-loading is-disabled' : ''}}" bindtap="onSave" disabled="{{saving}}" aria-label="保存">{{saving ? '保存中...' : '保存'}}</button>
     </view>
   </view>
 </view>

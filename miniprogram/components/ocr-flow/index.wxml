@@ -84,7 +84,7 @@
       </scroll-view>
       <view class="ocr-actions-row">
         <button class="ocr-modify-btn pressable" catchtap="onProcDiscardAll" aria-label="丢弃全部结果">放弃全部</button>
-        <button class="ocr-confirm-btn pressable {{ocrMask.confirming ? 'is-loading' : ''}}" bindtap="onProcConfirm" disabled="{{ocrMask.confirming || ocrMask.procBusy}}" aria-label="确认全部保单">{{ocrMask.confirming ? '保存中...' : (skipMatch && familyId ? '确认 ' + ocrMask._policies.length + ' 份' : '下一步：选择归属')}}</button>
+        <button class="ocr-confirm-btn pressable {{ocrMask.confirming ? 'is-loading' : ''}} {{(ocrMask.confirming || ocrMask.procBusy) ? 'is-disabled' : ''}}" bindtap="onProcConfirm" disabled="{{ocrMask.confirming || ocrMask.procBusy}}" aria-label="确认全部保单">{{ocrMask.confirming ? '保存中...' : (skipMatch && familyId ? '确认 ' + ocrMask._policies.length + ' 份' : '下一步：选择归属')}}</button>
       </view>
     </block>
     <!-- 写入中（wrap 增高：进度条阶段留白稍大，避免卡片过矮） -->

@@ -14,6 +14,7 @@
  */
 const { buildStructuredCoverage } = require('./report-coverage')
 const { yuanToWan } = require('./_shared/amount')
+const { evaluateCoverage } = require('./_shared/gap-core')
 
 /**
  * 保单汇总数据预计算 Markdown（禁止 AI 自行推算）
@@ -53,16 +54,16 @@ function buildSummaryMd(policies, snap) {
 }
 
 /**
- * 保障缺口矩阵（数值审计 #3 + P1-P2 修正 2026-09-05：口径与前端 gap-engine / thresholds.js 单一事实源对齐，
- * 医疗险 >=100 万及格线（原 >0 存在性判覆盖与前端不一致）；矩阵每行「依据」列为权威阈值文本，
- * reportAI/prompts.js 不再硬编码阈值数字，引用此列。本快照为系统预计算，AI 只引用结论不自行重算）
+ * 保障缺口矩阵（**系统预计算**：AI 只引用结论不自行重算。矩阵「依据」列为权威阈值文本，
+ * reportAI/prompts.js 不硬编码阈值数字，引用此列）
  *
- * 2026-09-10 两项修复：
- *   P1-2 寿险/意外需求基数改按成员个人收入——前端 gap-engine 已在 P1-A（2026-09-05）改为
- *        「成员个人收入优先 → 支柱个人收入缺失用家庭年收入全额兜底 → 非支柱缺失按 0」，
- *        本函数此前对所有成员一律用家庭收入 → AI 报告缺口数字与页面矩阵对不上。
- *        同时对收入缺失成员输出 ⚠️ 无法计算（对齐前端 blocked 三态），不再用假 0 收入算出需求。
- *   P2-1 保单缺 member_id 时按「姓名 → member_id」归位，修复同一成员既「✅ 已覆盖」又「❌ 无任何保障」的矛盾行。
+ * 2026-09-11「业务规则双实现」根因治理：算法上移 _shared/gap-core.js 单一事实源。
+ * 本函数此前与前端 miniprogram/utils/report/gap-engine.js 各实现一遍——且是前端的**降级复刻**
+ * （固定 4 险种不分角色、无三态可信度、无补全提示），结构上不可能自动一致，口径已分裂 2 次
+ * （2026-09-05 P1-A 收入基数 / 2026-09-10 P1-2 未跟上前端修复）。现前端页面矩阵与本矩阵调用
+ * 同一个 evaluateCoverage（经 sync-shared.js 跨树契约同步，改算法只改 _shared/gap-core.js），
+ * 同算法 → 同数字。本函数自此只做 Markdown 格式化，不做任何计算。
+ *
  * @param {array} policies - 已 ensureStatus 的保单数组
  * @param {object} snap - 财务快照 { income(万), debt(万|{amount,type}), fixed_expense }
  * @param {array} members - 家庭成员列表（含 name/role/income(万)）
@@ -70,83 +71,27 @@ function buildSummaryMd(policies, snap) {
  */
 function buildGapSnapshot(policies, snap, members) {
   const s = snap || {}
-  const familyIncome = parseFloat(s.income) || 0
   const debtVal = s.debt && typeof s.debt === 'object' ? (s.debt.amount || 0) : (s.debt || 0)
-  const debt = parseFloat(debtVal) || 0
-  const active = (policies || []).filter(p => p.status === 'active' || !p.status)
   const memberList = Array.isArray(members) ? members : []
+  const active = (policies || []).filter(p => p.status === 'active' || !p.status)
 
-  // P2-1：成员键归一——成员有 member_id 用其 id，否则用 'name:姓名' 兜底；保单侧同规则，
-  // 使「保单聚合」与「无保单成员判定」用同一个键（原实现一侧用 member_id、一侧可能落到姓名）
-  const _memberKey = m => (m && (m.member_id || 'name:' + m.name)) || ''
-  const nameToKey = {}
-  for (const m of memberList) {
-    if (m && m.name) nameToKey[m.name] = _memberKey(m)
-  }
-  const _policyKey = p => {
-    if (p.member_id) return p.member_id
-    if (p.insured_name && nameToKey[p.insured_name]) return nameToKey[p.insured_name]
-    return p.insured_name ? 'name:' + p.insured_name : 'unknown'
-  }
+  const rows = evaluateCoverage({
+    members: memberList,
+    policies: active,
+    familyIncomeWan: parseFloat(s.income) || 0,
+    debtWan: parseFloat(debtVal) || 0
+  })
 
-  const byMember = {}
-  for (const p of active) {
-    const k = _policyKey(p)
-    if (!byMember[k]) byMember[k] = { name: p.insured_name || '未署名', key: k, sums: {} }
-    const cat = p.insurance_category || ''
-    byMember[k].sums[cat] = (byMember[k].sums[cat] || 0) + (p.sum_assured || 0)
+  const header = '## 保障缺口矩阵（系统预计算，review/analysis 直接引用结论，禁止自行重算或引用缺口金额）'
+  // 全空家庭：无成员 → 单行声明，保证 AI 有矩阵依据可引用而非编造
+  if (!rows.length) {
+    return header + '\n\n| 成员 | 险种 | 覆盖状态 | 依据 |\n|------|------|---------|------|\n| 全体 | - | ❌ 无任何保障 | 该家庭暂无任何保单，所有成员均无保障 |'
   }
 
-  const cats = ['重疾险', '医疗险', '寿险', '意外险']
-  // 全空家庭：members 与 policies 均无 → 单行声明，保证 AI 有矩阵依据可引用而非编造
-  if (!Object.keys(byMember).length && !memberList.length) {
-    return '## 保障缺口矩阵（系统预计算，review/analysis 直接引用结论，禁止自行重算或引用缺口金额）\n\n| 成员 | 险种 | 覆盖状态 | 依据 |\n|------|------|---------|------|\n| 全体 | - | ❌ 无任何保障 | 该家庭暂无任何保单，所有成员均无保障 |'
-  }
-
-  // P1-2：成员级收入口径（对齐前端 gap-engine 的 memIncome 计算）
-  const pillar = memberList.find(m => m && /本人|经济支柱/.test(m.role || '')) || memberList[0] || null
-  const _incomeOf = key => {
-    const m = memberList.find(x => x && _memberKey(x) === key)
-    if (!m) return { income: familyIncome, hasIncome: familyIncome > 0, estimated: true }
-    const own = parseFloat(m.income) || 0
-    if (own > 0) return { income: own, hasIncome: true, estimated: false }
-    if (pillar && _memberKey(pillar) === key && familyIncome > 0) return { income: familyIncome, hasIncome: true, estimated: true }
-    return { income: 0, hasIncome: false, estimated: false }
-  }
-  // 2026-09-10（P1-2 同源问题）：矩阵行改为「成员维度」主循环——前端 gap-engine 对每个成员（含名下无保单者）
-  // 都逐险种输出缺口金额（无保单即 existing=0、缺口为全额），原实现只对有保单的成员输出逐险种行、无保单成员
-  // 仅一行「无任何保障」概括 → AI 报告与页面矩阵信息粒度不一致（页面有具体金额，AI 只有笼统结论）。
-  // 保单中未能匹配到任何成员者（insured_name 不在成员名单）仍单独成行，保证不丢数据。
-  const memberRows = memberList.filter(Boolean).map(m => ({
-    name: m.name || '成员',
-    key: _memberKey(m),
-    sums: (byMember[_memberKey(m)] && byMember[_memberKey(m)].sums) || {}
-  }))
-  for (const k of Object.keys(byMember)) {
-    if (!memberList.some(m => m && _memberKey(m) === k)) memberRows.push({ name: byMember[k].name, key: k, sums: byMember[k].sums })
-  }
-
-  const lines = ['## 保障缺口矩阵（系统预计算，review/analysis 直接引用结论，禁止自行重算或引用缺口金额）', '', '| 成员 | 险种 | 覆盖状态 | 依据 |', '|------|------|---------|------|']
-  for (const r of memberRows) {
-    const inc = _incomeOf(r.key)
-    for (const cat of cats) {
-      const existing = yuanToWan(r.sums[cat] || 0)
-      let ok = false, basis = ''
-      if (cat === '重疾险') { ok = existing >= 50; basis = ok ? `已覆盖${existing}万(参考50万)` : `缺口：现有${existing}万<50万` }
-      else if (cat === '医疗险') { ok = existing >= 100; basis = ok ? `已覆盖${existing}万(百万医疗及格线100万)` : `缺口：现有${existing}万<100万` }
-      else {
-        // 寿险/意外：收入缺失 → 无法计算（对齐前端 blocked，不再按 0 收入编造需求）
-        if (!inc.hasIncome) {
-          basis = (cat === '寿险' ? '寿险需求=负债+5×年收入' : '意外险需求=max(5×年收入,负债)') + '，该成员年收入缺失无法计算（待补全）'
-          lines.push(`| ${r.name} | ${cat} | ⚠️ 无法计算 | ${basis} |`)
-          continue
-        }
-        const est = inc.estimated ? '（个人收入缺失，按家庭年收入估算）' : ''
-        if (cat === '寿险') { const need = Math.round(debt + 5 * inc.income); ok = existing >= need; basis = `需求=负债${debt}万+5×收入${inc.income}万=${need}万${est}，现有${existing}万` }
-        else { const need = Math.round(Math.max(5 * inc.income, debt)); ok = existing >= need; basis = `需求=max(5×收入${inc.income}万,负债${debt}万)=${need}万${est}，现有${existing}万` }
-      }
-      lines.push(`| ${r.name} | ${cat} | ${ok ? '✅ 已覆盖' : '❌ 有缺口'} | ${basis} |`)
-    }
+  const lines = [header, '', '| 成员 | 险种 | 覆盖状态 | 依据 |', '|------|------|---------|------|']
+  for (const r of rows) {
+    const status = r.reliability === 'blocked' ? '⚠️ 无法计算' : (r.satisfied ? '✅ 已覆盖' : '❌ 有缺口')
+    lines.push(`| ${r.member} | ${r.category} | ${status} | ${r.basis} |`)
   }
   return lines.join('\n')
 }

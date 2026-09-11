@@ -51,4 +51,4 @@
 .cancel-btn { width:176rpx; height:88rpx; background:var(--bg-card); color:var(--text-secondary); font-size:var(--fs-lg); font-weight:var(--fw-medium); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:1rpx solid var(--border); margin:0; }
 .sheet-actions { display:flex; gap:var(--sp-4); margin-top:var(--sp-4); flex-shrink:0; }
 .save-btn.is-loading { background:var(--accent-muted); box-shadow:none; }
-.save-btn[disabled] { opacity:0.7; }
+.save-btn.is-disabled { opacity:0.7; }

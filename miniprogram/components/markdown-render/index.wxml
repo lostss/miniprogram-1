@@ -159,12 +159,12 @@
     <view class="table-fullscreen-header">
       <view class="table-fullscreen-title">
         <view class="table-fullscreen-icon"></view>
-        <text>表格详情</text>
+        <text class="tft-label">表格详情</text>
       </view>
       <view class="table-fullscreen-actions">
         <view class="table-fullscreen-btn" bindtap="copyFullscreenTable">
           <view class="table-fullscreen-btn-icon icon-copy"></view>
-          <text>复制</text>
+          <text class="tfb-label">复制</text>
         </view>
         <view class="table-fullscreen-close" bindtap="closeFullscreenTable">
           <view class="table-fullscreen-close-icon"></view>
@@ -201,7 +201,7 @@
 
     <!-- 底部提示 -->
     <view class="table-fullscreen-footer">
-      <text>{{ fullscreenTable ? fullscreenTable.headers.length + ' 列 · ' + fullscreenTable.rows.length + ' 行' : '' }}</text>
+      <text class="tff-info">{{ fullscreenTable ? fullscreenTable.headers.length + ' 列 · ' + fullscreenTable.rows.length + ' 行' : '' }}</text>
     </view>
   </view>
 </view>

@@ -318,7 +318,7 @@ page ::selection { background: rgba(201,169,110,0.25); color: var(--text-primary
 .ocr-confirm-btn { flex:1; height:88rpx; background:var(--accent); color:var(--btn-text-on-accent); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none }
 .ocr-confirm-btn::after { border:none }
 .ocr-confirm-btn.is-loading { background:var(--accent-dim); }
-.ocr-confirm-btn[disabled] { opacity:0.7; }
+.ocr-confirm-btn.is-disabled { opacity:0.7; }
 
 /* OCR 结果：低置信度保单标注 — 统一为深琥珀文字（对比度≥4.5:1），背景由容器自持 */
 .low-conf { color: var(--amber-deep); }

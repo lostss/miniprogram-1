@@ -89,7 +89,14 @@ async function _fetchMembersByFam(db, openid, famIds) {
   const membersByFam = {}
   if (!famIds || famIds.length === 0) return membersByFam
   const _ = db.command
-  const memRes = await db.collection('members').where({ family_id: _.in(famIds), _openid: openid }).limit(500).get().catch(() => ({ data: [] }))
+  // 降级保留（见文件头：主查询失败传播、成员查询容错降级——家庭列表仍可显示）。
+  // 2026-09-11 修复（全面审计 P1-1）：但降级**必须可观测**——原实现完全静默，
+  // 成员查询失败时列表成员数变 0 却无任何日志，线上无法察觉（不掩盖失败原则）。
+  const memRes = await db.collection('members').where({ family_id: _.in(famIds), _openid: openid }).limit(500).get()
+    .catch(e => {
+      console.error('[family-list] 成员批量查询失败，已降级为空（家庭列表仍显示）:', e.message)
+      return { data: [] }
+    })
   for (const m of (memRes.data || [])) {
     if (!membersByFam[m.family_id]) membersByFam[m.family_id] = []
     membersByFam[m.family_id].push(m)

@@ -77,7 +77,7 @@
 .ocr-confirm-btn { flex:1; height:88rpx; background:var(--accent); color:var(--btn-text-on-accent); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none }
 .ocr-confirm-btn::after { border:none }
 .ocr-confirm-btn.is-loading { background:var(--accent-dim) }
-.ocr-confirm-btn[disabled] { opacity:0.7 }
+.ocr-confirm-btn.is-disabled { opacity:0.7 }
 
 /* ========== 文案态 ========== */
 /* UI 审计：popIn 组件内仍用 ease-spring（app.wxss 全局改 expo 因组件样式隔离未生效），此处收敛 */

@@ -58,7 +58,11 @@ async function pruneLogs(retentionDays) {
     // 无清理机制会持续膨胀（实测单家庭已 227 条，其中 109 条历史版本），
     // 并推高"单次 get 超 100 条被平台静默截断"的风险（2026-09-09 报告缺保障事故同类根因）。
     // 只删 status=superseded（active 绝不触碰），且仅删超保留期的，近期版本链保留供审计追溯。
-    { name: 'facts', timeField: 'created_at', extraWhere: { status: 'superseded' } }
+    // 2026-09-11 修复：原用 created_at 做 TTL，但 superseded 是**后期 update 打上的标记**——
+    // 3 年前创建、今天才作废的事实会立刻命中 created_at < cutoff 被硬删，与上方"近期版本链
+    // 保留供审计追溯"的意图直接矛盾。改用 updated_at（writeSeam.safeUpdateWhere 自动写入），
+    // 即"作废时刻"起算保留期才符合语义。老数据缺 updated_at 时不会被 < 选中，属安全失败。
+    { name: 'facts', timeField: 'updated_at', extraWhere: { status: 'superseded' } }
   ]
   for (const { name, timeField, extraWhere } of TTL_COLS) {
     let total = 0

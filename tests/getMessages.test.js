@@ -1,16 +1,20 @@
 /**
  * queryMessages 云函数单元测试
- * 测试：参数校验、分页查询、mode=latest、before 分页
+ * 测试：参数校验、分页查询、mode=latest、before 分页、失败分支
  * （原 getMessages 已重命名为 queryMessages；生产链式调用 where(...).orderBy(...).limit(...).get()）
  */
 
 var mockMessages = []
+var mockQueryError = null // 2026-09-11 全面审计 P1-1：查询失败开关（验证"读失败不返回空集"）
 
 jest.mock('wx-server-sdk', function() {
   // 链式 mock：where → orderBy → limit → get；where 也直接接 get（无 orderBy 路径）
   var buildChain = function() {
     var chain = {
-      get: jest.fn(function() { return Promise.resolve({ data: mockMessages.slice() }) })
+      get: jest.fn(function() {
+        if (mockQueryError) return Promise.reject(new Error(mockQueryError))
+        return Promise.resolve({ data: mockMessages.slice() })
+      })
     }
     chain.limit = jest.fn(function() { return chain })
     chain.orderBy = jest.fn(function() { return chain })
@@ -36,6 +40,7 @@ describe('queryMessages (via dataQuery) 云函数', function() {
 
   beforeEach(function() {
     mockMessages = []
+    mockQueryError = null
   })
 
   test('缺少 familyId 返回 400', function() {
@@ -118,6 +123,18 @@ describe('queryMessages (via dataQuery) 云函数', function() {
     return dataQuery.main({ action: 'queryMessages', familyId: 'fam_001', mode: 'latest' }).then(function(res) {
       expect(res.code).toBe(200)
       expect(res.data.messages[0].undoOps).toEqual([{ opId: 'ud_1', summary: '已更新家庭财务', ttlSec: 300 }])
+    })
+  })
+
+  // 2026-09-11 全面审计 P1-1：原实现带 `.catch(() => ({ data: [] }))`，
+  // messages 查询失败被吞成"无历史"，用户以为对话记录丢失（与 policy-read 线上事故同根因）。
+  // 修复后读失败必须传播 → 外层 wrapError 返回 500。
+  test('messages 查询失败 → 返回 500，不再静默空数组', function() {
+    mockQueryError = 'DB connection failed'
+    return dataQuery.main({ action: 'queryMessages', familyId: 'fam_001' }).then(function(res) {
+      expect(res.code).toBe(500)
+      expect(res.data).toBeUndefined()
+      expect(res.msg).toContain('失败')
     })
   })
 })

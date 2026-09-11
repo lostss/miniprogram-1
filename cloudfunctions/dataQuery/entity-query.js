@@ -93,10 +93,14 @@ async function queryMemberProfile(db, openid, event) {
     if (!member) return { code: 404, msg: '未找到成员：' + (memberName || memberId) }
 
     // 并行查 facts 和 policies
+    // 2026-09-11 修复（全面审计 P1-1）：原 policies 查询带 `.catch(() => ({ data: [] }))`，查询失败被
+    // **完全静默**地吞成"该成员无保单"（同批 facts 走的 safeQueryAll 虽也降级，但会 console.error 留痕）。
+    // 保单是本工具回答的核心数据（"他有什么保险"），降级成空会让 AI 断言"该成员没有保障"——足以误导
+    // 加保/退保决策，故此处选择**失败即抛**（→ 外层 wrapError 转 500），而非静默降级。
     const mid = member.member_id
     const [factRes, policyRes] = await Promise.all([
       safeQueryAll(db, 'facts', { family_id: familyId, subject_id: mid, status: 'active' }, openid),
-      db.collection('policies').where({ family_id: familyId, _openid: openid, member_id: mid, status: db.command.neq('deleted') }).limit(20).get().catch(() => ({ data: [] }))
+      db.collection('policies').where({ family_id: familyId, _openid: openid, member_id: mid, status: db.command.neq('deleted') }).limit(20).get()
     ])
 
     // 按维度分组 facts

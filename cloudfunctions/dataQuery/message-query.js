@@ -20,7 +20,10 @@ async function queryMessages(db, openid, event) {
       const _ = db.command
       where.created_at = _.lt(new Date(before))
     }
-    const res = await db.collection('messages').where(where).orderBy('created_at', 'desc').limit(limit).get().catch(() => ({ data: [] }))
+    // 2026-09-11 修复（全面审计 P1-1）：原带 `.catch(() => ({ data: [] }))`，messages 查询失败时
+    // 对话历史静默显示为空——用户会以为历史丢失，且与 policy-read 事故同根因（读失败伪装空数据）。
+    // 读失败必须传播 → 外层 wrapError 转错误态，由前端提示重试。
+    const res = await db.collection('messages').where(where).orderBy('created_at', 'desc').limit(limit).get()
     // latest 模式返回最新 N 条（正序展示由前端处理）；more 模式返回游标之前 N 条
     const messages = (res.data || []).map(m => ({
       _id: m._id,

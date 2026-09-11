@@ -1,164 +1,30 @@
 /**
- * gap-engine.js — 保障缺口计算引擎
+ * gap-engine.js — 保障缺口展示层
  *
- * 从 report-builder.js 抽取：buildGaps, buildGapMatrix + 阈值辅助函数。
- * 纯计算模块，不依赖 AI，可独立单测。
+ * 2026-09-11「业务规则双实现」治理：**计算核心已上移** cloudfunctions/_shared/gap-core.js，
+ * 经 sync-shared.js 的 CONTRACT_FILES 跨树契约同步为 ../gap-core.js —— 前端页面矩阵与
+ * 后端 AI 报告（reportAI/report-context）现调用同一份算法（此前各实现一遍，且后端是简化复刻，
+ * 口径分裂 2 次：2026-09-05 P1-A 收入基数、2026-09-10 P1-2）。
+ *
+ * 本文件只保留**展示层**：gaps 的筛选与排序、缺口矩阵、覆盖矩阵的形状。
+ * 改算法请改 cloudfunctions/_shared/gap-core.js（改本文件副本 = 下次 sync 被覆盖）。
  */
+const { evaluateCoverage, neededCats } = require('../gap-core')
+const { canonCat } = require('../thresholds')
 const { yuanToWan } = require('../amount')
-
-// 阈值单一事实源
-var _thresholds = null
-var _formatThresholdAppendix = null
-var _canonCat = null
-function _lazyLoad() {
-  if (!_thresholds) {
-    var t = require('../thresholds')
-    _thresholds = t.THRESHOLDS
-    _canonCat = t.canonCat
-    _formatThresholdAppendix = t.formatThresholdAppendix
-  }
-}
-
-var _DEFAULT_THRESHOLD = null
-function _thresholdFor(cat) {
-  _lazyLoad()
-  if (!_DEFAULT_THRESHOLD) _DEFAULT_THRESHOLD = require('../thresholds').DEFAULT_THRESHOLD
-  return _thresholds[cat] || _DEFAULT_THRESHOLD
-}
-function _referenceFor(cat, debt, income) {
-  var r = _thresholdFor(cat).reference
-  return typeof r === 'function' ? r(debt, income) : r
-}
-
-// 角色→必需险种（最小版需求模型）
-function _neededCats(role) {
-  var r = role || ''
-  if (r === '子女' || r === '父母') return ['医疗险', '意外险', '重疾险']
-  if (r === '本人' || r === '配偶') return ['重疾险', '医疗险', '意外险', '寿险']
-  return ['医疗险', '意外险']
-}
-
-function _gapPriority(cat, isPillar) {
-  if (isPillar && (cat === '寿险' || cat === '重疾险' || cat === '意外险')) return 'high'
-  if (isPillar) return 'medium'
-  if (cat === '重疾险' || cat === '医疗险') return 'medium'
-  return 'low'
-}
-
-// 缺口可信度
-function _gapReliability(cat, hasIncome, hasDebt) {
-  if (cat === '重疾险' || cat === '医疗险') return 'estimated'
-  if (cat === '寿险' || cat === '意外险') {
-    if (!hasIncome) return 'blocked'
-    return hasDebt ? 'confirmed' : 'estimated'
-  }
-  return 'confirmed'
-}
-
-function _basisText(cat, exist, debt, income, rel) {
-  if (cat === '重疾险') return '参考50万（治疗费+收入损失），现有' + exist + '万'
-  if (cat === '医疗险') return '建议百万医疗，现有' + (exist > 0 ? exist + '万' : '无')
-  if (cat === '寿险') {
-    if (rel === 'blocked') return '寿险需求=负债+5×年收入，年收入缺失无法计算'
-    if (rel === 'estimated') return '寿险需求≈5×年收入' + income + '万（负债缺失暂按0），现有' + exist + '万'
-    return '寿险需求=负债' + debt + '万+5×年收入' + income + '万，现有' + exist + '万'
-  }
-  if (cat === '意外险') {
-    if (rel === 'blocked') return '意外险需求=5×年收入或负债取高，年收入缺失无法计算'
-    if (rel === 'estimated') return '意外险需求≈5×年收入' + income + '万（负债缺失暂按0），现有' + exist + '万'
-    return '意外险需求=max(5×年收入' + income + '万, 负债' + debt + '万)，现有' + exist + '万'
-  }
-  return '参考' + _referenceFor(cat, debt, income) + '万，现有' + exist + '万'
-}
-
-function _completeHint(cat, hasIncome, hasDebt) {
-  if (cat === '重疾险' || cat === '医疗险') return ''
-  if (!hasIncome) return '补全年收入 → 解锁' + cat + '缺口计算'
-  if (!hasDebt) return '补全负债 → ' + cat + '需求计入负债更精确'
-  return ''
-}
 
 /**
  * 构建结构化保障缺口（前端纯计算，不消耗 AI）
+ * 展示语义：只保留**未满足**项（含 blocked 待补项，其 satisfied=false）
  */
 function buildGaps(family) {
-  _lazyLoad()
-  var policies = (family && family.policies) || []
-  var members = (family && family.members) || []
-  var active = policies.filter(function(p) { return p.status === 'active' })
-  var debt = (family.debt && family.debt.amount) || 0
-  var hasDebt = debt > 0
-  var pillar = members.find(function(m) { return /本人|经济支柱/.test(m.role || '') }) || members[0] || null
-  var hasKids = members.some(function(m) { return (m.role || '') === '子女' })
-  var _memberIdToName = {}
-  for (var i = 0; i < members.length; i++) {
-    var m = members[i]
-    if (m.member_id) _memberIdToName[m.member_id] = m.name
-  }
-
-  var gaps = []
-  // 2026-09-10：家庭收入与负债在成员循环内不变，提到循环外避免重复解析
-  // 2026-09-11：Number 替代 parseInt——收入可为小数（如 80.5 万），parseInt 会截断为 80（丢 5000 元），
-  // 而本链路其他地方（成员收入、保额、负债）均按 Number 处理，统一避免精度口径不一致
-  var familyIncome = Number(family.family_income) || 0
-  for (var j = 0; j < members.length; j++) {
-    var mb = members[j]
-    var isPillar = !!(pillar && mb.name === pillar.name)
-    var rawMemIncome = mb.income || 0
-    // P1-A 修复（2026-09-05）：成员收入口径专业化，替换"按成员数均摊家庭收入"——
-    //   1) 成员有个人收入 → 用个人收入；
-    //   2) 支柱个人收入缺失 → 用家庭年收入全额兜底（原均摊会把支柱收入摊薄，系统性低估寿险/意外缺口）；
-    //   3) 非支柱（全职配偶/子女）收入缺失 → 按 0（不再均摊出"虚假收入"，避免虚高依赖方保额参考）；
-    //   4) 家庭收入也缺失 → 成员收入视为缺失（寿险/意外走 blocked 待补，见 _gapReliability）
-    var hasOwnIncome = rawMemIncome > 0
-    var useFamilyFallback = !hasOwnIncome && isPillar && familyIncome > 0
-    var hasMemIncome = hasOwnIncome || useFamilyFallback
-    var isEstimatedIncome = useFamilyFallback
-    var memIncome = hasOwnIncome ? rawMemIncome : (useFamilyFallback ? familyIncome : 0)
-    var existing = {}
-    for (var k = 0; k < active.length; k++) {
-      var p = active[k]
-      var n = (p.member_id && _memberIdToName[p.member_id]) || p.insured_name
-      if (n === mb.name) {
-        var c = _canonCat(p.insurance_category || '其他')
-        existing[c] = (existing[c] || 0) + yuanToWan(p.sum_assured || 0)
-      }
-    }
-    // 2026-09-10：原实现循环条件与取值各调一次 _neededCats（同参数纯函数），缓存避免重复计算
-    var neededCats = _neededCats(mb.role)
-    for (var l = 0; l < neededCats.length; l++) {
-      var cat = neededCats[l]
-      var exist = existing[cat] || 0
-      var relBase = _gapReliability(cat, hasMemIncome, hasDebt)
-      var rel = isEstimatedIncome && relBase === 'confirmed' ? 'estimated' : relBase
-      var priority = _gapPriority(cat, isPillar)
-      var priorityLabel = priority === 'high' ? '高' : (priority === 'medium' ? '中' : '低')
-      var reliabilityLabel = rel === 'confirmed' ? '✅ 已确认' : (rel === 'estimated' ? '⚠️ 估算值' : '⚠️ 无法计算')
-
-      if (rel === 'blocked') {
-        gaps.push({
-          id: mb.name + '_' + cat, member: mb.name, role: mb.role || '', category: cat,
-          existing: exist, reference: null, gap: null,
-          reliability: rel, reliabilityLabel: reliabilityLabel,
-          basis: _basisText(cat, exist, debt, memIncome, rel),
-          completeHint: _completeHint(cat, hasMemIncome, hasDebt),
-          priority: priority, priorityLabel: priorityLabel, why: ''
-        })
-        continue
-      }
-      if (_thresholdFor(cat).statusFn(exist, debt, memIncome)) continue
-      var ref = _referenceFor(cat, debt, memIncome)
-      var gapAmt = Math.max(0, ref - exist)
-      gaps.push({
-        id: mb.name + '_' + cat, member: mb.name, role: mb.role || '', category: cat,
-        existing: exist, reference: ref, gap: gapAmt,
-        reliability: rel, reliabilityLabel: reliabilityLabel,
-        basis: _basisText(cat, exist, debt, memIncome, rel),
-        completeHint: _completeHint(cat, hasMemIncome, hasDebt),
-        priority: priority, priorityLabel: priorityLabel, why: ''
-      })
-    }
-  }
+  const rows = evaluateCoverage({
+    members: (family && family.members) || [],
+    policies: (family && family.policies) || [],
+    familyIncomeWan: Number(family && family.family_income) || 0,
+    debtWan: (family && family.debt && family.debt.amount) || 0
+  })
+  const gaps = rows.filter(function(r) { return !r.satisfied })
   var order = { high: 0, medium: 1, low: 2 }
   gaps.sort(function(a, b) { return (order[a.priority] - order[b.priority]) || ((b.gap || 0) - (a.gap || 0)) })
   return gaps
@@ -171,7 +37,7 @@ function buildGapMatrix(gaps, members) {
   var seen = {}
   var cats = []
   for (var i = 0; i < members.length; i++) {
-    var needed = _neededCats(members[i].role)
+    var needed = neededCats(members[i].role)
     for (var j = 0; j < needed.length; j++) {
       var c = needed[j]
       if (!seen[c]) { seen[c] = true; cats.push(c) }
@@ -182,7 +48,7 @@ function buildGapMatrix(gaps, members) {
     if (!seen[gc]) { seen[gc] = true; cats.push(gc) }
   }
   var rows = members.map(function(m) {
-    var needed = _neededCats(m.role)
+    var needed = neededCats(m.role)
     var cells = cats.map(function(cat) {
       if (needed.indexOf(cat) === -1) return { v: '—', s: 'na' }
       var g = null
@@ -219,7 +85,7 @@ function buildCoverageMatrix(members, policies) {
       var p = active[k]
       var n = (p.member_id && memberIdToName[p.member_id]) || p.insured_name
       if (n === m.name) {
-        var c = _canonCat(p.insurance_category || '其他')
+        var c = canonCat(p.insurance_category || '其他')
         if (cells[c] !== undefined) cells[c] += yuanToWan(p.sum_assured || 0)
       }
     }

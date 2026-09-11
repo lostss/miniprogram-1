@@ -1,0 +1,26 @@
+#!/bin/sh
+#
+# pre-commit 钩子（2026-09-11 全面审计 P2-3 落地）
+#
+# 拦截两类**已实际发生过**的问题，把保障从"依赖纪律"改为"依赖钩子"：
+#   ① _shared 副本漂移 ——「改副本 = 白改」已发生 3 次（memberRepo 白名单 /
+#      ai-gateway 降级 / familyPortrait compact 画像，见 cloud-rules/RULE.mdc）
+#   ② 未通过测试的代码提交 —— 项目无 CI，提交是最后一道静态防线
+#
+# 安装（克隆仓库后执行一次；.git/hooks/ 不随仓库分发，故钩子真身版本化在此）：
+#   sh scripts/hooks/install.sh
+#
+# 跳过（紧急热修等）：
+#   git commit --no-verify
+#
+# 耗时基线（2026-09-11 实测）：sync --check ≈ 0.5s + jest 全量 ≈ 12s
+
+set -e
+
+echo "[pre-commit] 1/2 检查 _shared 副本漂移..."
+node scripts/sync-shared.js --check
+
+echo "[pre-commit] 2/2 运行测试..."
+npx jest tests/ --silent
+
+echo "[pre-commit] 通过"

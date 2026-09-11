@@ -20,7 +20,7 @@
 .ob-step-text { font-size:var(--fs-caption); color:var(--text-tertiary); letter-spacing:var(--ls-wide) }
 .ob-step-line { width:48rpx; height:1rpx; background:var(--border); margin-bottom:28rpx }
 .empty-hint { text-align:center; padding-top:100rpx }
-.empty-hint text { font-size:var(--fs-caption); color:var(--text-tertiary); letter-spacing:2rpx }
+.empty-hint-text { font-size:var(--fs-caption); color:var(--text-tertiary); letter-spacing:2rpx }
 
 /* UI 审计 R-M5：首页加载错误态 */
 .load-error { display:flex; flex-direction:column; align-items:center; gap:var(--sp-3); margin-top:var(--sp-6) }

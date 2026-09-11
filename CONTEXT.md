@@ -66,7 +66,7 @@
 | 6 | 风险提示 | `risk_alerts` | 置信度告警 + 免责声明 |
 | 7 | 附录：保单明细 | `appendix_policies` | 按被保人分组的保单卡片，点击弹明细 Sheet |
 
-> 深度分析章节（保障规划/行动建议等）由扩展版承载，已实现（reportAI + 手动触发）。
+> 深度分析章节（保障规划/行动建议等）由扩展版承载，已实现（reportAI + 自动触发，触发时机见上方「分析触发」）。
 
 ## 输出结构
 
@@ -113,12 +113,12 @@
 - **后端**：CloudBase 云函数，共享模块经 `scripts/sync-shared.js` 同步至各函数 `_shared/` 副本：
   - `dataQuery`：查询聚合（getFamily / queryMessages / listFamilies / searchFamilies / queryPolicies / queryMembers / queryFacts）
   - `dataWrite`：写入聚合（家庭/成员/事实/保单/消息，`ingestPolicies` 批量入库 step 化）
-  - `reportAI`：深度分析报告生成（已停止自动触发，待手工入口）
-  - `conversationAI`：对话三步流程（getPrompt / generateText / postProcess / record）+ 14 工具路由
+  - `reportAI`：深度分析报告生成（2026-09-06 活报告模型恢复自动触发，30s CAS 节流；手动按钮为立即补算入口）
+  - `conversationAI`：对话单通道（`mode:'chat'`，后端原生 function calling + 14 工具路由；确认卡二次调用走 CONFIRM 拦截）
   - `ocrService`：OCR 全链路（ocrOnly / aiExtractBatch / aiExtractParallel / matchPolicies）
-  - `login`：手机号登录；`cleanup`：定时清理
-- **数据库**：CloudBase NoSQL（文档型，6 集合：families / members / finances / policies / products / facts，灵活适配渐进式录入；products 为 2026-08 新增产品条款主数据）
-- **AI**：对话/单图 OCR 提取经混元 `hy3`（`hunyuan-exp` 分组，TokenHub）；批量 OCR 提取（>1 张）走 DeepSeek 直连（`deepseek-v4-flash`，key 仅配置于 ocrService）；云函数侧 AI 全链经 `ai-gateway.js` → `safeCallChat`（审查链：sanitize → PII 脱敏 → 注入检测 → 内容安全 → 限流 60/60s → 输出审计 → agent_logs）
+  - `login`：openid 静默登录（微信唯一身份即账号）；`cleanup`：定时清理
+- **数据库**：CloudBase NoSQL（文档型；核心 6 集合 families / members / finances / policies / products / facts，另有 policy_cash_values / messages / reports / agent_logs / operation_logs 等）
+- **AI**：模型以 `_shared/config.js` 的 `AI` 段为**单一事实源**（勿在此硬编码模型名，曾因此漂移）——结构化任务（reportAI 报告、批量 OCR、失败重试）走 DeepSeek 直连（`AI.USE_DIRECT` + `AI.DIRECT_MODEL`，绕过 TokenHub 限流）；云函数侧 AI 全链经 `ai-gateway.js` → `safeCallChat`（审查链：sanitize → PII 脱敏 → 注入检测 → 内容安全 → 限流 60/60s → 输出审计 → agent_logs）
 
 原则：**轻量化，单一服务，零分布式复杂度**。
 

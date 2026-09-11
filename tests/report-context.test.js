@@ -197,16 +197,16 @@ describe('buildGapSnapshot（缺口矩阵口径）', () => {
       ]
     )
     const row = _row(md, '李四', '寿险')
-    expect(row).toContain('5×收入20万')
+    expect(row).toContain('5×年收入20万')
     expect(row).toContain('=200万')
     expect(row).toContain('✅ 已覆盖')
-    expect(row).not.toContain('5×收入50万')
+    expect(row).not.toContain('5×年收入50万')
   })
 
   test('支柱个人收入缺失 → 用家庭年收入全额兜底并标注估算', () => {
     const md = buildGapSnapshot([], { income: 50, debt: 0 }, [{ member_id: 'm1', name: '张三', role: '本人' }])
     const row = _row(md, '张三', '寿险')
-    expect(row).toContain('5×收入50万')
+    expect(row).toContain('5×年收入50万')
     expect(row).toContain('按家庭年收入估算')
   })
 
@@ -240,19 +240,25 @@ describe('buildGapSnapshot（缺口矩阵口径）', () => {
       { member_id: 'm2', name: '李四', role: '配偶', income: 20 }
     ])
     expect(_row(md, '李四', '重疾险')).toContain('❌ 有缺口')
-    expect(_row(md, '李四', '重疾险')).toContain('现有0万<50万')
-    expect(_row(md, '李四', '寿险')).toContain('=100万') // 负债0 + 5×个人收入20
+    expect(_row(md, '李四', '重疾险')).toContain('现有0万')
+    // 负债为 0 → 需求走 estimated 表达（≈5×年收入），不输出完整公式的具体数（前端既有语义：
+    // 区分不了"负债确实是 0"与"负债未填"，故保守用近似表达）
+    expect(_row(md, '李四', '寿险')).toContain('5×年收入20万')
     expect(md).not.toContain('无任何保障')
   })
 
-  test('保单 insured_name 不在成员名单 → 仍单独成行（不丢数据）', () => {
+  // 2026-09-11 契约变更（单一实现治理的副产物）：矩阵只呈现「成员 × 险种」，
+  // insured_name 不在成员名单的保单不再单独成行——与前端 gap-engine 既有行为一致
+  // （前端矩阵从来只有成员行）。该保单明细由上下文第 4 层「结构化保单清单」承载，不丢数据；
+  // 且「被保人不在成员名单」本身是待修正的数据问题（应先补成员）。
+  test('被保人不在成员名单的保单不进矩阵（与前端一致；明细由结构化清单承载）', () => {
     const md = buildGapSnapshot(
       [{ status: 'active', insured_name: '王五', insurance_category: '重疾险', sum_assured: 800000 }],
       { income: 30, debt: 0 },
       [{ member_id: 'm1', name: '张三', role: '本人', income: 30 }]
     )
-    expect(_row(md, '王五', '重疾险')).toContain('✅ 已覆盖')
-    expect(_row(md, '张三', '重疾险')).toContain('❌ 有缺口')
+    expect(_row(md, '王五', '重疾险')).toBeUndefined() // 不单独成行
+    expect(_row(md, '张三', '重疾险')).toContain('❌ 有缺口') // 实际成员正常成行
   })
 
   test('医疗险 100 万及格线（与前端一致）', () => {
@@ -262,7 +268,8 @@ describe('buildGapSnapshot（缺口矩阵口径）', () => {
       [{ member_id: 'm1', name: '张三', role: '本人', income: 30 }]
     )
     expect(_row(md, '张三', '医疗险')).toContain('❌ 有缺口')
-    expect(_row(md, '张三', '医疗险')).toContain('现有50万<100万')
+    expect(_row(md, '张三', '医疗险')).toContain('现有50万')
+    expect(_row(md, '张三', '医疗险')).toContain('建议百万医疗')
   })
 
   test('全空家庭 → 单行显式声明（保证 AI 有依据可引用）', () => {

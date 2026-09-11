@@ -222,18 +222,21 @@ describe('loadActivePolicies — limit 选项', () => {
 // 5. 错误容错
 // ---------------------------------------------------------------------------
 
-describe('loadActivePolicies — 错误容错', () => {
-  test('safeQuery 抛错时返回空数组（不传播异常）', async () => {
+// 2026-09-11 行为变更：原实现 `.catch(() => ({data:[]}))` 把查询失败伪装成"没有保单"——
+// 本文件经 sync 分发到 reportAI / conversationAI / dataQuery / reportPdf，调用方会基于空数据
+// 生成**缺全部保单却无任何提示**的报告/PDF/对话上下文（与"归档集合静默失效"同型事故）。
+// 现改为：真实故障上抛，由调用方报错或降级；仅"集合不存在"语义上等同暂无保单，放行。
+describe('loadActivePolicies — 错误处理', () => {
+  test('DB 连接失败 → 抛出异常（不再静默返回空数组）', async () => {
     const db = {
       collection: () => {
         throw new Error('DB connection failed')
       }
     }
-    const result = await loadActivePolicies(db, 'fam1', 'op1')
-    expect(result).toEqual([])
+    await expect(loadActivePolicies(db, 'fam1', 'op1')).rejects.toThrow('DB connection failed')
   })
 
-  test('where 链抛错时返回空数组', async () => {
+  test('where 链抛错 → 抛出异常', async () => {
     const db = {
       collection: () => ({
         where: () => {
@@ -241,8 +244,19 @@ describe('loadActivePolicies — 错误容错', () => {
         }
       })
     }
-    const result = await loadActivePolicies(db, 'fam1', 'op1')
-    expect(result).toEqual([])
+    await expect(loadActivePolicies(db, 'fam1', 'op1')).rejects.toThrow('where construction failed')
+  })
+
+  test('集合不存在（全新环境）→ 视为暂无保单，返回空数组（合理降级，不阻断主流程）', async () => {
+    const err = Object.assign(new Error('Db or Table not exist: policies. Please check your request'), {
+      errCode: 'DATABASE_COLLECTION_NOT_EXIST'
+    })
+    const db = {
+      collection: () => ({
+        where: () => ({ limit: () => ({ get: () => Promise.reject(err) }) })
+      })
+    }
+    await expect(loadActivePolicies(db, 'fam1', 'op1')).resolves.toEqual([])
   })
 })
 

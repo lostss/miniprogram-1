@@ -589,7 +589,7 @@
   background-position: center;
 }
 
-.table-fullscreen-title text {
+.table-fullscreen-title .tft-label {
   font-size: var(--fs-xl);
   font-weight: var(--fw-semi);
   color: var(--text-primary);
@@ -623,7 +623,7 @@
   background-position: center;
 }
 
-.table-fullscreen-btn text {
+.table-fullscreen-btn .tfb-label {
   font-size: var(--fs-caption);
   color: var(--text-secondary);
 }
@@ -742,7 +742,7 @@
   flex-shrink: 0;
 }
 
-.table-fullscreen-footer text {
+.table-fullscreen-footer .tff-info {
   font-size: var(--fs-caption);
   color: var(--text-tertiary);
 }

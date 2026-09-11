@@ -70,7 +70,7 @@
 
 /* ========== 底部操作（转发 + 深度分析，设计稿 v4） ========== */
 .report-footer { display:flex; gap:var(--sp-4); padding:var(--sp-4) var(--sp-5); }
-.report-footer button { margin:0; }
+.report-footer .footer-share, .report-footer .footer-export { margin:0; }
 /* UI 打磨：footer 按钮 88→80rpx，弱化与底部 FAB 输入条 88rpx 双条带的层叠拥挤 */
 /* 2026-09-02：深度分析生成入口已移至结论下的 deep-entry，footer 移除 analyze 按钮 */
 .footer-share, .footer-export { flex:1; height:80rpx; display:flex; align-items:center; justify-content:center; font-size:var(--fs-body); border-radius:var(--r-lg); line-height:normal; margin:0; }

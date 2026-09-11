@@ -57,7 +57,11 @@ const TARGET_FUNCTIONS = fs.readdirSync(CF_DIR, { withFileTypes: true })
 
 // 跨树契约文件：_shared 权威源 → miniprogram/utils/，使前端与云函数共用同一事实源
 // ponytail: 只列确需前端引用的文件，避免把云函数专用逻辑泄漏进小程序
-const CONTRACT_FILES = ['thresholds.js', 'pii-rules.js', 'parse-expiry.js', 'ocr-confidence.js', 'injection-guard.js', 'readiness.js', 'calc-age.js']
+// 2026-09-11 加入 amount.js：此前是"人工镜像"（前端文件头自述）——行为一致，但违背其自身契约
+// 「所有 元↔万 换算必须经本文件」，任一侧改动都会静默漂移。纳入契约后由 sync 保证一致。
+// 2026-09-11 加入 gap-core.js：保障缺口算法单一事实源。此前前端 gap-engine 与后端
+// report-context.buildGapSnapshot 各实现一遍（后端还是简化复刻）→ 口径分裂 2 次（P1-A / P1-2）。
+const CONTRACT_FILES = ['thresholds.js', 'amount.js', 'gap-core.js', 'pii-rules.js', 'parse-expiry.js', 'ocr-confidence.js', 'injection-guard.js', 'readiness.js', 'calc-age.js']
 
 // 扫描一个 .js 文件中、解析到 _shared/ 下的 require 目标（返回相对 _shared 的路径，'/' 分隔）
 // fileAbs 可能是：
