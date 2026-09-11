@@ -57,31 +57,31 @@ scripts/poc/
 .workbuddy/memory/
 .trae/audit/*.html
 
-# AI-IDE 规则镜像（2026-09-11 冗余扫描 A 类）：多个 AI 编码工具各自安装 CloudBase 规则包
-# 留下的内容副本（9 份同源），由工具按需重建。移出跟踪不删本地文件；保留唯一主源。
+# AI-IDE 工具产物（2026-09-11 项目整洁治理）：多个 AI 编码工具各自安装规则包/技能包留下的
+# 内容副本与指令文件（9 份同源），以及工具本机配置。均由工具按需重建，非项目资产。
+# 移出跟踪不删本地文件；项目自有的规范与技能走 .codebuddy/ 例外（见上方）。
 .agent/
 .clinerules/
 .cursor/
 .kiro/
 .qoder/
 .windsurf/
-.trae/skills/
-.trae/rules/
+.trae/
 .comate/
 .roo/
 .lingma/
 .claude/skills/
 .claude/settings.local.json
 .workbuddy/mcp.json
+# 各工具安装的通用规则/指令文档（rules/ = CloudBase 官方规则包，26 主题）
+rules/
+.rules/
+.gemini/
+.qwen/
+.github/copilot-instructions.md
 
-# 一次性产物（同次扫描 C 类）：临时统计脚本与旧评审 HTML
-.trae/_count.ps1
-.trae/_count2.ps1
-.trae/_lines.txt
-.trae/architecture-review-*.html
-# 注：.trae/audit/（8 个专题审计 md）与 .claude/commands/（自定义命令）是手写资产，继续跟踪
-
-# 根目录散落的一次性审计/扫描报告（2026-09-11，用户确认一次性、不入库）。
-# 其建议已全部执行（见 58f774a / 7974a51）；如需保留为决策留档，移入 docs/audit/ 后再入库。
+# 历史审计/扫描产物（一次性；结论已落进代码、质量门错误库与提交历史）
+audit-report.html
+ui-audit-report.html
 /audit-full-*.html
 /redundancy-scan-*.html
