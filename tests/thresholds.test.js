@@ -56,7 +56,9 @@ describe('thresholds', () => {
       expect(THRESHOLDS['重疾险'].statusFn(100)).toBe(true)
     })
 
-    test('医疗险：>=100万为达标（reference=200 但 statusFn 阈值=100）', () => {
+    // 2026-09-11：reference 与 statusFn 阈值统一为 100（原 reference=200 与及格线 100 并存，
+    // 导致前端缺口金额按 200 算、矩阵依据却写"建议百万医疗"，两处口径打架）
+    test('医疗险：>=100万为达标（reference 与 statusFn 阈值统一为 100）', () => {
       expect(THRESHOLDS['医疗险'].statusFn(100)).toBe(true)
       expect(THRESHOLDS['医疗险'].statusFn(99)).toBe(false)
       expect(THRESHOLDS['医疗险'].statusFn(200)).toBe(true)
@@ -89,7 +91,7 @@ describe('thresholds', () => {
   describe('THRESHOLDS reference', () => {
     test('数字型 reference 直接返回', () => {
       expect(THRESHOLDS['重疾险'].reference).toBe(50)
-      expect(THRESHOLDS['医疗险'].reference).toBe(200)
+      expect(THRESHOLDS['医疗险'].reference).toBe(100)
       expect(THRESHOLDS['年金'].reference).toBe(10)
     })
 
@@ -134,7 +136,7 @@ describe('thresholds', () => {
     test('重疾险/医疗险带"参考保额N万"（数字型 reference）', () => {
       const text = formatThresholdPrompt()
       expect(text).toContain('参考保额50万')
-      expect(text).toContain('参考保额200万')
+      expect(text).toContain('参考保额100万')
     })
   })
 

@@ -19,7 +19,23 @@ project.private.config.json
 .trae/.tmp/
 codebuddy-plugin/
 # R3v2 审计 #1：.codebuddy 工具数据目录含真实密钥（models.json），整体停止跟踪
-.codebuddy/
+# 2026-09-11 冗余扫描处置：改写为 .codebuddy/* —— 整体忽略【目录】时，下行的 ! 例外不生效
+# （git 不会进入被忽略的目录去检查例外），改为忽略【子项】后例外才能放行项目自有的手写资产。
+.codebuddy/*
+# 例外：项目自有手写规则/技能（不可再生，必须入库）；工具安装的官方规则包/技能镜像仍被忽略。
+# ⚠️ git 硬规则：父目录被排除时无法再包含其内容 → 必须【逐级】放行，三步缺一不可：
+#   ① 放行路径上的目录本身 ② 重新忽略该目录的内容 ③ 放行目标子目录
+!.codebuddy/rules/
+!.codebuddy/skills/
+.codebuddy/rules/*
+!.codebuddy/rules/cloud-rules/
+!.codebuddy/rules/project-rules/
+.codebuddy/skills/*
+!.codebuddy/skills/quality-gate/
+!.codebuddy/skills/dsh-review/
+!.codebuddy/skills/product-clause-import/
+# 但该技能的运行产物目录不入库（每次运行都会变）；fixtures/ 样本保留以支持离线验证
+.codebuddy/skills/product-clause-import/out/
 
 # 测试输出
 test-output.txt
@@ -40,3 +56,27 @@ scripts/poc/
 # 本机工作笔记 + 一次性审计报告产物
 .workbuddy/memory/
 .trae/audit/*.html
+
+# AI-IDE 规则镜像（2026-09-11 冗余扫描 A 类）：多个 AI 编码工具各自安装 CloudBase 规则包
+# 留下的内容副本（9 份同源），由工具按需重建。移出跟踪不删本地文件；保留唯一主源。
+.agent/
+.clinerules/
+.cursor/
+.kiro/
+.qoder/
+.windsurf/
+.trae/skills/
+.trae/rules/
+.comate/
+.roo/
+.lingma/
+.claude/skills/
+.claude/settings.local.json
+.workbuddy/mcp.json
+
+# 一次性产物（同次扫描 C 类）：临时统计脚本与旧评审 HTML
+.trae/_count.ps1
+.trae/_count2.ps1
+.trae/_lines.txt
+.trae/architecture-review-*.html
+# 注：.trae/audit/（8 个专题审计 md）与 .claude/commands/（自定义命令）是手写资产，继续跟踪

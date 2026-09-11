@@ -9,7 +9,9 @@
 
 const THRESHOLDS = {
   '重疾险': { reference: 50, statusFn: (n) => n >= 50, basis: '治疗费(30-50万)+收入损失' },
-  '医疗险': { reference: 200, statusFn: (n) => n >= 100, basis: '百万医疗起步（100万及格线，建议200万+）' },
+  // 2026-09-11：reference 200 → 100（业务定义：医疗险缺口 = 100 万）。
+  // 原 200 与「及格线 100」并存 → 前端缺口卡片按 200 算金额、矩阵依据却写"建议百万医疗"，两处口径打架。
+  '医疗险': { reference: 100, statusFn: (n) => n >= 100, basis: '百万医疗起步（100万及格线）' },
   '寿险':   { reference: (debt, income) => debt + income * 5, statusFn: (n, debt, income) => n >= debt + income * 5, basis: '负债+5年收入(需求分析法)' },
   '意外险': { reference: (debt, income) => Math.max(income * 5, debt), statusFn: (n, debt, income) => n >= Math.max(income * 5, debt), basis: '5倍年收入或负债(取高)' },
   '年金':     { reference: 10, statusFn: (n) => n >= 10, basis: '长期储蓄起步' },
