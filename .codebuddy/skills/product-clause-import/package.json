@@ -1,0 +1,16 @@
+{
+  "name": "product-clause-import",
+  "version": "1.0.0",
+  "private": true,
+  "description": "产品条款导入 skill：获取条款 PDF → 提取 → AI 概念化 → 确认 → 入库 products",
+  "scripts": {
+    "extract": "node scripts/extract-pdf.js",
+    "fetch": "node scripts/fetch-clause.js"
+  },
+  "dependencies": {
+    "pdf-parse": "1.1.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

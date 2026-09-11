@@ -1,0 +1,92 @@
+---
+description: 云函数开发规范
+alwaysApply: true
+---
+
+# 云函数开发规范
+
+## 入口与 AI 调用
+
+详见 `use_skill("cloud-functions")` 和 `use_skill("ai-model-nodejs")`。
+
+**模型**：以 `_shared/config.js` 的 `AI` 段为**单一事实源**（`CHAT_MODEL` / `OCR_MODEL` / `DIRECT_MODEL`）。
+结构化任务（reportAI 报告、批量 OCR、失败重试）走 **DeepSeek 直连**（`AI.USE_DIRECT` + `AI.DIRECT_MODEL`，绕 TokenHub 限流/排队）。
+> **勿在本文件硬编码模型名**——已发生 `hy3`→DeepSeek 切换后规则未同步（2026-09-11 全面审计 P1-3）。
+**`createModel(group)` 参数是 GroupName 不是 model id**（合法值 `cloudbase`/`hunyuan-exp`/`custom-*`）；model id 放 `generateText` 的 `model` 字段
+
+**单一通道**（v10，2026-08-29 起）：前端不再直连模型，`wx.cloud.extend.AI` 全项目零引用。
+| 场景 | 调用方式 | 审查链 |
+|------|---------|--------|
+| 云函数（reportAI / ocrService / conversationAI） | `_shared/ai-gateway.js` → `safeCallChat` | ✅ 全链 |
+| 前端对话（chat-panel） | 一次调用 `conversationAI` `mode:'chat'`，无直调 | ✅ 全链 |
+
+审查链：sanitize → PII脱敏 → 注入检测 → 内容安全 → 限流(60/60s) → AI → 输出审计 → agent_logs
+错误码：`INJECTION`/`CONTENT_UNSAFE`/`RATE_LIMIT`/`OUTPUT_UNSAFE`
+**例外**：OCR 路径明确跳过注入检测（`skipInjection:true`，保单 JSON 含日期/条款易误杀），见「OCR」节
+
+> **历史**：v9.6 曾用「chat-panel A 通道直调流式 + B 通道 `postProcess` 兜底」双通道（为流式体验，已知绕过云端审查）。
+> 2026-08-29 v10 已收敛为单通道经 `conversationAI`，审查链无绕过——该"待办"**已完成**，勿再按双通道理解。
+
+## 业务规则单一事实源（2026-09-11）
+
+**缺口算法**：`cloudfunctions/_shared/gap-core.js` —— **唯一实现**。
+经 `sync-shared.js` 的 `CONTRACT_FILES` 跨树契约同步为 `miniprogram/utils/gap-core.js`，
+前端页面矩阵（`miniprogram/utils/report/gap-engine.js`）与后端 AI 报告
+（`reportAI/report-context.buildGapSnapshot`）**调用同一份代码** → 同一组数字。
+**改算法只改 `_shared/gap-core.js`**；改 `miniprogram/utils/gap-core.js` = 下次 sync 被覆盖。
+> 背景：此前前后端各实现一遍（后端还是简化复刻），口径分裂 2 次（P1-A 2026-09-05 / P1-2 2026-09-10）。
+
+**跨树契约文件清单**（权威源在 `cloudfunctions/_shared/`，同步到 `miniprogram/utils/`，勿直接改前端副本）：
+`thresholds.js` / `amount.js` / `gap-core.js` / `pii-rules.js` / `parse-expiry.js` / `ocr-confidence.js` / `injection-guard.js` / `readiness.js` / `calc-age.js`
+——新增需双端共用的规则，放 `_shared` 后加入 `CONTRACT_FILES` 即可，不要写"人工镜像"。
+
+## 部署
+
+| 修改范围 | 操作 |
+|----------|------|
+| `_shared/*` | 改**主源** `cloudfunctions/_shared/*` → `node scripts/sync-shared.js` → 部署消费方 |
+| 函数自身 | 部署对应函数 |
+
+> **⚠️ 禁止改函数副本**（`cloudfunctions/<fn>/_shared/*`）：`sync-shared.js` 会用主源覆盖还原副本，
+> 改副本 = 白改（已发生 3 次同坑：memberRepo 白名单 / ai-gateway 降级 / familyPortrait compact 画像）。
+> sync 后验证副本含改动：`grep 关键标识 <fn>/_shared/<file>` 或对比哈希。
+
+### 部署方式：MCP 优先（2026-09-11 固化）
+
+```
+manageFunctions({ action:'updateFunctionCode', functionName:'<fn>',
+                  functionRootPath:'<绝对路径>/cloudfunctions' })
+```
+
+`functionRootPath` 传**包含函数文件夹的父目录**（即 `cloudfunctions` 本身），SDK 自动拼 `<fn>/` 并打包，
+无需手动 zip / base64。**不用 `tcb fn deploy`**：CLI 会轮询到 `Deployment completed` 才返回，同一函数实测
+**40.97s**；MCP 是异步的，调用秒级返回（云端照样装依赖，只是不用等）。
+
+部署后**必做两项核对**（缺一即线上风险）：
+1. `queryFunctions({action:'getFunctionDetail'})` —— 核对 Env / Timeout（MCP 部署可能覆盖 `envVariables`，如 `DEEPSEEK_API_KEY`）
+2. `manageFunctions({action:'invokeFunction'})` —— **冒烟测试**：返回业务错误（如 `{code:401}`）属正常；报 `Cannot find module` 即依赖缺失，立即回滚
+
+### ⛔ 依赖方案：三条实测结论（勿再试错）
+
+| 配置 | 耗时 | 结果 |
+|------|------|------|
+| `installDependency: true`（云端装依赖） | CLI 40.97s / MCP 秒级 | ✅ **唯一可靠路径** |
+| `installDependency: false` + 本地 `node_modules` 入包 | 46.29s（61.8MB 上传） | ✅ 可用但更慢 |
+| 云函数层（Layer）承载依赖 | 19.45s | ❌ **部署即挂** |
+
+**云函数层在本项目不可用**：层可创建、可绑定、`CompatibleRuntimes` 含全部三种 Node 运行时、zip 结构
+（`nodejs/node_modules/`）也正确，但 CloudBase 的 Node 运行时框架（`/data/scf/frame/node16/`）**不会**把层挂载
+路径 `/opt/nodejs/node_modules` 加入 require 解析链 → `require('wx-server-sdk')` 直接失败。属平台行为而非配置
+问题，**不要再尝试用层承载依赖**。
+
+## 返回与分析
+
+`{ code, msg, data? }`，code: 200/400/401/404/500，msg 中文禁堆栈
+分析触发：conversationAI `triggerAnalysis` → reportAI（DB 持久化 60s 节流，跨冷启动有效）
+分析完成 → `insight_stale:false` + `last_analysis` 写 families；新洞察→红点
+
+## OCR
+
+选图(≤9) → 并发压缩(quality:65)+上传 → 分批并发 OCR(每批5张) → matchPolicies → 置信度分流(≥95%自动/低确认卡片)
+模型分流：单图 `aiExtractBatch` 首次走 hy3，重试切 DeepSeek 直连（`deepseek-v4-flash`）；多图 `aiExtractParallel` 全走 DeepSeek 直连（并发 2500 避免 TokenHub 排队/限流下重试继续失败）
+非保单 `error_code:'not_policy'`；`skipInjection:true` 避免文档误杀

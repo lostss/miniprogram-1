@@ -1,0 +1,94 @@
+---
+description: 项目核心开发规范
+alwaysApply: true
+---
+
+# 核心开发规范
+
+**定位**：保险代理人外脑，对话AI（同步）+ 分析AI（异步），详见 CONTEXT.md。
+
+## 工程纪律
+
+**代码原则（ponytail）**：
+1. YAGNI：不需要的不写，先问"这有必要吗"
+2. 标准库→原生→已有依赖→一行搞定→手写
+3. 删除优于新增；无聊优于聪明；最少文件数
+4. 复杂需求先 ship 最简版同时质疑；代码先行，解释 ≤3 行
+5. 无预设抽象：实现的接口不写、产品的工厂不写、不变的值不配 config
+6. 有意简化标注 `// ponytail: this exists`
+
+**工程宪法（强制）**：
+1. 禁 `any`（`: any`/`as any`/`@ts-ignore`/`@ts-nocheck`），用 `unknown`+守卫或精确 interface
+2. 交付前自检：静态（tsc/lint/`npx jest`）+ 运行时（跑用户可见流程），"应该能用"不算证据；同错≥2次→提取规避规则
+3. 不掩盖失败：不空 try/catch 吞 bug、不删失败测试冲绿、"能编译"≠"能用"
+
+**协作纪律**：
+| # | 规则 |
+|---|------|
+| 1 | 修改需用户确认；需求不清先澄清；多解列出不暗选 |
+| 2 | 修改 `cloudfunctions/` 后部署对应函数，失败保留上一版；例外：仅同步 `_shared/*` 且消费方（index.js 等）行为零变化时可跳过部署 |
+| 3 | 非平凡变更先论证（分析→方案→风险）；跳过：Bug<20行、文案、CSS（quality-gate 同此豁免，见质量保障） |
+| 4 | 手术式修改：只碰必须改的行，不改相邻格式/注释 |
+| 5 | 不新增文件/字段/组件，除非必须 |
+
+## 输出规范
+
+- 工具输出 >200 tokens→压缩：保留前3后2、不丢错误行/异常值
+- 上下文超限→从旧到新丢弃 tool_call+tool_result 对，不拆对，不丢系统提示
+- 回复 L2：跳过客套、不重述屏幕已有代码、引用 `path:line`
+
+## Token 节约（不损质量）
+
+- 批量探索/多文件检索走 `code-explorer` subagent（结果不占主上下文，主代理只收结论）
+- 已验证配置写入记忆，不重复调云工具复核（如 `getFunctionDetail` 已确认的 Env/Timeout 不再重查）
+- 读文件用 `offset/limit` 精准片段；`documentSymbol`/`readSymbol` 只读符号体，不整读
+- 搜索加 `headLimit` + 精确 pattern + `outputMode:files_with_matches`，防大结果回灌
+
+## 命名规范
+
+| 场景 | 风格 | 示例 |
+|------|------|------|
+| 云函数方法/前端 data | camelCase | `writeFact` |
+| 私有方法/状态 | `_` 前缀 | `_doSave` |
+| DB 字段（insights/agent_logs 例外 camelCase） | snake_case | `family_id` |
+| 事件名 | 全小写无分隔 | `uploadpolicy` |
+| 常量 | UPPER_SNAKE | `AI_TIMEOUT` |
+
+跨集合字段（尤其时间字段）须统一命名：同一语义字段在各集合用同一名字，禁止 agent_logs 用 `timestamp`、operation_logs 用 `created_at` 这类同义不同名（曾致 cleanup prune 用 `created_at` 删 agent_logs 永清不掉）；例外需显式在清理/消费逻辑按集合区分。
+
+## 数据红线
+
+- 主集合 `families`（`customers` 已废弃）
+- families/policies/facts/messages 查询必须含 `_openid`
+- 禁存身份证/手机号/银行卡号/详细住址
+- members 必须含 `member_id`；birth_date 优先于 age
+
+## 弹出层规范（遮罩 + 冻结底层）
+
+**总原则**：有弹出层时，遮罩并冻结底层，交互只允许发生在弹出层内。禁止触摸穿透到底层页面（滚动/点击/下拉刷新）。
+
+| 层 | 手段 | 说明 |
+|----|------|------|
+| 遮罩（防点击穿透） | 遮罩层 `catchtap` 关闭自身 | 点击遮罩不落到底层 |
+| 冻结（防手势穿透） | 遮罩与面板加 `catchtouchmove="onNoop"` | 拖动不冒泡到底层 scroll-view / 下拉刷新 |
+| 内部滚动 | 内容区用原生 `scroll-view` | 原生层直采手势，不受父级 `catchtouchmove` 影响（勿把 catch 放 scroll-view 父链上锁死滚动） |
+| 页面兜底 | `enablePullDownRefresh` 页面在 `onPullDownRefresh` 中检测弹窗打开则 `wx.stopPullDownRefresh()` 空转 | 真机原生下拉手势可能绕过 JS 拦截，此为第二道防线 |
+
+实现模板：`onNoop() {}`（或 `onMaskTouchMove() {}`）放组件 methods，遮罩/面板绑定。弹窗状态存组件 data，页面级兜底通过 `selectComponent` 读取。
+
+## 常见坑
+
+- `wx:key="*this"` 对象数组→用 `wx:key="index"`
+- `setData` 异步：`this.data.x` 读旧值→用局部变量
+- 弹出层防穿透完整方案见上方「弹出层规范」（遮罩 catchtap + catchtouchmove + 原生 scroll-view 承载内部滚动 + enablePullDownRefresh 页面兜底）
+- WXML 不支持 `.toFixed()` `.slice()` 三元→JS 预处理
+- `<rich-text>` 不支持 `rpx`→用 `<text>` 分段
+- scroll-view padding 穿透→内边距放内部容器
+- CSS 变量加回退：`var(--xxx, fallback)`
+
+## 质量保障（强制）
+
+| 时机 | 动作 |
+|------|------|
+| 开发改动前 | 非平凡变更走 `use_skill("quality-gate")` 交付前根因检查清单；豁免（与协作纪律 #3 对齐）：Bug<20行、文案、纯 CSS |
+| 修复 bug 后 | 提取根因更新 `quality-gate` 错误库；新根因类别→加检查条 |
