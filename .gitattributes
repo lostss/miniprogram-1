@@ -1,0 +1,6 @@
+# Shell 脚本必须 LF —— Windows 的 core.autocrlf=true 会把它们转成 CRLF，
+# 导致 shebang 变成 "/bin/sh^M"（bad interpreter），且每行命令尾部带上 \r
+# （如 `node scripts/sync-shared.js --check\r`）→ pre-commit 钩子/脚本静默失效。
+# 2026-09-11 加：新增 pre-commit 钩子时发现 scripts/hooks/pre-commit 工作区已是 CRLF。
+*.sh text eol=lf
+scripts/hooks/pre-commit text eol=lf
