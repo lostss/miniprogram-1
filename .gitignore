@@ -80,3 +80,8 @@ scripts/poc/
 .trae/_lines.txt
 .trae/architecture-review-*.html
 # 注：.trae/audit/（8 个专题审计 md）与 .claude/commands/（自定义命令）是手写资产，继续跟踪
+
+# 根目录散落的一次性审计/扫描报告（2026-09-11，用户确认一次性、不入库）。
+# 其建议已全部执行（见 58f774a / 7974a51）；如需保留为决策留档，移入 docs/audit/ 后再入库。
+/audit-full-*.html
+/redundancy-scan-*.html
