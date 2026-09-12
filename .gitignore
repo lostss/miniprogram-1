@@ -53,10 +53,7 @@ cloudbaserc.json
 # reportPdf 中文渲染字体 8MB 二进制，不入库；克隆后从字体源恢复到 cloudfunctions/reportPdf/fonts/
 cloudfunctions/reportPdf/fonts/
 
-# OCR 条款提取 POC 材料（PDF/txt 约 5MB），一次性验证产物
-scripts/poc/
-
-# 本机工作笔记 + 一次性审计报告产物
+# 本机工作笔记（历史记录已迁至 docs/worklog/ 入库；此规则仅防止新笔记误入库）
 .workbuddy/memory/
 .trae/audit/*.html
 
