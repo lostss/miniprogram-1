@@ -79,6 +79,28 @@ manageFunctions({ action:'updateFunctionCode', functionName:'<fn>',
 路径 `/opt/nodejs/node_modules` 加入 require 解析链 → `require('wx-server-sdk')` 直接失败。属平台行为而非配置
 问题，**不要再尝试用层承载依赖**。
 
+### 推送代码：GitHub 通道与状态核对（2026-09-12 固化）
+
+本机访问 GitHub 的通道实测（`lyy-win`，无任何代理 / VPN）：
+
+| 通道 | 状态 |
+|------|------|
+| `github.com:443`（HTTPS） | ⚠️ **间歇性被精准阻断**（curl 10s 无响应，`git push` 超时）|
+| `github.com:22`（SSH） | ✅ 稳定 |
+| `ssh.github.com:443`（SSH over 443） | ✅ 备用通道 |
+| `api.github.com:443` | ✅ 稳定 —— **状态查询走它** |
+
+已配置 `~/.ssh/id_ed25519`（无密码短语），公钥注册于账号 `lostss`，remote 为
+`git@github.com:lostss/miniprogram-1.git`。**HTTPS 不通时不要去折腾代理，直接用 SSH 推送。**
+
+> **排查心法（2026-09-11 故障根因）**：用户说"已添加"≠已生效。**用独立通道核对状态，不要靠反复试错**：
+> - 公钥是否注册：`curl https://api.github.com/users/<user>/keys`（返回 `[]` = 账号上一个都没有）
+> - 认证是否通过：`ssh -T git@github.com` → 成功 `Hi <user>!`，失败 `Permission denied (publickey).`
+> - 服务端是否真 GitHub：`ssh-keygen -F github.com -l` 比对官方 ED25519 指纹
+>   `SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU`（不符 = 被劫持）
+> - 三层归因：传输层故障表现为 timeout / reset；`Permission denied (publickey)` 是**应用层**结论，
+>   说明网络完全正常，纯粹是没有匹配的 key。
+
 ## 返回与分析
 
 `{ code, msg, data? }`，code: 200/400/401/404/500，msg 中文禁堆栈
