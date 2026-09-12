@@ -45,6 +45,9 @@ coverage/
 scripts/dbg*.txt
 
 # 云函数部署配置：reportAI 段落写有真实 DEEPSEEK_API_KEY，整体停止跟踪（处理同 .codebuddy）
+# 恢复方式（灾难重建）：复制 cloudbaserc.template.json → cloudbaserc.json，填入真实 key。
+# key 可从云端取回：queryFunctions getFunctionDetail 的 Environment.Variables（reportAI）。
+# 入库的 template 永不含密钥，是这份配置的"可恢复锚点"。
 cloudbaserc.json
 
 # reportPdf 中文渲染字体 8MB 二进制，不入库；克隆后从字体源恢复到 cloudfunctions/reportPdf/fonts/

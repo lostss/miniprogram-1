@@ -1,0 +1,58 @@
+{
+  "version": "2.0",
+  "envId": "cloud1-3gan2ae3d3b400f1",
+  "functions": [
+    {
+      "name": "conversationAI",
+      "timeout": 60,
+      "installDependency": true
+    },
+    {
+      "name": "dataQuery",
+      "timeout": 30,
+      "installDependency": true
+    },
+    {
+      "name": "dataWrite",
+      "timeout": 60,
+      "installDependency": true
+    },
+    {
+      "name": "login",
+      "timeout": 30,
+      "installDependency": true
+    },
+    {
+      "name": "ocrService",
+      "timeout": 100,
+      "installDependency": true
+    },
+    {
+      "name": "reportAI",
+      "timeout": 60,
+      "installDependency": true,
+      "envVariables": {
+        "DEEPSEEK_API_KEY": "REPLACE_WITH_REAL_DEEPSEEK_API_KEY"
+      }
+    },
+    {
+      "name": "cleanup",
+      "timeout": 60,
+      "installDependency": true
+    },
+    {
+      "name": "reportPdf",
+      "timeout": 60,
+      "installDependency": true
+    }
+  ],
+  "functionRoot": "./cloudfunctions",
+  "ai": {
+    "defaultAgent": "{{env.AI_DEFAULT_AGENT}}",
+    "agents": {
+      "codebuddy": {
+        "type": "none"
+      }
+    }
+  }
+}
