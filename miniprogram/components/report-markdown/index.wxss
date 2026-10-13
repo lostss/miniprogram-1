@@ -90,6 +90,34 @@
 .tl-legend-txt { font-size:var(--fs-tiny); color:var(--text-tertiary); }
 .tl-legend-txt + .tl-legend-dot { margin-left:var(--sp-5); }
 
+/* ===== 保障期间甘特图（2026-10-13，报告结构 v2.0 ③）=====
+   三列栅格：label（谁/哪个产品）｜ track（时间条，百分比定位）｜ side（到期与保额）。
+   百分比全部来自 gantt-builder，渲染层不做时间计算（防"页面与 PDF 到期年不同"的口径分裂）。
+   到期文案独立成列而非跟在条尾：条到 100% 时文字会溢出卡片被裁。 */
+.gt-wrap { margin:var(--sp-4) 0; }
+.gt-axis, .gt-row { display:flex; align-items:center; gap:var(--sp-3); }
+.gt-row { padding:var(--sp-1) 0; }
+.gt-label { flex:0 0 190rpx; min-width:0; display:flex; flex-direction:column; gap:2rpx; }
+.gt-name { font-size:var(--fs-caption); font-weight:var(--fw-semi); color:var(--text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gt-prod { font-size:var(--fs-tiny); color:var(--text-tertiary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gt-track { position:relative; flex:1; min-width:0; height:36rpx; }
+.gt-track--axis { height:28rpx; border-bottom:1rpx solid var(--border); }
+/* 刻度：中间刻度以自身中心对齐位置；首尾刻度贴边（transform 翻转），避免被卡片裁掉 */
+.gt-tick { position:absolute; bottom:0; transform:translateX(-50%); font-size:var(--fs-tiny); color:var(--text-tertiary); font-variant-numeric:tabular-nums; }
+.gt-tick--first { transform:none; }
+.gt-tick--last { transform:translateX(-100%); }
+.gt-bar { position:absolute; top:8rpx; height:20rpx; min-width:6rpx; border-radius:999rpx; background:var(--accent-deep); }
+/* 终身：右端渐隐示意"无固定到期日"（不做 2130 年那种假终点） */
+.gt-bar--life { background:linear-gradient(90deg, var(--accent-deep) 0%, var(--accent-deep) 55%, var(--border-accent) 100%); }
+/* 一年期短险：琥珀色（每年需续保，与长期险区分；沿用项目"琥珀 = 需留意"的语义） */
+.gt-bar--short { background:var(--amber-deep); }
+.gt-side { flex:0 0 190rpx; display:flex; flex-direction:column; align-items:flex-end; gap:2rpx; }
+.gt-end { font-size:var(--fs-tiny); color:var(--text-secondary); font-variant-numeric:tabular-nums; }
+.gt-end--life { color:var(--accent-deep); }
+.gt-end--short { color:var(--amber-deep); }
+.gt-amt { font-size:var(--fs-tiny); color:var(--text-tertiary); }
+.gt-note { margin-top:var(--sp-3); font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-body); }
+
 /* 保障全景矩阵（浅金表头 + 覆盖浅绿/缺失浅红） */
 /* UI 打磨：金色语义分流——数据表头/峰值不再用品牌实底 accent，改浅金底 accent-dim + 深金字 */
 /* UI 审计 V-S6：overflow:hidden 裁剪窄屏/多成员溢出内容，改 overflow-x:auto */

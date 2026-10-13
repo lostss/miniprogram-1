@@ -25,6 +25,35 @@
             <view class="pano-cell pano-status ps-{{c.s}}" wx:for="{{row.cells}}" wx:for-item="c" wx:for-index="ci" wx:key="ci"><text class="pano-val">{{c.v}}</text></view>
           </view>
         </view>
+        <!-- 保障期间甘特图（2026-10-13，报告结构 v2.0 ③）：横轴时间、纵轴分人分产品、条长=保障期间。
+             数据侧已算好百分比（gantt-builder.js），此处只渲染 —— 渲染层不做任何时间计算，
+             避免"同一张保单在页面与 PDF 到期年不同"那类口径分裂（见 report-pdf-notes 的历史教训）。
+             ⛔ 不标注空白期/重叠区/断档：缺字段依据（理由见 gantt-builder.js 头注释）。 -->
+        <view wx:if="{{block.t==='gantt'}}" class="gt-wrap">
+          <!-- 三列栅格：谁/哪个产品 ｜ 时间条 ｜ 到期与保额。
+               到期文案独立成列（而非跟在条尾），避免"条到底右端"时文字溢出卡片被裁。 -->
+          <view class="gt-axis">
+            <view class="gt-label"></view>
+            <view class="gt-track gt-track--axis">
+              <text class="gt-tick {{index === 0 ? 'gt-tick--first' : ''}} {{index === block.ticks.length - 1 ? 'gt-tick--last' : ''}}" wx:for="{{block.ticks}}" wx:for-item="tk" wx:key="y" style="left:{{tk.pct}}%">{{tk.y}}</text>
+            </view>
+            <view class="gt-side"></view>
+          </view>
+          <view class="gt-row" wx:for="{{block.rows}}" wx:for-item="r" wx:key="rowKey">
+            <view class="gt-label">
+              <text class="gt-name">{{r.name}}</text>
+              <text class="gt-prod">{{r.product}}{{r.cat ? ' · ' + r.cat : ''}}</text>
+            </view>
+            <view class="gt-track">
+              <view class="gt-bar {{r.lifetime ? 'gt-bar--life' : ''}} {{r.oneYear ? 'gt-bar--short' : ''}}" style="left:{{r.startPct}}%;width:{{r.widthPct}}%"></view>
+            </view>
+            <view class="gt-side">
+              <text class="gt-end {{r.lifetime ? 'gt-end--life' : ''}} {{r.oneYear ? 'gt-end--short' : ''}}">{{r.lifetime ? '终身' : (r.oneYear ? '一年期 · 续保' : r.endY + '年')}}</text>
+              <text class="gt-amt" wx:if="{{r.sumAssured}}">{{r.sumAssured}}万</text>
+            </view>
+          </view>
+          <view class="gt-note" wx:for="{{block.notes}}" wx:key="*this">· {{item}}</view>
+        </view>
         <view wx:if="{{block.t==='timeline'}}" class="tl-wrap">
           <!-- 2026-09-09：红/绿点原无说明，用户无法区分「保障期满」与「交费期满」 -->
           <view class="tl-legend">

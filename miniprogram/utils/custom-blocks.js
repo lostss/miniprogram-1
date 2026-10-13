@@ -1,7 +1,7 @@
 /**
  * custom-blocks.js — customBlock 类型协议（单一事实源）
  *
- * 6 种 customBlock 类型在此处集中声明，提供：
+ * 8 种 customBlock 类型在此处集中声明，提供：
  *  - SUPPORTED_TYPES：类型集合（用于测试/校验）
  *  - normalize(block)：补齐字段、规整形态（消费端用）
  *  - create(type, data)：构造 block（生成端用，可校验关键字段）
@@ -19,6 +19,7 @@
  *  - finance:      { income, debt }
  *  - risk_alerts:  { items: [{name, issue}] }
  *  - policy_cards: { groups: [{name(被保人), subgroups: [{name(保司), policies: [...]}]}] }  二级分组；组内按保单号排序（同号主险+附加险相邻）
+ *  - gantt:        { rows: [{rowKey, name, product, cat, sumAssured, startY, endY, startPct, widthPct, lifetime, oneYear}], ticks: [{y, pct}], startYear, endYear, notes }  条宽/位置为百分比，渲染侧不做时间计算
  *
  * 已下线类型（清理审计）：overview / urgent_list / insight_cards / dashboard（无生成端）
  */
@@ -52,6 +53,10 @@ const BLOCK_REGISTRY = {
   policy_cards: {
     required: ['groups'],
     defaults: { groups: [] }
+  },
+  gantt: {
+    required: ['rows'],
+    defaults: { rows: [], ticks: [], startYear: 0, endYear: 0, notes: [] }
   }
 }
 

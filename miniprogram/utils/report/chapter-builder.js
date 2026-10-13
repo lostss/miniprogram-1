@@ -20,6 +20,7 @@
 var { normalizeFamilyData } = require('./data-normalizer')
 var { buildCoverageMatrix } = require('./gap-engine')
 var { buildTimeline } = require('./timeline-builder')
+var { buildGantt } = require('./gantt-builder')
 var { canonCat } = require('../thresholds')
 var { yuanToWan, fmtYuan } = require('../amount')
 // 现价取行唯一事实源（2026-09-27 起：保单年度也在此契约内，勿再自行写年差公式）
@@ -326,9 +327,15 @@ function buildChapters(family, report, gaps, opts) {
       policies: policiesOfYr
     })
   })
+  // 2026-10-13 保障期间甘特图（报告结构 v2.0 ③，P0）：与"保障节点"清单同章 —— 两者回答同一个
+  // 时间维问题（甘特图=全局"谁有什么保障到何时"，节点清单=未来关键时点），拆两章会把时间信息打散。
+  // 章标题随之由「保障节点」改为「保障期间」（节点清单仍是本章第二个块）。
+  // ⛔ 甘特图只画时间条：空白期/重叠区/断档倒计时**不做**（缺字段，理由见 gantt-builder.js 头注释）。
+  var ganttData = buildGantt(active, members)
   ch.push({
-    key: 'premium_timeline', title: '保障节点', num: '4',
-    customBlocks: [createBlock('timeline', { items: timelineItems })]
+    key: 'premium_timeline', title: '保障期间', num: '4',
+    customBlocks: (ganttData.rows.length ? [createBlock('gantt', ganttData)] : [])
+      .concat([createBlock('timeline', { items: timelineItems })])
   })
 
   // ======== ⑥ 缴费月历（审计 L1：每年重复信息，明细型默认折叠） ========

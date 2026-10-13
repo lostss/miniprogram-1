@@ -237,7 +237,7 @@ function buildPdf(ctx) {
   const deep = !!(report && (report.review || report.analysis || report.plan || report.suggestions || (report.core_insights && report.core_insights.length)))
   const tocTitles = ['保障摘要']
     .concat(deep ? ['深度分析（AI 解读）'] : [])
-    .concat(['家庭成员', '保单明细', '保障节点（未来关键时点）', '缴费月历（每年固定缴费月）', '经济状况'])
+    .concat(['家庭成员', '保单明细', '保障期间（谁保到什么时候）', '保障节点（未来关键时点）', '缴费月历（每年固定缴费月）', '经济状况'])
   const now = new Date()
   const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
   const act = policies.filter(p => p.status === 'active')
@@ -344,6 +344,28 @@ function buildPdf(ctx) {
   } else {
     _para('金额单位：不足 1 万按元显示；每行保单下方为 公司/保险期间/缴费期/生效日', 8, { color: '#999999', gap: 4 })
     _policyTable(policies)
+  }
+  _rule()
+
+  // 保障期间（2026-10-13 报告结构 v2.0 ③）：与页面甘特图**同源数据**，纸面以表格呈现。
+  // 位置与页面一致——紧邻"保障节点"之前（同一章里先看全局期间，再看未来关键时点）。
+  _sec('保障期间（谁保到什么时候）')
+  const cov = ctx.coverage || { rows: [], notes: [] }
+  if (!cov.rows.length) {
+    _para('暂无可展示的保障期间（保单缺少生效日期或保障期间）', 10, { color: '#999999' })
+  } else {
+    for (const r of cov.rows) {
+      _ensure(16)
+      const span = r.startY + ' → ' + (r.lifetime ? '终身' : (r.endY + '年'))
+      const tail = []
+      if (r.cat) tail.push(r.cat)
+      if (r.oneYear) tail.push('一年期·续保')
+      if (r.sumAssured) tail.push(_fmtMoney(r.sumAssured))
+      _cn(9.5); doc.fillColor('#1a1a1a')
+      doc.text('· ' + r.name + ' ｜ ' + r.product + ' ｜ ' + span + (tail.length ? ' ｜ ' + tail.join(' ｜ ') : ''), M, y, { width: W })
+      y = doc.y + 3
+    }
+    for (const n of (cov.notes || [])) _para('· ' + n, 8, { color: '#999999' })
   }
   _rule()
 
@@ -711,6 +733,64 @@ function buildNodes(policies, members, cashValues) {
     }) }
   })
 }
+/**
+ * 保障期间行（2026-10-13 报告结构 v2.0 ③）—— 页面是**时间条图**，PDF 是**同源数据的表格式**呈现。
+ *
+ * 为什么 PDF 不做图：pdfkit 画甘特条要自己算轴/条/分页，出错面大；而纸面读者要的是
+ * "谁·保什么·保到什么时候"，表格同样回答。**数据口径必须同源**（见 gantt-builder.js）：
+ *   - 到期年一律走 `_termYear`（文本 `insurance_period` 优先、`coverage_term` 数字兜底，
+ *     终身哨兵由 `_shared/policy-status` 判定）—— 与前端 `timeline-builder.coverTermYear` 同规则；
+ *   - 终身（无到期年）单独标注，不算"缺信息"；
+ *   - **无生效日期 / 无保障期间** → 不入表，只在表下按条数说明（红线 3：不确定就标出来）。
+ * ⛔ 与前端一致：**不做**空白期/重叠区/断档倒计时（缺 `reimbursement_type` 字段，做了就是猜）。
+ *
+ * ⚠️ 改动本函数时同步改 `miniprogram/utils/report/gantt-builder.js`（两份实现属已知的
+ * "跨端双实现"，与 buildNodes 同性质；口径以 policy-status 契约为准，不各写一套哨兵比较）。
+ */
+function buildCoverageRows(policies, members) {
+  const ageByName = {}
+  for (const m of (members || [])) if (m && m.name) ageByName[m.name] = m.age || 0
+  const rows = []
+  let missStart = 0
+  let missTerm = 0
+  const thisYear = new Date().getFullYear()
+  for (const p of (policies || [])) {
+    const eff = p.contract_effective_date || p.effective_date || ''
+    const startY = eff ? new Date(eff).getFullYear() : NaN
+    if (!eff || isNaN(startY)) { missStart++; continue }
+    const name = p.insured_name || '未指定被保人'
+    const lifetime = isLifetimeTerm(p.coverage_term) || /终身|长期/.test(String(p.insurance_period || ''))
+    const endY = lifetime ? null : _termYear(p.insurance_period, p.coverage_term, startY, ageByName[name] || 0)
+    if (!lifetime && !endY) { missTerm++; continue }
+    rows.push({
+      name: name,
+      product: p.product_name || '未命名保单',
+      cat: p.insurance_category || '',
+      sumAssured: p.sum_assured || 0,
+      startY: startY,
+      endY: endY,
+      lifetime: lifetime,
+      oneYear: isOneYearPolicy(p),
+      // 排序键（视图不消费）：同一被保人的保单相邻
+      _startY: startY
+    })
+  }
+  const order = {}
+  ;(members || []).forEach(function (m, i) { if (m && m.name && order[m.name] === undefined) order[m.name] = i })
+  rows.sort(function (a, b) {
+    const oa = order[a.name] === undefined ? 999 : order[a.name]
+    const ob = order[b.name] === undefined ? 999 : order[b.name]
+    return oa - ob || a._startY - b._startY || String(a.product).localeCompare(String(b.product))
+  })
+  rows.forEach(function (r) { delete r._startY })
+  const notes = []
+  if (missStart) notes.push(missStart + ' 张保单缺少生效日期，未在表中显示')
+  if (missTerm) notes.push(missTerm + ' 张保单未填写保障期间，未在表中显示')
+  if (rows.some(function (r) { return r.oneYear })) notes.push('一年期短险每年需续保，表中期间表示当前保单年度')
+  if (rows.some(function (r) { return r.lifetime })) notes.push('"终身"保单无固定到期日')
+  return { rows: rows, notes: notes, thisYear: thisYear }
+}
+
 // 缴费月历：active 保单按生效月聚合（每年固定缴费月，与前端「未来12个月滚动」不同的静态存档口径）
 //
 // 2026-09-25 审计修正（三处客户可见的错账 + 一处该有却没有的合计）：
@@ -780,7 +860,8 @@ exports.main = async function (event) {
     const activePolicies = policies.filter(p => p.status === 'active')
     const nodes = buildNodes(activePolicies, family.members || [], cashValues)
     const payMonths = buildPayMonths(activePolicies)
-    L.build({ family, report, policies, nodes, payMonths })
+    const coverage = buildCoverageRows(activePolicies, family.members || [])
+    L.build({ family, report, policies, nodes, payMonths, coverage })
     L.finalize()   // 页脚（含总页数）+ 首页目录回填 —— 必须在 doc.end() 之前
     doc.end()
 
@@ -855,6 +936,8 @@ exports.DISCLAIMER = DISCLAIMER
 exports._stripLeadHeading = _stripLeadHeading
 exports._insuredCount = _insuredCount
 exports.buildPayMonths = buildPayMonths
+exports.buildCoverageRows = buildCoverageRows
+exports.buildNodes = buildNodes
 exports._shortNote = _shortNote
 exports._qualitativeNote = _qualitativeNote
 exports._analysisNote = _analysisNote

@@ -264,6 +264,85 @@ describe('_insuredCount — 保障人数（空被保人不得算成同一个人�
   })
 })
 
+// ===========================================================================
+// 2026-10-13 报告结构 v2.0 ③：PDF「保障期间」节
+//   页面是时间条（甘特图），PDF 是同源数据的表格式呈现。本组守住两件事：
+//   ① 期限口径（到期年/终身/缺字段）与页面一致 —— 历史上正是这里出过"PDF 印 ~2130 年"的口径分裂；
+//   ② 接线（纯函数定义了但 buildPdf 没调用 = 披露最典型的失效方式，沿用上面同款断言风格）。
+// ===========================================================================
+describe('buildCoverageRows — 保障期间行（与页面甘特图同源数据）', () => {
+  const { buildCoverageRows } = require('../cloudfunctions/reportPdf/index')
+
+  test('定期险：文本期间优先算到期年', () => {
+    const g = buildCoverageRows([
+      { product_name: '定期重疾', insurance_category: '重疾险', insured_name: '张三', effective_date: '2020-01-01', insurance_period: '20年', sum_assured: 300000 }
+    ], [{ name: '张三' }])
+    expect(g.rows).toHaveLength(1)
+    expect(g.rows[0].startY).toBe(2020)
+    expect(g.rows[0].endY).toBe(2040)
+    expect(g.rows[0].lifetime).toBe(false)
+  })
+
+  test('终身（文本或 105 哨兵）→ lifetime=true 且 endY 为 null（不得算出 2130 年）', () => {
+    const a = buildCoverageRows([{ product_name: 'A', insured_name: '张三', effective_date: '2020-01-01', insurance_period: '终身' }], [{ name: '张三' }])
+    const b = buildCoverageRows([{ product_name: 'B', insured_name: '张三', effective_date: '2020-01-01', insurance_period: '', coverage_term: 105 }], [{ name: '张三' }])
+    expect(a.rows[0].lifetime).toBe(true)
+    expect(a.rows[0].endY).toBeNull()
+    expect(b.rows[0].lifetime).toBe(true)
+    expect(b.rows[0].endY).toBeNull()
+  })
+
+  test('缺生效日期 / 缺保障期间 → 不入表，且在 notes 里按条数说明（红线 3）', () => {
+    const g = buildCoverageRows([
+      { product_name: '无生效日', insured_name: '张三', insurance_period: '20年' },
+      { product_name: '无期间', insured_name: '张三', effective_date: '2020-01-01', insurance_period: '' }
+    ], [{ name: '张三' }])
+    expect(g.rows).toHaveLength(0)
+    expect(g.notes.join('')).toContain('缺少生效日期')
+    expect(g.notes.join('')).toContain('未填写保障期间')
+  })
+
+  test('一年期短险标注 + 说明（续保≠到期，不做到期倒计时）', () => {
+    const g = buildCoverageRows([
+      { product_name: '百万医疗', insurance_category: '医疗险', insured_name: '张三', effective_date: '2026-01-01', insurance_period: '1年', coverage_term: 1 }
+    ], [{ name: '张三' }])
+    expect(g.rows[0].oneYear).toBe(true)
+    expect(g.notes.join('')).toContain('一年期')
+    expect(JSON.stringify(g)).not.toMatch(/断档|倒计时|重叠/)
+  })
+
+  test('行按成员档案顺序排序（同一被保人相邻）', () => {
+    const g = buildCoverageRows([
+      { product_name: '李四的', insured_name: '李四', effective_date: '2020-01-01', insurance_period: '终身' },
+      { product_name: '张三的', insured_name: '张三', effective_date: '2019-01-01', insurance_period: '终身' }
+    ], [{ name: '张三' }, { name: '李四' }])
+    expect(g.rows.map(r => r.name)).toEqual(['张三', '李四'])
+  })
+})
+
+describe('保障期间节 接线', () => {
+  const SRC = fs.readFileSync(path.join(__dirname, '../cloudfunctions/reportPdf/index.js'), 'utf8')
+
+  test('buildPdf 内确实渲染「保障期间」节，且已进入目录', () => {
+    expect(SRC).toContain("_sec('保障期间（谁保到什么时候）')")
+    expect(SRC).toContain("'保障期间（谁保到什么时候）'")
+    // 目录回填用的 tocTitles 里必须有它（否则纸面上有节、目录里没有）
+    expect(SRC).toMatch(/tocTitles[\s\S]{0,400}保障期间（谁保到什么时候）/)
+  })
+
+  test('位置与页面一致：保障期间在保障节点之前（先看全局期间，再看未来时点）', () => {
+    const covIdx = SRC.indexOf("_sec('保障期间（谁保到什么时候）')")
+    const nodeIdx = SRC.indexOf("_sec('保障节点（未来关键时点）')")
+    expect(covIdx).toBeGreaterThan(-1)
+    expect(nodeIdx).toBeGreaterThan(covIdx)
+  })
+
+  test('buildCoverageRows 确实被调用（防"定义了但没接线"）', () => {
+    expect(SRC).toContain('const coverage = buildCoverageRows(')
+    expect(SRC).toContain('coverage }')
+  })
+})
+
 describe('buildPayMonths — 缴费月历（趸交/已缴满期/缴费频次）', () => {
   const { buildPayMonths } = require('../cloudfunctions/reportPdf/index')
   const THIS_YEAR = new Date().getFullYear()
@@ -396,12 +475,13 @@ describe('版面接线（目录 / 总页数 / 免责声明可读性）', () => {
   test('目录清单与源码里的 _sec() 小节一一对应（新增小节必须同步进目录）', () => {
     const labels = [...SRC.matchAll(/_sec\('([^']+)'\)/g)].map(m => m[1])
     expect(labels.length).toBeGreaterThanOrEqual(6)
-    const staticToc = ['保障摘要', '家庭成员', '保单明细', '保障节点（未来关键时点）', '缴费月历（每年固定缴费月）', '经济状况']
+    // 2026-10-13 增「保障期间（谁保到什么时候）」（报告结构 v2.0 ③，页面甘特图的纸面同源节）
+    const staticToc = ['保障摘要', '家庭成员', '保单明细', '保障期间（谁保到什么时候）', '保障节点（未来关键时点）', '缴费月历（每年固定缴费月）', '经济状况']
     labels.forEach(l => {
       if (l === '深度分析（AI 解读）') return   // 条件小节：按 deep 动态进目录
       expect(staticToc).toContain(l)
     })
-    expect(SRC).toContain("['家庭成员', '保单明细', '保障节点（未来关键时点）', '缴费月历（每年固定缴费月）', '经济状况']")
+    expect(SRC).toContain("['家庭成员', '保单明细', '保障期间（谁保到什么时候）', '保障节点（未来关键时点）', '缴费月历（每年固定缴费月）', '经济状况']")
   })
 
   test('页脚含总页数且走 bufferPages + switchToPage 回填', () => {

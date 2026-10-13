@@ -69,8 +69,17 @@ describe('classifyBatchResults — 识别结果分流分组（收编 _procRefres
 })
 
 describe('custom-blocks 注册表', function () {
-  test('SUPPORTED_TYPES 声明 7 种类型（overview/urgent_list/insight_cards/dashboard 已下线）', function () {
-    expect(cb.SUPPORTED_TYPES.sort()).toEqual(['calendar', 'family_tree', 'finance', 'panorama', 'policy_cards', 'risk_alerts', 'timeline'])
+  test('SUPPORTED_TYPES 声明 8 种类型（overview/urgent_list/insight_cards/dashboard 已下线；gantt 为 2026-10-13 新增）', function () {
+    expect(cb.SUPPORTED_TYPES.sort()).toEqual(['calendar', 'family_tree', 'finance', 'gantt', 'panorama', 'policy_cards', 'risk_alerts', 'timeline'])
+  })
+
+  test('gantt 默认字段补齐（rows/ticks/startYear/endYear/notes）', function () {
+    const b = cb.create('gantt', {})
+    expect(b.t).toBe('gantt')
+    expect(b.rows).toEqual([])
+    expect(b.ticks).toEqual([])
+    expect(b.notes).toEqual([])
+    expect(cb.validate({ t: 'gantt', rows: [] }).valid).toBe(true)
   })
 
   test('finance 默认字段补齐（income/debt；expense 已从模型移除）', function () {
