@@ -9,6 +9,8 @@
     </view>
     <!-- 2026-09-12 显式建档入口：无保单也能建客户（第一次见面、还没拿到保单时最需要） -->
     <view class="create-btn pressable" bindtap="onCreateFamily" aria-label="新建客户">＋</view>
+    <!-- 探索版（MVP 内测）入口：受 utils/explore-flags.js 控制，关掉即隐藏 -->
+    <view class="checkup-btn pressable" wx:if="{{showCheckup}}" bindtap="onCheckup" aria-label="保单整理报告">整理</view>
   </view>
 
   <!-- 加载中：骨架屏（UI 审计 状态 M5：与首页 sk-client-card 风格统一） -->

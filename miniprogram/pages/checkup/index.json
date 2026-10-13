@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "保单整理报告",
+  "enablePullDownRefresh": true,
+  "backgroundTextStyle": "dark",
+  "usingComponents": {}
+}
