@@ -97,7 +97,11 @@
 .gt-wrap { margin:var(--sp-4) 0; }
 .gt-axis, .gt-row { display:flex; align-items:center; gap:var(--sp-3); }
 .gt-row { padding:var(--sp-1) 0; }
-.gt-label { flex:0 0 190rpx; min-width:0; display:flex; flex-direction:column; gap:2rpx; }
+/* 列宽收紧（2026-10-13 调优）：原 label/side 各 190rpx，两台加起来 380rpx，
+   窄屏（375pt ≈ 750rpx）里留给时间条的只剩 ~330rpx → 条短、刻度挤。
+   现各 160rpx；代价是左侧产品名更早省略号 —— 该行本就 ellipsis，属可接受的降级。
+   右侧"到期"列只显示"年份/终身"（一年期标记移到左侧产品行尾），故 160rpx 足够。 */
+.gt-label { flex:0 0 160rpx; min-width:0; display:flex; flex-direction:column; gap:2rpx; }
 .gt-name { font-size:var(--fs-caption); font-weight:var(--fw-semi); color:var(--text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .gt-prod { font-size:var(--fs-tiny); color:var(--text-tertiary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .gt-track { position:relative; flex:1; min-width:0; height:36rpx; }
@@ -111,10 +115,9 @@
 .gt-bar--life { background:linear-gradient(90deg, var(--accent-deep) 0%, var(--accent-deep) 55%, var(--border-accent) 100%); }
 /* 一年期短险：琥珀色（每年需续保，与长期险区分；沿用项目"琥珀 = 需留意"的语义） */
 .gt-bar--short { background:var(--amber-deep); }
-.gt-side { flex:0 0 190rpx; display:flex; flex-direction:column; align-items:flex-end; gap:2rpx; }
+.gt-side { flex:0 0 160rpx; display:flex; flex-direction:column; align-items:flex-end; gap:2rpx; }
 .gt-end { font-size:var(--fs-tiny); color:var(--text-secondary); font-variant-numeric:tabular-nums; }
 .gt-end--life { color:var(--accent-deep); }
-.gt-end--short { color:var(--amber-deep); }
 .gt-amt { font-size:var(--fs-tiny); color:var(--text-tertiary); }
 .gt-note { margin-top:var(--sp-3); font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-body); }
 

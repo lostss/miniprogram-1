@@ -229,11 +229,69 @@ function buildChapters(family, report, gaps, opts) {
     customBlocks: [createBlock('panorama', { heads: matrix.heads, cats: matrix.cats, rows: matrix.rows })]
   })
 
-  // ======== ④ 保障缺口（审计·顾问视角 2026-09-04：缺口诊断独立成章） ========
+  // ======== ④ 保障期间（甘特图 + 未来关键时点）========
+  // 2026-10-13 报告结构 v2.0 ③（P0）：**紧接保障汇总**——先看"有什么够不够"（③矩阵），
+  // 立刻看"保障到什么时候"（本章），再看缺口（⑤）。原位置在缺口之后（第 5 章），
+  // 与 v2.0 把甘特图列为 P0 的定位不符（时间维是"有没有"的第二问，不是缺口的注脚）。
+  // 甘特图与节点清单同章：甘特图=全局"谁有什么保障到何时"，节点清单=未来关键时点，
+  // 拆两章会把时间信息打散；也避免与 ③保障统计矩阵的重叠进一步恶化。
+  // ⛔ 甘特图只画时间条：空白期/重叠区/断档倒计时**不做**（缺字段，理由见 gantt-builder.js 头注释）。
+  //
+  // 节点部分（审计 S1）：一次性关键时点优先于每年重复的缴费月历。仅展示三种节点
+  // ——保障期满/交费期满/现价保本（排除每年缴费提醒 payment）；年份为第一层，年份下多款产品归类，
+  // 单产品同年多节点以「/」分隔；产品分组键含被保人，防同产品跨被保人误合并。
+  // 现价保本节点依赖 family.cashValues（getFamily 并行返回，见 dataQuery/family-detail.js）
+  var NODE_TEXT = { expiry: '保障期满', paydone: '交费期满', breakeven: '现价保本' }
+  // 客户版仅保留"保障期满"类节点（交费期满/现价回本对客户是推销感/无关紧要）
+  var timeline = buildTimeline(active, members, family.cashValues)
+    .filter(function(e) { return e.type !== 'payment' })
+    .filter(function(e) { return shared ? e.type === 'expiry' : true })
+  var byYear = {}
+  for (var ti = 0; ti < timeline.length; ti++) {
+    var ev = timeline[ti]
+    var prodKey = String(ev.label || '').replace(/(到期|缴完|现价回本)$/, '')
+    if (!byYear[ev.y]) byYear[ev.y] = {}
+    if (!byYear[ev.y][prodKey]) byYear[ev.y][prodKey] = []
+    byYear[ev.y][prodKey].push(ev)
+  }
+  var timelineItems = []
+  Object.keys(byYear).map(Number).sort(function(a, b) { return a - b }).forEach(function(yr) {
+    var prods = byYear[yr]
+    var policiesOfYr = Object.keys(prods).map(function(pk) {
+      var nodes = prods[pk]
+      // 同产品同年多节点：按类型固定顺序排列（保障期满→交费期满→现价保本）
+      nodes.sort(function(a, b) {
+        var order = { expiry: 0, paydone: 1, breakeven: 2 }
+        return order[a.type] - order[b.type]
+      })
+      return {
+        name: pk,
+        note: nodes.map(function(n) { return NODE_TEXT[n.type] }).join('/')
+      }
+    })
+    var allNodes = [].concat.apply([], Object.keys(prods).map(function(pk) { return prods[pk] }))
+    timelineItems.push({
+      label: yr + '年',
+      y: yr,
+      // dot 颜色（wxml 按 type 着色）：该年含保障期满用红（最需关注），其余绿
+      type: allNodes.some(function(n) { return n.type === 'expiry' }) ? 'expiry' : 'paydone',
+      soon: false,
+      date: yr + '年',
+      policies: policiesOfYr
+    })
+  })
+  var ganttData = buildGantt(active, members)
+  ch.push({
+    key: 'premium_timeline', title: '保障期间',
+    customBlocks: (ganttData.rows.length ? [createBlock('gantt', ganttData)] : [])
+      .concat([createBlock('timeline', { items: timelineItems })])
+  })
+
+  // ======== ⑤ 保障缺口（审计·顾问视角 2026-09-04：缺口诊断独立成章） ========
   // 此前 buildGaps 算出的金额/依据/优先级从未渲染（缺口只以汇总章顶部红字呈现），核心价值被埋没。
   // 现以 markdown 列表独立成章：成员分组小标题 + 缺口明细。
   // 展示口径：客户版仅缺口金额（中性，不暴露"需求=总负债+5×收入"公式）；owner 含需求-已有与优先级。
-  // 活报告模型（2026-09）：客户版 blocked（额度无法测算）也展示④章——仅渲染克制说明行（挂载点④）
+  // 活报告模型（2026-09）：客户版 blocked（额度无法测算）也展示⑤章——仅渲染克制说明行（挂载点⑤）
   var showGapCh = actionable.length > 0 || blockedGaps.length > 0
   if (showGapCh) {
     var gapLines = []
@@ -282,61 +340,6 @@ function buildChapters(family, report, gaps, opts) {
       content: gapLines.join('\n')
     })
   }
-
-  // ======== ⑤ 保障节点（审计 S1：一次性关键时点优先于每年重复的缴费月历） ========
-  // 设计稿决策：仅展示三种节点——保障期满/交费期满/现价保本（排除每年缴费提醒 payment）
-  // 结构：年份为第一层节点（时间轴行）；该年份下多款产品归类显示；
-  //       单产品同年多个节点以「/」分隔。产品分组键含被保人，防同产品跨被保人误合并。
-  // 现价保本节点依赖 family.cashValues（getFamily 并行返回，见 dataQuery/family-detail.js）
-  var NODE_TEXT = { expiry: '保障期满', paydone: '交费期满', breakeven: '现价保本' }
-  // 客户版仅保留"保障期满"类节点（交费期满/现价回本对客户是推销感/无关紧要）
-  var timeline = buildTimeline(active, members, family.cashValues)
-    .filter(function(e) { return e.type !== 'payment' })
-    .filter(function(e) { return shared ? e.type === 'expiry' : true })
-  var byYear = {}
-  for (var ti = 0; ti < timeline.length; ti++) {
-    var ev = timeline[ti]
-    var prodKey = String(ev.label || '').replace(/(到期|缴完|现价回本)$/, '')
-    if (!byYear[ev.y]) byYear[ev.y] = {}
-    if (!byYear[ev.y][prodKey]) byYear[ev.y][prodKey] = []
-    byYear[ev.y][prodKey].push(ev)
-  }
-  var timelineItems = []
-  Object.keys(byYear).map(Number).sort(function(a, b) { return a - b }).forEach(function(yr) {
-    var prods = byYear[yr]
-    var policiesOfYr = Object.keys(prods).map(function(pk) {
-      var nodes = prods[pk]
-      // 同产品同年多节点：按类型固定顺序排列（保障期满→交费期满→现价保本）
-      nodes.sort(function(a, b) {
-        var order = { expiry: 0, paydone: 1, breakeven: 2 }
-        return order[a.type] - order[b.type]
-      })
-      return {
-        name: pk,
-        note: nodes.map(function(n) { return NODE_TEXT[n.type] }).join('/')
-      }
-    })
-    var allNodes = [].concat.apply([], Object.keys(prods).map(function(pk) { return prods[pk] }))
-    timelineItems.push({
-      label: yr + '年',
-      y: yr,
-      // dot 颜色（wxml 按 type 着色）：该年含保障期满用红（最需关注），其余绿
-      type: allNodes.some(function(n) { return n.type === 'expiry' }) ? 'expiry' : 'paydone',
-      soon: false,
-      date: yr + '年',
-      policies: policiesOfYr
-    })
-  })
-  // 2026-10-13 保障期间甘特图（报告结构 v2.0 ③，P0）：与"保障节点"清单同章 —— 两者回答同一个
-  // 时间维问题（甘特图=全局"谁有什么保障到何时"，节点清单=未来关键时点），拆两章会把时间信息打散。
-  // 章标题随之由「保障节点」改为「保障期间」（节点清单仍是本章第二个块）。
-  // ⛔ 甘特图只画时间条：空白期/重叠区/断档倒计时**不做**（缺字段，理由见 gantt-builder.js 头注释）。
-  var ganttData = buildGantt(active, members)
-  ch.push({
-    key: 'premium_timeline', title: '保障期间', num: '4',
-    customBlocks: (ganttData.rows.length ? [createBlock('gantt', ganttData)] : [])
-      .concat([createBlock('timeline', { items: timelineItems })])
-  })
 
   // ======== ⑥ 缴费月历（审计 L1：每年重复信息，明细型默认折叠） ========
   var months = (function() {

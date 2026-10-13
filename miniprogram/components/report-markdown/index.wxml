@@ -42,13 +42,15 @@
           <view class="gt-row" wx:for="{{block.rows}}" wx:for-item="r" wx:key="rowKey">
             <view class="gt-label">
               <text class="gt-name">{{r.name}}</text>
-              <text class="gt-prod">{{r.product}}{{r.cat ? ' · ' + r.cat : ''}}</text>
+              <!-- 一年期标记放在产品行尾（该行本就 ellipsis，窄屏自动省略），
+                   不放到右侧到期列 —— 到期列只留"年份/终身"，宽度才压得下来 -->
+              <text class="gt-prod">{{r.product}}{{r.cat ? ' · ' + r.cat : ''}}{{r.oneYear ? ' · 1年期' : ''}}</text>
             </view>
             <view class="gt-track">
               <view class="gt-bar {{r.lifetime ? 'gt-bar--life' : ''}} {{r.oneYear ? 'gt-bar--short' : ''}}" style="left:{{r.startPct}}%;width:{{r.widthPct}}%"></view>
             </view>
             <view class="gt-side">
-              <text class="gt-end {{r.lifetime ? 'gt-end--life' : ''}} {{r.oneYear ? 'gt-end--short' : ''}}">{{r.lifetime ? '终身' : (r.oneYear ? '一年期 · 续保' : r.endY + '年')}}</text>
+              <text class="gt-end {{r.lifetime ? 'gt-end--life' : ''}}">{{r.lifetime ? '终身' : r.endY + '年'}}</text>
               <text class="gt-amt" wx:if="{{r.sumAssured}}">{{r.sumAssured}}万</text>
             </view>
           </view>

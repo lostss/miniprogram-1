@@ -325,18 +325,20 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
   }
   const report = { disclaimer: '免责' }
 
-  test('章节顺序：1家庭结构 → 2家庭财务 → 3保障汇总 → 4保障缺口 → 5保障节点 → 6缴费月历 → 7下一步行动 → 附录保单明细（无告警时特别提醒章跳过）', () => {
+  test('章节顺序：1家庭结构 → 2家庭财务 → 3保障汇总 → 4保障期间 → 5保障缺口 → 6缴费月历 → 7下一步行动 → 附录保单明细（无告警时特别提醒章跳过）', () => {
     const ch = buildChapters(reportCustomer(), report)
     const keys = ch.map(x => x.key)
-    // 设计稿 v4 + 审计·顾问视角（2026-09-04）：缺口诊断独立成章（汇总后），行动收口在附录前（报告以行动收束）
-    expect(keys).toEqual(['family_structure', 'family_finance', 'coverage_summary', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'next_steps', 'appendix_policies'])
+    // 设计稿 v4 + 审计·顾问视角（2026-09-04）：缺口诊断独立成章，行动收口在附录前（报告以行动收束）。
+    // 2026-10-13（报告结构 v2.0 ③）：保障期间（甘特图）提到保障汇总之后、缺口之前 ——
+    // 时间维是"有没有"的第二问（保障到什么时候），不是缺口的注脚。
+    expect(keys).toEqual(['family_structure', 'family_finance', 'coverage_summary', 'premium_timeline', 'gap_analysis', 'premium_calendar', 'next_steps', 'appendix_policies'])
   })
 
-  test('缺口章④：内容含缺口金额与优先级；收口章：行动清单收束；正式章编号连续 1..N', () => {
+  test('缺口章⑤：内容含缺口金额与优先级；收口章：行动清单收束；正式章编号连续 1..N', () => {
     const ch = buildChapters(reportCustomer(), report)
     const gap = ch.find(x => x.key === 'gap_analysis')
     expect(gap).toBeDefined()
-    expect(gap.num).toBe('4')
+    expect(gap.num).toBe('5')
     expect(gap.content).toContain('缺口')
     expect(gap.content).toContain('万')
     expect(gap.content).toContain('优先级')
