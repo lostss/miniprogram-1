@@ -2,30 +2,31 @@
 <view class="page page-view {{recentClients.length === 0 && !loadingClients && !ocrBusy ? 'page-fixed' : ''}}">
   <!-- 品牌头 -->
   <view class="brand-header">
-    <view class="brand-title">上传保单，秒出报告</view>
+    <view class="brand-title">把散落的保单整理清楚</view>
     <view class="brand-slogan">AI保单整理助手</view>
   </view>
 
-  <!-- 空态：上传引导 -->
+  <!-- 空态：建档引导（2026-10-13 流程调整：上传不再放首页 —— 先建客户，进家庭页后上传，
+       这样上传时已确定家庭，省掉"这张保单属于谁"的匹配推断。见 pages/report 内 ocr-flow） -->
   <view class="orb-stage {{recentClients.length > 0 ? 'orb-stage--done' : ''}}" wx:if="{{!ocrBusy && !loadingClients}}">
-    <view class="upload-box pressable" bindtap="onUploadTap" aria-label="拍照上传保单">
-      <image class="upload-box-icon" src="/images/upload.svg" mode="aspectFit" />
-      <text class="upload-box-text">点击上传保单</text>
+    <view class="upload-box pressable" bindtap="onCreateClient" aria-label="新建客户">
+      <text class="upload-box-plus">＋</text>
+      <text class="upload-box-text">新建客户</text>
     </view>
     <view class="onboard-steps" wx:if="{{recentClients.length === 0 && !loadError}}">
       <view class="ob-step">
         <view class="ob-step-num">1</view>
-        <text class="ob-step-text">拍照上传保单</text>
+        <text class="ob-step-text">新建客户（名称 / 人数）</text>
       </view>
       <view class="ob-step-line"></view>
       <view class="ob-step">
         <view class="ob-step-num">2</view>
-        <text class="ob-step-text">AI 智能识别分析</text>
+        <text class="ob-step-text">在客户页上传保单，AI 识别</text>
       </view>
       <view class="ob-step-line"></view>
       <view class="ob-step">
         <view class="ob-step-num">3</view>
-        <text class="ob-step-text">生成保障报告</text>
+        <text class="ob-step-text">生成保单整理报告</text>
       </view>
     </view>
     <!-- 2026-09-22 修复（UX 审计 P1）：无客户时「全部」入口在下方 clients-section 的 wx:if 内，
@@ -67,13 +68,13 @@
 
   <!-- 空态无客户：底部提示 -->
   <view class="empty-hint" wx:if="{{recentClients.length === 0 && !ocrBusy && !loadingClients}}">
-    <text class="empty-hint-text">支持 JPG / PNG · 一次最多 9 张</text>
+    <text class="empty-hint-text">保单照片在客户页上传 · 支持 JPG / PNG，一次最多 9 张</text>
   </view>
 </view>
 
-<!-- FAB（非空态显示） -->
-<view class="fab {{recentClients.length > 0 && !ocrBusy ? 'fab--show' : ''}}" bindtap="onUploadTap" aria-label="拍照上传保单">
-  <image class="fab-icon" src="/images/upload.svg" mode="aspectFit" />
+<!-- FAB（非空态显示）：新建客户（上传入口已移入客户页，避免"这张保单属于谁"的匹配推断） -->
+<view class="fab {{recentClients.length > 0 && !ocrBusy ? 'fab--show' : ''}}" bindtap="onCreateClient" aria-label="新建客户">
+  <text class="fab-plus">＋</text>
 </view>
 
 <!-- OCR 全流程组件 —— ⚠️ 必须留在 .page 之外（与下方 FAB 同理），勿以"结构整洁"为由移入。

@@ -3,6 +3,12 @@ const { navigateToFamily, confirmDeleteFamily, CLIENTS_CACHE_KEY, HOME_CACHE_KEY
 
 Page({
   data: { families: [], keyword: '', loading: false, removingId: '', loadError: false, truncated: false },
+  // ?action=create：首页「新建客户」入口直通建档（只有这里有一份表单实现，不复制第二套）
+  onLoad(query) {
+    if (query && query.action === 'create') {
+      setTimeout(() => { if (!this._disposed) this.onCreateFamily() }, 300)
+    }
+  },
   onShow() {
     this._fetch()
   },

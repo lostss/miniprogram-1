@@ -19,6 +19,9 @@
 .upload-box { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:var(--sp-5); width:280rpx; height:200rpx; border:2rpx dashed var(--border-accent); border-radius:var(--r-xl); background:var(--bg-surface); transition:border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out) }
 .upload-box:active { border-color:var(--accent); background:var(--accent-dim) }
 .upload-box-icon { width:56rpx; height:56rpx }
+/* 2026-10-13：首页入口由"上传保单"改为"新建客户"（上传移入客户页）——不加新图标资源，
+   沿用既有视觉容器，用文字"＋"承担图标语义（与客户列表页 ＋ 一致） */
+.upload-box-plus { font-size:64rpx; line-height:1; color:var(--accent-deep, #8B6F3C) }
 .upload-box-text { font-size:var(--fs-base); color:var(--text-tertiary); letter-spacing:var(--ls-wide) }
 .onboard-steps { display:flex; align-items:center; margin-top:80rpx; gap:0 }
 .ob-step { display:flex; flex-direction:column; align-items:center; gap:var(--sp-3) }
@@ -41,6 +44,7 @@
 .fab--show { transform:scale(1); opacity:1 }
 .fab:active { transform:scale(0.92); opacity:0.9 }
 .fab-icon { width:44rpx; height:44rpx; filter:brightness(0) invert(1) }
+.fab-plus { font-size:56rpx; line-height:1; color:var(--color-on-accent, #FFFFFF) }
 
 /* ========== 客户列表 ========== */
 .clients-section { margin-top:var(--sp-7) }

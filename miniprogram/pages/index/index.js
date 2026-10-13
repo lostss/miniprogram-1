@@ -64,11 +64,6 @@ Page({
   // UI 审计 R-M5：首页错误态重试（force 绕过 60s TTL 缓存）
   onRetryLoad() { this._fetchClients(true) },
 
-  // 上传入口：委托 ocr-flow 组件（chooseMedia + 全流程）
-  onUploadTap() {
-    const ocrFlow = this.selectComponent('#ocrFlow')
-    if (ocrFlow) ocrFlow.chooseAndStart()
-  },
 
   // 保存成功：设置活跃家庭 → 进入报告页
   onOcrSaved(e) {
@@ -116,5 +111,8 @@ Page({
       }
     })
   },
-  onViewAll() { wx.navigateTo({ url: '/pages/clients/index' }) }
+  onViewAll() { wx.navigateTo({ url: '/pages/clients/index' }) },
+  // 2026-10-13 流程调整：首页入口＝"新建客户"（上传保单移入客户页，从而免去上游的家庭匹配）。
+  // 建档表单只在客户列表页有一份实现 → 这里跳过去并带 action=create 触发它，不复制第二套。
+  onCreateClient() { wx.navigateTo({ url: '/pages/clients/index?action=create' }) }
 })
