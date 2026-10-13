@@ -2,6 +2,8 @@ const { buildReportView } = require('../../utils/report-builder')
 const { buildEditConfig, validate: validateEdit, buildUpdateData, POLICY_STATUS_OPTIONS, POLICY_STATUS_LABEL_TO_VALUE } = require('../../utils/edit-form')
 const { buildShareTitle, buildSharePath, buildReportMeta, ensureShareToken, shareExpireHint } = require('../../utils/report-share')
 const { HOME_CACHE_KEY } = require('../../utils/family-actions')
+// 探索版入口开关（MVP 内测）：关掉即隐藏入口，页面可整页删（见 utils/explore-flags.js）
+const EXPLORE_FLAGS = require('../../utils/explore-flags')
 const api = require('../../utils/apiClient')
 // 领域写薄层（候选 5）：表单保存收敛三种写入范式，避免调用方直拼字符串 action
 const { savePolicyData, saveFamilyPatch } = require('../../utils/domain-writes')
@@ -71,6 +73,16 @@ Page({
     factsView: null, factsOpen: false,
     // 2026-09-12 MVP 验证：反馈已提交态 + 成交标记（成交是 ROI 的唯一真值来源）
     feedbackGiven: false, dealStatus: '',
+    // 探索版（MVP 内测）：保单整理报告入口，受 utils/explore-flags.js 控制
+    showCheckup: EXPLORE_FLAGS.checkupReport,
+  },
+  // “当前报告降级成保单整理报告”（2026-10-13 产品决策）：家庭页作为流程落点，
+  // 入口从这里进；客户版（isShared）不显示，避免与"只给代理人看的工作性入口"混淆。
+  onOpenCheckup() {
+    if (this.data.isShared) return
+    const id = this.data.familyId
+    if (!id) { wx.showToast({ title: '缺少客户信息', icon: 'none' }); return }
+    wx.navigateTo({ url: '/pages/checkup/index?familyId=' + id })
   },
   // 真机 404 修复兜底：familyId 为 'undefined'/'null' 字面量（跳转传参异常时）→ 走"缺少客户信息"而非 getFamily 404 误报"客户不存在"
   onLoad(o) {

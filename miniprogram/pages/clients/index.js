@@ -1,10 +1,8 @@
 const api = require('../../utils/apiClient')
 const { navigateToFamily, confirmDeleteFamily, CLIENTS_CACHE_KEY, HOME_CACHE_KEY } = require('../../utils/family-actions')
-// 探索版入口开关（MVP 内测）：关掉即隐藏入口，页面本身可整页删（见 utils/explore-flags.js）
-const EXPLORE_FLAGS = require('../../utils/explore-flags')
 
 Page({
-  data: { families: [], keyword: '', loading: false, removingId: '', loadError: false, truncated: false, showCheckup: EXPLORE_FLAGS.checkupReport },
+  data: { families: [], keyword: '', loading: false, removingId: '', loadError: false, truncated: false },
   onShow() {
     this._fetch()
   },
@@ -86,10 +84,7 @@ Page({
   onGoUpload() {
     wx.navigateBack()
   },
-  // 探索版（MVP 内测）：保单整理报告。不传 familyId → 由 checkup 页取第一个客户并支持切换。
-  onCheckup() {
-    wx.navigateTo({ url: '/pages/checkup/index' })
-  },
+
   // 2026-09-12 显式建档入口：此前只能"上传保单"隐式建档（家庭名取投保人姓名），
   // 第一次见面、还没拿到保单时无处建档；且家庭名不可自定义（用不了"李姐-转介绍"这类记忆标签）。
   // 现在支持无保单建档 + 自定义名称（服务端 createFamily 已放开成员校验）。

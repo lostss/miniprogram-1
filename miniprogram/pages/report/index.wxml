@@ -55,6 +55,13 @@
     </view>
     <!-- 标题区域与正文分隔线 -->
     <view class="title-divider"></view>
+    <!-- 探索版（MVP 内测）：保单整理报告入口。产品决策 2026-10-13「当前报告降级成保单整理报告」→
+         流程落点在家庭页，入口放这里；客户版不显示（同看时由代理人操作）。 -->
+    <view class="checkup-entry pressable" wx:if="{{showCheckup && !isShared && family}}" bindtap="onOpenCheckup" aria-label="保单整理报告">
+      <text class="checkup-entry-main">保单整理报告</text>
+      <text class="checkup-entry-sub">把保单按成员整理成可逐条核对的清单</text>
+      <text class="checkup-entry-go">›</text>
+    </view>
     <!-- 全链路审计 UC4：无保单空状态（引导上传，替代零值数字+红色告警） -->
     <view class="empty-report" wx:if="{{!hasPolicy}}">
       <view class="empty-report-icon">📄</view>

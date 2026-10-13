@@ -85,6 +85,12 @@
 .share-guide { font-size:var(--fs-caption); color:var(--text-secondary); text-align:center; margin-bottom:var(--sp-2); line-height:var(--lh-body); padding:0 var(--sp-6); }
 /* 标题区域与正文分隔线（2026-09-06 强化 2rpx，明确标题区与正文区分界；距正文 sp-5 与章节 h1n 标题节奏对齐） */
 .title-divider { margin:0 var(--sp-5) var(--sp-6); height:2rpx; background:var(--border-accent); }
+/* 探索版（MVP 内测）入口：与正文卡片同宽同风格，暖金左边界标识"新产品"而非告警 */
+.checkup-entry { position:relative; display:flex; align-items:center; margin:0 var(--sp-5) var(--sp-6); padding:26rpx 28rpx; background:var(--bg-card, #FFFDF9); border:1rpx solid var(--border-accent, rgba(201,169,110,0.5)); border-radius:var(--r-lg, 20rpx); }
+.checkup-entry:active { opacity:0.7 }
+.checkup-entry-main { font-size:var(--fs-base, 32rpx); color:var(--text-primary, #1A1A2E); font-weight:var(--fw-medium, 500) }
+.checkup-entry-sub { flex:1; margin-left:16rpx; font-size:var(--fs-tiny, 24rpx); color:var(--text-tertiary, #857256) }
+.checkup-entry-go { margin-left:12rpx; font-size:var(--fs-lg, 36rpx); line-height:1; color:var(--accent-deep, #8B6F3C) }
 
 
 
