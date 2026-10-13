@@ -36,6 +36,34 @@ describe('checkup/organize — 归集与汇总', () => {
     expect(r.summary.membersWithoutPolicy).toEqual(['张某'])
   })
 
+  test('占位成员（建档按人数造、无名无角色）可辨识，且不污染「无保单成员」统计', () => {
+    const r = buildCheckupReport({
+      family: {
+        members: [
+          M({ member_id: 'm1', name: '张某' }),                      // 有保单
+          M({ member_id: 'm2', name: '李某' }),                      // 真·无保单（信任点）
+          M({ member_id: 'm3', name: '', role: '' }),                // 占位
+          M({ member_id: 'm4', name: '', role: '' })                 // 占位
+        ],
+        policies: [P({ member_id: 'm1', insured_name: '张某' })]
+      }
+    })
+    const ph = r.groups.filter(g => g.placeholder)
+    expect(ph.length).toBe(2)
+    expect(ph[0].name).toBe('待补姓名')
+    expect(ph[0].source).toBe('待补信息')
+    // 信任点只留"已知姓名却没保单的人"，不被占位稀释
+    expect(r.summary.membersWithoutPolicy).toEqual(['李某'])
+    expect(r.summary.placeholderCount).toBe(2)
+    expect(r.summary.memberNote).toContain('2 位成员待补姓名')
+  })
+
+  test('无占位成员时不出现提示（不制造噪音）', () => {
+    const r = buildCheckupReport({ family: { members: [M({ member_id: 'm2', name: '张小某' })], policies: [P()] } })
+    expect(r.summary.placeholderCount).toBe(0)
+    expect(r.summary.memberNote).toBe('')
+  })
+
   test('无 member_id 时按被保人姓名精确匹配（不模糊）', () => {
     const r = buildCheckupReport({
       family: { members: [M({ member_id: 'm2', name: '张小某' })], policies: [P({ member_id: '', insured_name: '张小某' })] }

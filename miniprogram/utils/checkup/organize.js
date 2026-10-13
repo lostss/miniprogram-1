@@ -133,13 +133,16 @@ function buildCheckupReport(input) {
   const groups = members.map((m) => {
     const key = _str(m.member_id || m._id || m.name)
     const bucket = buckets[key] || { policies: [] }
+    // 建档时按"人数"造的占位成员（无名无角色）——必须可辨识，否则会污染"无保单成员"这个信任点
+    const placeholder = _str(m.name) === ''
     return {
       memberId: _str(m.member_id || m._id),
-      name: _str(m.name) || DASH,
+      name: placeholder ? '待补姓名' : _str(m.name),
+      placeholder,
       role: _str(m.role),
       age: _str(m.age),
       birthDate: _str(m.birth_date),
-      source: bucket.policies.length > 0 ? '来自保单' : '代理人补充',
+      source: placeholder ? '待补信息' : (bucket.policies.length > 0 ? '来自保单' : '代理人补充'),
       policyCount: bucket.policies.length,
       sumAssured: bucket.policies.reduce((s, c) => s + c.sumAssured, 0),
       sumAssuredText: fmtYuan(bucket.policies.reduce((s, c) => s + c.sumAssured, 0)),
@@ -173,7 +176,14 @@ function buildCheckupReport(input) {
     annualPremiumText: fmtYuan(policies.reduce((s, p) => s + _num(p.annual_premium), 0)),
     // 只列**已覆盖**险种（不写"缺什么"——那需要一个"应有清单"，属建议）
     categories: _categoryList(policies),
-    membersWithoutPolicy: groups.filter((g) => g.policyCount === 0).map((g) => g.name)
+    // 只统计**已知姓名**且无保单的成员：占位成员（建档时按人数造的）不算"没保障的人"，
+    // 否则"配偶完全没保障"这个信任点会被一排"待补姓名"稀释掉
+    membersWithoutPolicy: groups.filter((g) => g.policyCount === 0 && !g.placeholder).map((g) => g.name),
+    placeholderCount: groups.filter((g) => g.placeholder).length,
+    memberNote: (function () {
+      const n = groups.filter((g) => g.placeholder).length
+      return n > 0 ? '另有 ' + n + ' 位成员待补姓名与角色' : ''
+    })()
   }
 
   // 待完善：缺字段 / 低置信 / 未匹配（逐条可定位到具体保单）

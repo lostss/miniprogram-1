@@ -100,37 +100,63 @@ Page({
       title: '新建客户',
       editable: true,
       placeholderText: '如：李姐-转介绍',
-      confirmText: '创建',
+      confirmText: '下一步',
       success: function(r) {
         if (!r.confirm) return
         const name = (r.content || '').trim()
         if (!name) { wx.showToast({ title: '请输入客户名称', icon: 'none' }); return }
-        self._creating = true
-        wx.showLoading({ title: '创建中...', mask: true })
-        api('createFamily', { family_name: name, family_structure: [], members: [] })
-          .then(function(res) {
-            wx.hideLoading()
-            self._creating = false
-            if (self._disposed) return
-            if (!res || !res.ok) { wx.showToast({ title: (res && res.msg) || '创建失败，请重试', icon: 'none' }); return }
-            const id = res.data && res.data._id
-            // 2026-09-22 全面审计（前端 P3）：新建客户后必须作废首页的 SWR 缓存。
-            // 首页 _fetchClients 的 60s TTL 内直接返回缓存（pages/index/index.js:38-41），
-            // 而首页**没有下拉刷新** → 新客户最多 60s 不出现在首页且无法手动强刷。
-            // 报告页三处写操作（编辑/删除/改状态）都已 removeStorageSync(HOME_CACHE_KEY)，此处补上。
-            try { wx.removeStorageSync(HOME_CACHE_KEY) } catch (e) { /* 存储异常：下次 TTL 到期自然刷新 */ }
-            wx.showToast({ title: '已创建，可上传保单或补成员', icon: 'none', duration: 2200 })
-            // 直接进入新客户报告页（空态引导上传保单）；返回列表时 onShow 自动刷新
-            if (id) setTimeout(function() { if (!self._disposed) navigateToFamily(id) }, 600)
-            else self._fetch()
-          })
-          .catch(function() {
-            wx.hideLoading()
-            self._creating = false
-            if (!self._disposed) wx.showToast({ title: '创建失败，请重试', icon: 'none' })
-          })
+        // 2026-10-13 流程补齐：建档要收"人数"（第一次见面常只知人数、还拿不到成员明细）。
+        // 服务端 createFamily 已接受 members，故按人数建 N 个**占位成员**（无名无角色），
+        // 成员明细到家庭页再补 —— 这样 family_structure.member_count 立刻反映人数，
+        // 且 readiness 会把它们当"未命名成员"给出 warn 级补全引导（不会 block 报告）。
+        wx.showModal({
+          title: '家庭成员人数',
+          editable: true,
+          placeholderText: '如：3（可留空，之后在家庭页补成员）',
+          confirmText: '创建',
+          success: function(r2) {
+            if (!r2.confirm) return
+            const raw = (r2.content || '').trim()
+            const n = raw === '' ? 0 : Number(raw)
+            if (!Number.isInteger(n) || n < 0 || n > 10) {
+              wx.showToast({ title: '人数请填 0-10 的整数', icon: 'none' })
+              return
+            }
+            self._doCreateFamily(name, n)
+          }
+        })
       }
     })
+  },
+
+  _doCreateFamily(name, memberCount) {
+    const self = this
+    const members = []
+    for (let i = 0; i < (memberCount || 0); i++) members.push({})
+    self._creating = true
+    wx.showLoading({ title: '创建中...', mask: true })
+    api('createFamily', { family_name: name, family_structure: [], members: members })
+      .then(function(res) {
+        wx.hideLoading()
+        self._creating = false
+        if (self._disposed) return
+        if (!res || !res.ok) { wx.showToast({ title: (res && res.msg) || '创建失败，请重试', icon: 'none' }); return }
+        const id = res.data && res.data._id
+        // 2026-09-22 全面审计（前端 P3）：新建客户后必须作废首页的 SWR 缓存。
+        // 首页 _fetchClients 的 60s TTL 内直接返回缓存（pages/index/index.js:38-41），
+        // 而首页**没有下拉刷新** → 新客户最多 60s 不出现在首页且无法手动强刷。
+        // 报告页三处写操作（编辑/删除/改状态）都已 removeStorageSync(HOME_CACHE_KEY)，此处补上。
+        try { wx.removeStorageSync(HOME_CACHE_KEY) } catch (e) { /* 存储异常：下次 TTL 到期自然刷新 */ }
+        wx.showToast({ title: memberCount > 0 ? '已创建，接下来上传保单' : '已创建，可上传保单或补成员', icon: 'none', duration: 2200 })
+        // 直接进入新客户报告页（空态引导上传保单）；返回列表时 onShow 自动刷新
+        if (id) setTimeout(function() { if (!self._disposed) navigateToFamily(id) }, 600)
+        else self._fetch()
+      })
+      .catch(function() {
+        wx.hideLoading()
+        self._creating = false
+        if (!self._disposed) wx.showToast({ title: '创建失败，请重试', icon: 'none' })
+      })
   },
   // 真机 404 修复：与首页同构——detail 优先、dataset 兜底、空 _id 拦截
   onClientTap(e) {

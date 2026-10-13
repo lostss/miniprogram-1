@@ -25,6 +25,7 @@
     <view class="hd">
       <view class="hd-name">{{view.header.familyName}}</view>
       <view class="hd-meta">{{view.header.memberCount}} 位成员 · {{view.header.policyCount}} 张保单</view>
+      <view class="hd-src" wx:if="{{view.summary.memberNote}}">{{view.summary.memberNote}}</view>
       <view class="hd-src" wx:if="{{view.header.dataAt}}">数据更新于 {{view.header.dataAt}}</view>
     </view>
 
