@@ -1,8 +1,9 @@
 /* ========== 页面容器 ========== */
 /* 2026-09-12 修复：底部留白须躲开 FAB。.fab 为 fixed、bottom=calc(--sp-8 + safe)=48rpx+safe、
    直径 96rpx → 占据底部 48→144rpx。原留白 120rpx 比 FAB 顶端矮 24rpx，最后一张卡底部被压住、
-   长按删除触点也落在遮挡区。176rpx = 144 + 32rpx 间隙。 */
-.page { background:var(--bg-root); padding:0 var(--sp-6); padding-bottom:calc(176rpx + env(safe-area-inset-bottom)) }
+   长按删除触点也落在遮挡区。176rpx = 144 + 32rpx 间隙。
+   2026-10-13 合并页：并入库列表页的 min-height:100vh + box-sizing（列表页需要撑满视口底色）。 */
+.page { min-height:100vh; box-sizing:border-box; background:var(--bg-root); padding:0 var(--sp-6); padding-bottom:calc(176rpx + env(safe-area-inset-bottom)) }
 /* 2026-09-22 修复（UX 审计 P2）：原 `overflow:hidden` 在空态把超出视口的内容直接**裁掉且无法滚动**
    （空态实测约 780rpx 起：brand-header 120 + 上传框 200 + 步骤 80 + 提示 100 + 新增建档入口 88+48），
    系统大字号/小屏机型下底部内容不可达。改为可滚动（无溢出时行为与原来一致）。 */
@@ -13,14 +14,27 @@
 .brand-title { font-family:var(--font-serif); font-size:var(--fs-display); font-weight:var(--fw-normal); color:var(--text-primary); letter-spacing:var(--ls-wide); line-height:var(--lh-tight) }
 .brand-slogan { font-family:var(--font-serif); font-size:var(--fs-caption); color:var(--text-tertiary); margin-top:var(--sp-3); letter-spacing:var(--ls-wide) }
 
-/* ========== 空态上传引导 ========== */
+/* ========== 搜索栏（2026-10-13 合并自客户列表页）========== */
+/* 2026-09-12：改为 flex 以容纳右侧「新建客户」按钮（+） */
+.search-bar { position:sticky; top:0; z-index:10; background:var(--bg-root); padding:var(--sp-4) 0; display:flex; align-items:center; gap:var(--sp-3) }
+.search-wrap { position:relative; flex:1; min-width:0 }
+/* 新建客户入口：72rpx 视觉 + 伪元素热区扩至 ≥88rpx */
+.create-btn { position:relative; flex-shrink:0; width:72rpx; height:72rpx; display:flex; align-items:center; justify-content:center; background:var(--accent-dim); color:var(--accent-deep); border-radius:50%; font-size:var(--fs-xl); line-height:1 }
+.create-btn::after { content:''; position:absolute; left:-8rpx; right:-8rpx; top:50%; height:88rpx; transform:translateY(-50%) }
+.create-btn:active { opacity:0.6 }
+.search-input { width:100%; height:72rpx; background:var(--bg-surface); border-radius:var(--r-xl); padding:0 64rpx 0 var(--sp-5); font-size:var(--fs-base); box-sizing:border-box; border:1rpx solid transparent; transition:border-color var(--dur-fast) var(--ease-out) }
+.search-input:focus { border-color:var(--accent) }
+/* UI 审计 视觉 S2：清除按钮 padding 扩点击区；去固定宽高（content-box 下 48+24*2=96rpx 盒，✕ 居中于 96rpx 中心=偏下 12rpx） */
+.search-clear { position:absolute; right:var(--sp-3); top:50%; transform:translateY(-50%); padding:24rpx; display:flex; align-items:center; justify-content:center; font-size:var(--fs-caption); line-height:1; color:var(--text-tertiary); border-radius:50% }
+.search-clear:active { background:var(--bg-input) }
+
+/* ========== 空态建档引导 ========== */
 .orb-stage { display:flex; flex-direction:column; align-items:center; padding-top:80rpx; transition:opacity 0.25s var(--ease-out), transform 0.25s var(--ease-out) }
-.orb-stage--done { opacity:0; transform:translateY(-20rpx); pointer-events:none; height:0; overflow:hidden; padding-top:0; margin:0 }
 .upload-box { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:var(--sp-5); width:280rpx; height:200rpx; border:2rpx dashed var(--border-accent); border-radius:var(--r-xl); background:var(--bg-surface); transition:border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out) }
 .upload-box:active { border-color:var(--accent); background:var(--accent-dim) }
 .upload-box-icon { width:56rpx; height:56rpx }
-/* 2026-10-13：首页入口由"上传保单"改为"新建客户"（上传移入客户页）——不加新图标资源，
-   沿用既有视觉容器，用文字"＋"承担图标语义（与客户列表页 ＋ 一致） */
+/* 2026-10-13：入口为"新建客户"（上传移入客户详情页）——不加新图标资源，
+   沿用既有视觉容器，用文字"＋"承担图标语义（与搜索栏 ＋ 一致） */
 .upload-box-plus { font-size:64rpx; line-height:1; color:var(--accent-deep, #8B6F3C) }
 .upload-box-text { font-size:var(--fs-base); color:var(--text-tertiary); letter-spacing:var(--ls-wide) }
 .onboard-steps { display:flex; align-items:center; margin-top:80rpx; gap:0 }
@@ -28,13 +42,8 @@
 .ob-step-num { width:56rpx; height:56rpx; border-radius:50%; background:var(--bg-surface); border:1rpx solid var(--border); display:flex; align-items:center; justify-content:center; font-family:var(--font-serif); font-size:var(--fs-body); color:var(--text-tertiary) }
 .ob-step-text { font-size:var(--fs-caption); color:var(--text-tertiary); letter-spacing:var(--ls-wide) }
 .ob-step-line { width:48rpx; height:1rpx; background:var(--border); margin-bottom:28rpx }
-.empty-hint { text-align:center; padding-top:100rpx }
-.empty-hint-text { font-size:var(--fs-caption); color:var(--text-tertiary); letter-spacing:2rpx }
-/* 2026-09-22：空态手动建档入口（UX 审计 P1）。88rpx 命中区 + 文字链视觉。 */
-.empty-create { display:inline-flex; align-items:center; justify-content:center; min-height:88rpx; margin-top:48rpx; padding:0 var(--sp-5); font-size:var(--fs-caption); color:var(--accent-deep); border-bottom:1rpx solid var(--border-accent) }
-.empty-create:active { opacity:0.6 }
 
-/* UI 审计 R-M5：首页加载错误态 */
+/* UI 审计 R-M5：加载错误态（空态下替代建档引导，不伪装"尚无客户"） */
 .load-error { display:flex; flex-direction:column; align-items:center; gap:var(--sp-3); margin-top:var(--sp-6) }
 .load-error-text { font-size:var(--fs-caption); color:var(--text-tertiary) }
 .load-error-retry { font-size:var(--fs-caption); color:var(--accent-deep); padding:var(--sp-2) var(--sp-5); border:1rpx solid var(--border-accent); border-radius:var(--r-full) }
@@ -46,12 +55,7 @@
 .fab-icon { width:44rpx; height:44rpx; filter:brightness(0) invert(1) }
 .fab-plus { font-size:56rpx; line-height:1; color:var(--color-on-accent, #FFFFFF) }
 
-/* ========== 客户列表 ========== */
-.clients-section { margin-top:var(--sp-7) }
-.section-header { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:var(--sp-6) }
-.section-title { font-family:var(--font-serif); font-size:var(--fs-base); font-weight:var(--fw-normal); color:var(--text-secondary); letter-spacing:var(--ls-wider) }
-.section-more { display:inline-flex; align-items:center; justify-content:center; min-height:88rpx; padding:var(--sp-2) var(--sp-4); margin:-8rpx -16rpx 0 0; font-size:var(--fs-caption); color:var(--text-tertiary) }
-.section-more-arrow { margin-left:var(--sp-1); font-size:var(--fs-body) }
+/* ========== 列表 ========== */
 .client-stagger { margin-bottom:var(--sp-4); animation:cardUp var(--dur-slow) var(--ease-out) both }
 .client-stagger:nth-child(1) { animation-delay:0s }
 .client-stagger:nth-child(2) { animation-delay:0.08s }
@@ -72,3 +76,10 @@
 .sk-label { display:inline-block; width:60rpx; height:22rpx; border-radius:6rpx; margin-left:var(--sp-3) }
 .sk-time { display:block; width:160rpx; height:20rpx; border-radius:6rpx }
 .sk-ring { width:80rpx; height:80rpx; border-radius:50%; flex-shrink:0; margin-left:var(--sp-4-5); margin-right:var(--sp-5) }
+
+/* ========== 空状态（搜索无结果 / 截断提示）========== */
+/* 说明：原客户列表页的 .empty-btn / .empty-btn--ghost（"去首页上传"/"手动新建客户"）未随合并带入 ——
+   合并后无客户时由 .orb-stage 的建档引导承担主入口，搜索无结果只提示换词，无按钮。 */
+.empty { display:flex; flex-direction:column; align-items:center; padding-top:160rpx }
+.empty-text { font-size:var(--fs-lg); font-weight:var(--fw-semi); color:var(--text-primary); font-family:var(--font-serif); letter-spacing:var(--ls-wide); }
+.empty-sub { font-size:var(--fs-caption); color:var(--text-tertiary); margin-top:var(--sp-3); letter-spacing:var(--ls-wide) }

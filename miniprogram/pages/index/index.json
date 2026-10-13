@@ -1,5 +1,6 @@
 {
   "navigationBarTitleText": "保小秘",
+  "enablePullDownRefresh": true,
   "usingComponents": {
     "client-card": "/components/client-card/index",
     "ocr-flow": "/components/ocr-flow/index"

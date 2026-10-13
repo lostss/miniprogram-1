@@ -10,7 +10,8 @@
 jest.mock('../miniprogram/utils/apiClient', () => jest.fn())
 
 const api = require('../miniprogram/utils/apiClient')
-const { confirmDeleteFamily, HOME_CACHE_KEY, CLIENTS_CACHE_KEY } = require('../miniprogram/utils/family-actions')
+// 2026-10-13：CLIENTS_CACHE_KEY 已随"首页/客户列表页合并"收成单键（只留 HOME_CACHE_KEY）
+const { confirmDeleteFamily, HOME_CACHE_KEY } = require('../miniprogram/utils/family-actions')
 
 // 最小 wx 假实现：ActionSheet/Modal 同步走"确认"分支，storage 用真实 Map 便于断言键的存亡
 function mockWx(store) {
@@ -33,7 +34,6 @@ function seededStore() {
   store.set('chat_history_fam_B', { messages: [{ role: 'assistant', content: 'B' }] })
   store.set('match_cache', { name: 'fam_A' })
   store.set(HOME_CACHE_KEY, [{ _id: 'fam_A' }])
-  store.set(CLIENTS_CACHE_KEY, [{ _id: 'fam_A' }])
   return store
 }
 
@@ -56,7 +56,6 @@ describe('confirmDeleteFamily — 本地缓存清理', () => {
     expect(store.has('chat_history_fam_B')).toBe(true)  // 不误伤其他家庭
     expect(store.has('match_cache')).toBe(false)
     expect(store.has(HOME_CACHE_KEY)).toBe(false)
-    expect(store.has(CLIENTS_CACHE_KEY)).toBe(false)
     expect(onSuccess).toHaveBeenCalled()
   })
 
@@ -71,7 +70,6 @@ describe('confirmDeleteFamily — 本地缓存清理', () => {
 
     expect(store.has('chat_history_fam_A')).toBe(true)
     expect(store.has(HOME_CACHE_KEY)).toBe(true)
-    expect(store.has(CLIENTS_CACHE_KEY)).toBe(true)
     expect(onSuccess).not.toHaveBeenCalled()
   })
 

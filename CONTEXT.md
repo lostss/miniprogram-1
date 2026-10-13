@@ -103,14 +103,18 @@
 - 底部 FAB：保单上传（ocr-flow 组件，选图 → OCR → 确认入库）/ 对话面板（chat-panel，三步流程）
 - 对话内上传已移除（2026-08 核实无 upload 代码）
 - 确认操作：弹出式卡片（确认/修改，不打断报告浏览）
-- 客户切换：首页最近客户列表 / 客户列表页搜索
+- 客户切换：**客户列表页**（2026-10-13 起首页与客户列表页合并为一页：搜索 + 全量列表 + 建档引导；
+  原"首页最近 3 个 / 列表页搜索"的两页分工已废弃 —— 同一份 `listFamilies` 只是 limit 不同，
+  且列表页是只能从首页进入的单向二级页。该页同时是根页面，兼"未完成批次恢复提示"宿主）
 - **实时联动**：OCR/编辑入库 → `savedhome`/`onOcrFlowSaved` 事件触发报告页重读重算（不触发 AI）
 
-**进入逻辑**：打开小程序 → 首页最近客户列表 → 点击进入报告 → 静止展示。
+**进入逻辑**：打开小程序 → 客户列表（含搜索）→ 点击进入报告 → 静止展示。
 
 ## 系统架构
 
-- **前端**：微信小程序（原生），报告为主 + 底部 FAB，3 页（index/report/clients）
+- **前端**：微信小程序（原生），报告为主 + 底部 FAB，**2 页**（index=客户列表=根页面 / report）
+  - 2026-10-13 合并：原 clients 页并入 index（同数据源、同卡片、同骨架屏；clients 仅首页可达）。
+    页面注册表一致性由 `tests/page-registry.test.js` 守卫（app.json ↔ pages 目录 ↔ 导航目标）
 - **后端**：CloudBase 云函数，共享模块经 `scripts/sync-shared.js` 同步至各函数 `_shared/` 副本：
   - `dataQuery`：查询聚合（getFamily / queryMessages / listFamilies / searchFamilies / queryPolicies / queryMembers / queryFacts）
   - `dataWrite`：写入聚合（家庭/成员/事实/保单/消息，`ingestPolicies` 批量入库 step 化）

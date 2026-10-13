@@ -1,12 +1,13 @@
 /**
  * family-actions.js — 跨页面共享的家庭动作
  *
- * 解决问题：index/index.js 和 clients/index.js 的 onClientTap / onClientLongPress
- * 逐字符重复（共 ~60 行），文案改一处需同步改两处，极易漂移。
- *
  * 设计：纯函数 + 注入 api 回调，不绑定 Page 实例
- *  - 调用方传入 familyId / name / api / onSuccess
+ *  - 调用方传入 familyId / name / onSuccess
  *  - 内部封装 modal 确认 + loading + toast + 错误处理
+ *
+ * 2026-10-13：原为 index/index.js 与 clients/index.js 共用（两者 onClientTap/LongPress 逐字符
+ * 重复 ~60 行）。两页已合并为一页（pages/index），本模块仍是删除流程的唯一实现方 —— 保留，
+ * 因为删除动作本身就是"跨页面共享的领域动作"（报告页也可调用）。
  */
 const session = require('./session-store')
 const api = require('./apiClient')
@@ -14,10 +15,11 @@ const api = require('./apiClient')
 // （与"会话内新消息后作废快照"同一实现），避免在此手写 'chat_history_' 前缀造成魔法字符串漂移。
 const { invalidate: invalidateChatCache } = require('./history-store')
 
-// 首页最近客户缓存键（index 页读写与删除清理共用同一常量，防魔法字符串漂移）
+// 客户列表缓存键（pages/index 读写与删除清理共用同一常量，防魔法字符串漂移）
+// 2026-10-13 合并页：原 CLIENTS_CACHE_KEY('clientsAllList') 与首页键并存 → 收成一个，
+// 删除/建档只需清这一处；键值保留 'homeRecentClients'（存量用户本地缓存继续有效，
+// 改名会造成一次无谓的全量失效）。
 const HOME_CACHE_KEY = 'homeRecentClients'
-// 全部客户页缓存键（clients 页冷启动秒开渲染；删除家庭时与首页缓存一并清理，防已删家庭闪回）
-const CLIENTS_CACHE_KEY = 'clientsAllList'
 
 // 跳转到家庭报告页（设置 activeFamily + navigateTo）
 function navigateToFamily(familyId) {
@@ -69,7 +71,8 @@ function confirmDeleteFamily(opts) {
               // 按 familyId 存的独立 key，随家庭数增长（每个约十余条消息），逼近小程序 10MB 上限。
               // 语义与 invalidate 的原用途一致：数据源已变 → 快照作废。
               invalidateChatCache(familyId)
-              try { wx.removeStorageSync('match_cache'); wx.removeStorageSync(HOME_CACHE_KEY); wx.removeStorageSync(CLIENTS_CACHE_KEY) } catch (e) {}
+              // 2026-10-13：客户列表与首页已合并为同一页、同一缓存键 → 只清这一个键
+              try { wx.removeStorageSync('match_cache'); wx.removeStorageSync(HOME_CACHE_KEY) } catch (e) {}
               if (typeof onSuccess === 'function') onSuccess()
             } else {
               wx.showToast({ title: (r2.code === 207 ? '仍有部分数据未能清理，请稍后重试' : (r2.msg || '删除失败')), icon: 'none' })
@@ -84,4 +87,4 @@ function confirmDeleteFamily(opts) {
   })
 }
 
-module.exports = { navigateToFamily, confirmDeleteFamily, HOME_CACHE_KEY, CLIENTS_CACHE_KEY }
+module.exports = { navigateToFamily, confirmDeleteFamily, HOME_CACHE_KEY }

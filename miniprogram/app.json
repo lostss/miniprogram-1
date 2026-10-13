@@ -1,8 +1,7 @@
 {
   "pages": [
     "pages/index/index",
-    "pages/report/index",
-    "pages/clients/index"
+    "pages/report/index"
   ],
   "window": {
     "backgroundColor": "@bgColor",

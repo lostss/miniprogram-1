@@ -1,19 +1,65 @@
-<!-- 保小秘 首页 -->
-<view class="page page-view {{recentClients.length === 0 && !loadingClients && !ocrBusy ? 'page-fixed' : ''}}">
+<!-- 客户列表（2026-10-13 合并页：原首页 + 原客户列表页合一，同时是小程序根页面）
+     合并后只呈现一件事：我的客户。空态=建档引导（原首页 onboarding），非空=搜索+全量列表。
+     ⚠️ ocr-flow 与 FAB 必须留在 .page 之外（见文件末尾注释）。 -->
+<view class="page page-view {{families.length === 0 && !loading && !keyword && !ocrBusy ? 'page-fixed' : ''}}">
   <!-- 品牌头 -->
   <view class="brand-header">
     <view class="brand-title">把散落的保单整理清楚</view>
     <view class="brand-slogan">AI保单整理助手</view>
   </view>
 
-  <!-- 空态：建档引导（2026-10-13 流程调整：上传不再放首页 —— 先建客户，进家庭页后上传，
-       这样上传时已确定家庭，省掉"这张保单属于谁"的匹配推断。见 pages/report 内 ocr-flow） -->
-  <view class="orb-stage {{recentClients.length > 0 ? 'orb-stage--done' : ''}}" wx:if="{{!ocrBusy && !loadingClients}}">
-    <view class="upload-box pressable" bindtap="onCreateClient" aria-label="新建客户">
+  <!-- 搜索栏：有客户或有搜索词时出现（空态由建档引导承担，不显示搜索） -->
+  <view class="search-bar" wx:if="{{families.length > 0 || keyword}}">
+    <view class="search-wrap">
+      <!-- 2026-09-12：文案修正——服务端是双路匹配（family_name + 成员 name），原"搜索客户姓名"低估了能力 -->
+      <input class="search-input" value="{{keyword}}" placeholder="搜索客户或成员姓名" bindinput="onSearch" aria-label="搜索客户" />
+      <view class="search-clear pressable" wx:if="{{keyword}}" bindtap="onClearSearch">✕</view>
+    </view>
+    <!-- 2026-09-12 显式建档入口：无保单也能建客户（第一次见面、还没拿到保单时最需要） -->
+    <view class="create-btn pressable" bindtap="onCreateFamily" aria-label="新建客户">＋</view>
+  </view>
+
+  <!-- 加载中：骨架屏（UI 审计 状态 M5：与列表卡片同构） -->
+  <block wx:if="{{loading && families.length === 0}}">
+    <view class="sk-client-card" wx:for="{{[1,2,3]}}" wx:key="*this">
+      <view class="sk-body">
+        <view class="sk-row"><view class="sk-shimmer sk-name"></view><view class="sk-shimmer sk-label"></view></view>
+        <view class="sk-shimmer sk-time"></view>
+      </view>
+      <view class="sk-shimmer sk-ring"></view>
+    </view>
+  </block>
+
+  <!-- 列表 -->
+  <view class="client-stagger {{removingId === item._id ? 'card-removing' : ''}}" wx:for="{{families}}" wx:key="_id" wx:for-index="idx">
+    <client-card client="{{item}}" bindtap="onClientTap" bind:longpress="onClientLongPress" data-idx="{{idx}}" />
+  </view>
+
+  <!-- 审计 P2-16：listFamilies 上限 100，超出时明示（原静默截断，用户以为客户只有这些） -->
+  <view class="empty-sub" wx:if="{{!loading && truncated}}" style="padding:var(--sp-4) 0">已显示前 100 位客户，可搜索客户或成员姓名精确查找</view>
+
+  <!-- 错误态：加载失败优先于空态与搜索空态（客户列表审计 P1-1：网络/数据库失败不伪装"未找到"）。
+       ⚠️ 三种空态各自写全条件、**不用 wx:elif** —— 上方截断提示与列表也是独立 wx:if，
+          wx:elif 必须紧邻前一个 wx:if 兄弟节点，中间夹一个 wx:if 会把链断掉。 -->
+  <view class="load-error" wx:if="{{!loading && families.length === 0 && loadError}}">
+    <text class="load-error-text">客户列表加载失败</text>
+    <view class="load-error-retry pressable" bindtap="onRetryLoad">点击重试</view>
+  </view>
+
+  <!-- 空态：搜索无结果 -->
+  <view class="empty" wx:if="{{!loading && families.length === 0 && !loadError && keyword}}">
+    <text class="empty-text">未找到"{{keyword}}"</text>
+    <text class="empty-sub">换个关键词试试</text>
+  </view>
+
+  <!-- 空态：无任何客户 → 建档引导（原首页 onboarding；上传入口 2026-10-13 已移入客户详情页，
+       先建客户再进详情页上传 → 上传时家庭已确定，省掉"这张保单属于谁"的匹配推断） -->
+  <view class="orb-stage" wx:if="{{!loading && families.length === 0 && !loadError && !keyword}}">
+    <view class="upload-box pressable" bindtap="onCreateFamily" aria-label="新建客户">
       <text class="upload-box-plus">＋</text>
       <text class="upload-box-text">新建客户</text>
     </view>
-    <view class="onboard-steps" wx:if="{{recentClients.length === 0 && !loadError}}">
+    <view class="onboard-steps">
       <view class="ob-step">
         <view class="ob-step-num">1</view>
         <text class="ob-step-text">新建客户（名称 / 人数）</text>
@@ -21,7 +67,7 @@
       <view class="ob-step-line"></view>
       <view class="ob-step">
         <view class="ob-step-num">2</view>
-        <text class="ob-step-text">在客户页上传保单，AI 识别</text>
+        <text class="ob-step-text">进入客户后上传保单，AI 识别</text>
       </view>
       <view class="ob-step-line"></view>
       <view class="ob-step">
@@ -29,57 +75,18 @@
         <text class="ob-step-text">生成保单整理报告</text>
       </view>
     </view>
-    <!-- 2026-09-22 修复（UX 审计 P1）：无客户时「全部」入口在下方 clients-section 的 wx:if 内，
-         而客户列表页是**唯一**能手动建档的页面（clients/index.wxml:11 的 ＋ 与 :52 的「手动新建客户」），
-         → 新用户在拿到第一张保单前根本进不去，"第一次见面、还没拿到保单时就无处建档"这一设计意图失效。
-         此处补显式入口，通向该页（其空态自带建档按钮）。 -->
-    <view class="empty-create pressable" wx:if="{{recentClients.length === 0 && !loadError}}" bindtap="onViewAll">已有客户资料？手动新建客户</view>
-    <!-- UI 审计 R-M5：加载失败显示错误态 + 重试，不再伪装空数据引导 -->
-    <view class="load-error" wx:if="{{recentClients.length === 0 && loadError}}">
-      <text class="load-error-text">客户列表加载失败</text>
-      <view class="load-error-retry pressable" bindtap="onRetryLoad">点击重试</view>
-    </view>
-  </view>
-
-  <!-- 客户列表 -->
-  <view class="clients-section" wx:if="{{recentClients.length > 0 || loadingClients}}">
-    <view class="section-header">
-      <text class="section-title">最近客户</text>
-      <view class="section-more pressable" bindtap="onViewAll" aria-label="查看全部客户">
-        <text>全部</text>
-        <text class="section-more-arrow">→</text>
-      </view>
-    </view>
-    <block wx:if="{{loadingClients}}">
-      <view class="sk-client-card" wx:for="{{3}}" wx:for-index="sk" wx:key="sk">
-        <view class="sk-body">
-          <view class="sk-row"><view class="sk-shimmer sk-name"></view><view class="sk-shimmer sk-label"></view></view>
-          <view class="sk-shimmer sk-time"></view>
-        </view>
-        <view class="sk-shimmer sk-ring"></view>
-      </view>
-    </block>
-    <block wx:else>
-      <view class="client-stagger {{removingId === item._id ? 'card-removing' : ''}}" wx:for="{{recentClients}}" wx:key="_id" wx:for-index="idx">
-        <client-card client="{{item}}" bindtap="onClientTap" bind:longpress="onClientLongPress" data-idx="{{idx}}" />
-      </view>
-    </block>
-  </view>
-
-  <!-- 空态无客户：底部提示 -->
-  <view class="empty-hint" wx:if="{{recentClients.length === 0 && !ocrBusy && !loadingClients}}">
-    <text class="empty-hint-text">保单照片在客户页上传 · 支持 JPG / PNG，一次最多 9 张</text>
   </view>
 </view>
 
-<!-- FAB（非空态显示）：新建客户（上传入口已移入客户页，避免"这张保单属于谁"的匹配推断） -->
-<view class="fab {{recentClients.length > 0 && !ocrBusy ? 'fab--show' : ''}}" bindtap="onCreateClient" aria-label="新建客户">
+<!-- FAB（非空态显示）：新建客户 -->
+<view class="fab {{families.length > 0 && !ocrBusy ? 'fab--show' : ''}}" bindtap="onCreateFamily" aria-label="新建客户">
   <text class="fab-plus">＋</text>
 </view>
 
-<!-- OCR 全流程组件 —— ⚠️ 必须留在 .page 之外（与下方 FAB 同理），勿以"结构整洁"为由移入。
+<!-- OCR 全流程组件 —— ⚠️ 必须留在 .page 之外（与上面 FAB 同理），勿以"结构整洁"为由移入。
      2026-09-18 布局审计曾建议移入 .page，已查实**不可移动**：.page-view 带常驻 transform
      （pageEnter 动画 + fill-mode both → 终帧 translateY(0) 仍非 none），而 transform 会为
      position:fixed 后代建立包含块 → 本组件内 .ocr-mask（fixed 全屏遮罩）会改为相对 .page-view
-     定位而错乱。app.wxss 对该动画已注明"不放在 page 选择器上"即为此原因。 -->
+     定位而错乱。app.wxss 对该动画已注明"不放在 page 选择器上"即为此原因。
+     职责：未完成批次恢复（checkResume）+ 保存后跳转；上传入口在报告页（客户详情页）内。 -->
 <ocr-flow id="ocrFlow" bind:busychange="onOcrBusy" bind:saved="onOcrSaved" bind:savedhome="onOcrSavedHome" bind:discarded="onOcrDiscarded" />

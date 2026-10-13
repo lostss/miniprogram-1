@@ -48,7 +48,8 @@ describe('跨树同源（防第二份正则）', () => {
   })
 
   test('建档按人数造占位时使用 skeletonName（否则后端认领失效）', () => {
-    const src = fs.readFileSync(path.join(__dirname, '..', 'miniprogram', 'pages', 'clients', 'index.js'), 'utf8')
+    // 2026-10-13：建档表单的实现方随"首页/客户列表页合并"迁到 pages/index（原 pages/clients 已删）
+    const src = fs.readFileSync(path.join(__dirname, '..', 'miniprogram', 'pages', 'index', 'index.js'), 'utf8')
     expect(src).toContain('skeletonName(i)')
     expect(src).not.toMatch(/members\.push\(\{\}\)/) // 空名占位：认领机制认不出
   })
