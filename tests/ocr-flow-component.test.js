@@ -307,3 +307,58 @@ describe('ocr-flow 组件：归属候选（P1-1）', function () {
     await pending
   })
 })
+
+/**
+ * 2026-10-13：家庭页上传（skipMatch）也必须弹角色卡
+ *
+ * 事故形态：`_stageCtx`（primaryHolder / bloodNames）原先只在 `_runMatchStage` 内部构建，
+ * 而家庭页走 `skipMatch` 会跳过它 → `_runRoleStage` 的 roleList 恒为空 → **角色卡不弹**；
+ * 而成员 role 的**唯一**写入方就是角色卡（后端 matchPoliciesToMembers 只写 name/birth_date）
+ * → 成员角色永远为空，`readiness`/缺口推算的 `isPillar` 判定随之失效。
+ * 首页上传入口取消后 `_runMatchStage` 更无调用方，角色卡彻底不可达。
+ */
+describe('ocr-flow：skipMatch（家庭页上传）路径的角色确认', function () {
+  const cfg = loadComponent()
+  const fs = require('fs')
+  const path = require('path')
+  const SRC = fs.readFileSync(path.join(__dirname, '..', 'miniprogram', 'components', 'ocr-flow', 'index.js'), 'utf8')
+
+  test('_buildStageCtx：primaryHolder 取票数最高投保人，bloodNames 覆盖投保人/被保人/非"法定"受益人', function () {
+    const inst = makeInstance(cfg)
+    const out = inst._buildStageCtx([
+      { policyholder_name: '王芳', insured_name: '小明', beneficiary_name: '法定' },
+      { policyholder_name: '王芳', insured_name: '小红', beneficiary_name: '张三' },
+      { policyholder_name: '李强', insured_name: '小李' }
+    ])
+    expect(out.primaryHolder).toBe('王芳')               // 2 票 > 1 票
+    expect(out.bloodNames).toEqual(['王芳', '小明', '小红', '张三', '李强', '小李'])
+    expect(out.bloodNames).not.toContain('法定')          // 占位不建档
+  })
+
+  test('_buildStageCtx 把结果写回实例字段（_runRoleStage 的输入）', function () {
+    const inst = makeInstance(cfg)
+    expect(inst._stageCtx).toBeUndefined()
+    inst._buildStageCtx([{ policyholder_name: '王芳', insured_name: '小明' }])
+    expect(inst._stageCtx).toEqual({ primaryHolder: '王芳', bloodNames: ['王芳', '小明'] })
+  })
+
+  test('skipMatch 分支调用 _buildStageCtx（否则角色卡恒不弹、role 永不写入）', function () {
+    // 说明：本用例是**调用点护栏**（_doSave 依赖云端/flow 多模块，端到端驱动成本过高）；
+    // 被调函数本身的行为由上面两条真实覆盖。两处改动任一被回退，本用例即红。
+    const idx = SRC.indexOf('this.properties.skipMatch && this.properties.familyId')
+    expect(idx).toBeGreaterThan(-1)
+    const branch = SRC.slice(idx, idx + 400)
+    expect(branch).toContain('this._buildStageCtx(policies)')
+  })
+
+  test('_stageCtx 只有一处赋值点，且位于 _buildStageCtx 方法体内', function () {
+    const assigns = SRC.match(/this\._stageCtx\s*=/g) || []
+    expect(assigns.length).toBe(1)
+    const m = SRC.match(/this\._stageCtx\s*=/)
+    const methodIdx = SRC.indexOf('_buildStageCtx(allPolicies) {')
+    const nextMethodIdx = SRC.indexOf('\n    async _runMatchStage(', methodIdx)
+    expect(methodIdx).toBeGreaterThan(-1)
+    expect(m.index).toBeGreaterThan(methodIdx)          // 赋值在方法内
+    expect(m.index).toBeLessThan(nextMethodIdx)         // 且不越界到下一个方法
+  })
+})

@@ -469,6 +469,9 @@ Component({
       var pick = null
       if (this.properties.skipMatch && this.properties.familyId) {
         pick = this.properties.familyId
+        // 2026-10-13：跳过匹配 ≠ 跳过角色确认。家庭页上传是本项目**唯一**上传入口，
+        // 若此处不建 ctx，角色卡恒不弹 → 成员 role 永远为空（readiness/gap 的支柱判定随之失效）。
+        this._buildStageCtx(policies)
       } else {
         pick = await this._runMatchStage(policies)
         if (this._disposed) return
@@ -565,7 +568,16 @@ Component({
     },
 
     // ============ 匹配弹窗 ============
-    async _runMatchStage(allPolicies) {
+    /**
+     * 从本批保单推出"角色卡要用的人"：primaryHolder（票数最高的投保人）+ bloodNames（全部真人）。
+     *
+     * 2026-10-13 抽成独立方法：原实现只在 `_runMatchStage` 内部构建 `_stageCtx`，而家庭页上传走
+     * `skipMatch` 会跳过 `_runMatchStage` → ctx 恒为空 → `_runRoleStage` 的 roleList 为空 →
+     * **角色卡不弹、成员角色永远不写**（后端 matchPoliciesToMembers 只写 name/birth_date，从不写 role）。
+     * 首页上传入口取消后，`_runMatchStage` 更是无调用方 —— 角色卡随之彻底不可达。
+     * 现两条路径都调本方法：匹配弹窗仍可跳过，但角色确认照常。
+     */
+    _buildStageCtx(allPolicies) {
       var holderCount = {}
       allPolicies.forEach(function(p) { const n = p.policyholder_name || p.insured_name; if (n) holderCount[n] = (holderCount[n] || 0) + 1 })
       var sorted = Object.keys(holderCount).sort(function(a, b) { return holderCount[b] - holderCount[a] })
@@ -580,6 +592,13 @@ Component({
         _add(p.insured_name)
         if (p.beneficiary_name && !/法定|法定继承人|未指定/.test(p.beneficiary_name)) _add(p.beneficiary_name)
       })
+      this._stageCtx = { primaryHolder: primaryHolder, bloodNames: bloodNames }
+      return this._stageCtx
+    },
+
+    async _runMatchStage(allPolicies) {
+      var ctx0 = this._buildStageCtx(allPolicies)
+      var primaryHolder = ctx0.primaryHolder
       var candidates = []
       var cachedId = session.getMatchCache(primaryHolder)
       var self = this
@@ -643,7 +662,6 @@ Component({
       // 用户可直接"下一步"，也可改选——不再强制空选
       var cachedValid = !!(cachedId && candidates.some(function(c) { return c._id === cachedId }))
       var defaultPick = cachedValid ? cachedId : (candidates.length > 0 ? candidates[0]._id : 'new')
-      this._stageCtx = { primaryHolder: primaryHolder, bloodNames: bloodNames }
       var candsUI = candidates.map(function(c) {
         return { _id: c._id, name: c.name, basis: c._basis || '', membersText: (c.members || []).map(function(m) { return m.name + (m.role ? '(' + m.role + ')' : '') }).join('、') }
       })

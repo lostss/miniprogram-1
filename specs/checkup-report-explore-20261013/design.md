@@ -79,6 +79,12 @@
 
 **行为影响面**：后端逻辑**零变化**（正则只是从 `member-matcher` 搬到契约文件），变化来自前端产出的数据形态 → 云函数无需部署，随小程序发版即可。
 
+### 3.3 角色确认不被 skipMatch 跳过（2026-10-13 修）
+
+`_stageCtx`（primaryHolder / bloodNames）原先**只在 `_runMatchStage` 内部**构建，而家庭页上传走 `skipMatch` 会跳过它 → `_runRoleStage` 的 roleList 恒为空 → **角色卡不弹**；而成员 `role` 的唯一写入方就是角色卡（后端 `matchPoliciesToMembers` 只写 `name`/`birth_date`）→ 成员角色永远为空，`readiness` 与缺口推算的 `isPillar = role==='本人'||'经济支柱'` 随之恒假。首页上传入口取消后 `_runMatchStage` 更无调用方，角色卡彻底不可达。
+
+**修法**：把 ctx 构建抽为 `_buildStageCtx(allPolicies)`，`skipMatch` 分支也调用它 —— **匹配弹窗仍跳过，角色确认照常**。纯前端改动，无需部署。
+
 ## 4. 内测判据（探索的验收，不是功能的验收）
 
 同一份报告，2~3 位代理人各自与真实客户同看一次，记录：
