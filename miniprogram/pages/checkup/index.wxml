@@ -40,6 +40,7 @@
           <view class="sum-value">{{view.summary.annualPremiumText}}</view>
         </view>
       </view>
+      <view class="sum-note" wx:if="{{view.summary.premiumNote}}">{{view.summary.premiumNote}}</view>
       <view class="sum-wide">
         <view class="sum-label">保额合计</view>
         <view class="sum-value-lg">{{view.summary.totalSumAssuredText}}</view>
@@ -74,7 +75,7 @@
           <text class="pol-cat">{{p.category}}</text>
         </view>
         <view class="pol-row"><text class="k">保额</text><text class="v">{{p.sumAssuredText}}</text></view>
-        <view class="pol-row"><text class="k">年缴保费</text><text class="v">{{p.annualPremiumText}}{{p.paymentMethod ? '（' + p.paymentMethod + '）' : ''}}</text></view>
+        <view class="pol-row"><text class="k">{{p.premiumLabel}}</text><text class="v">{{p.annualPremiumText}}</text></view>
         <view class="pol-row"><text class="k">保障期间</text><text class="v">{{p.period}}</text></view>
         <view class="pol-row"><text class="k">生效日</text><text class="v">{{p.effectiveDate}}</text></view>
         <view class="pol-flags">

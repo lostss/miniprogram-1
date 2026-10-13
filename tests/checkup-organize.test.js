@@ -113,6 +113,37 @@ describe('checkup/organize — 待完善（不确定就标出来）', () => {
     expect(r.groups[0].policies[0].lowConfidence).toBe(true)
   })
 
+  test('非年交保单：不许把该字段写成「年缴保费」，并进 pending 标出未年化', () => {
+    const r = buildCheckupReport({
+      family: {
+        members: [M({ member_id: 'm2', name: '张小某' })],
+        policies: [P({ payment_method: '月交', annual_premium: 500 })]
+      }
+    })
+    const card = r.groups[0].policies[0]
+    expect(card.premiumLabel).toBe('每期保费（月交）')
+    expect(card.premiumIsAnnual).toBe(false)
+    expect(r.summary.premiumNote).toContain('1 张非年交保单')
+    const item = r.pending.find(x => x.kind === 'premium_basis')
+    expect(item.detail).toContain('月交')
+    expect(item.detail).toContain('未年化')
+  })
+
+  test('年交/趸交/未填：按年缴口径展示，不进 pending（不制造噪音）', () => {
+    const r = buildCheckupReport({
+      family: {
+        members: [M({ member_id: 'm2', name: '张小某' })],
+        policies: [P({ id: 'p1', payment_method: '年交' }), P({ id: 'p2', payment_method: '趸交' }), P({ id: 'p3', payment_method: '' })]
+      }
+    })
+    r.groups[0].policies.forEach((c) => {
+      expect(c.premiumLabel).toBe('年缴保费')
+      expect(c.premiumIsAnnual).toBe(true)
+    })
+    expect(r.summary.premiumNote).toBe('')
+    expect(r.pending.filter(x => x.kind === 'premium_basis').length).toBe(0)
+  })
+
   test('被保人未匹配 → 不归入任何成员，进 unassigned 与 pending', () => {
     const r = buildCheckupReport({ family: { members: [M()], policies: [P({ member_id: '', insured_name: '陌生人' })] } })
     expect(r.groups[0].policyCount).toBe(0)

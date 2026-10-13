@@ -51,9 +51,15 @@ function missingRequiredFields(policy) {
   })
 }
 
+// 年缴口径白名单：只有这些缴费方式下，`annual_premium` 才能当"年缴金额"读。
+// 月交/季交/半年交的该字段是否已年化**未经验证**（OCR 提示词只要求"数字+单位元"，无 ×12 规则），
+// 故一律不换算、不改写，只把缴费方式摆在旁边并在 pending 里标出（红线 3：不确定就标出来不猜）。
+const ANNUAL_METHODS = ['', '年交', '趸交']
+
 /** 保单卡：只保留展示所需字段 */
 function toPolicyCard(p) {
   const low = lowConfidenceFields(p)
+  const method = _str(p.payment_method)
   return {
     id: _str(p.id || p._id),
     productName: _str(p.product_name) || DASH,
@@ -64,7 +70,10 @@ function toPolicyCard(p) {
     sumAssuredText: fmtYuan(_num(p.sum_assured)),
     annualPremium: _num(p.annual_premium),
     annualPremiumText: fmtYuan(_num(p.annual_premium)),
-    paymentMethod: _str(p.payment_method),
+    paymentMethod: method,
+    // 非年交保单不许把该字段写成"年缴保费"
+    premiumLabel: ANNUAL_METHODS.indexOf(method) !== -1 ? '年缴保费' : '每期保费（' + method + '）',
+    premiumIsAnnual: ANNUAL_METHODS.indexOf(method) !== -1,
     period: _str(p.insurance_period) || DASH,
     effectiveDate: _str(p.contract_effective_date || p.effective_date) || DASH,
     status: _str(p.status),
@@ -146,9 +155,15 @@ function buildCheckupReport(input) {
 
   const shortTerm = policies.filter(isOneYearPolicy)
   const totalSumAssured = policies.reduce((s, p) => s + _num(p.sum_assured), 0)
+  // 合计里混入了非年交保单 → 金额口径不齐，必须提示（不静默相加）
+  const nonAnnualCount = policies.filter((p) => ANNUAL_METHODS.indexOf(_str(p.payment_method)) === -1).length
   const summary = {
     policyCount: policies.length,
     memberCount: members.length,
+    nonAnnualCount,
+    premiumNote: nonAnnualCount > 0
+      ? '其中 ' + nonAnnualCount + ' 张非年交保单的保费未年化，仅按期缴金额列出'
+      : '',
     totalSumAssured,
     totalSumAssuredText: fmtYuan(totalSumAssured),
     shortTermCount: shortTerm.length,
@@ -171,6 +186,9 @@ function buildCheckupReport(input) {
     }
     if (card.lowConfidenceFields.length) {
       pending.push({ kind: 'low_confidence', policyId: card.id, productName: card.productName, detail: '待核对：' + card.lowConfidenceFields.map((k) => FIELD_ZH[k] || k).join('、') })
+    }
+    if (!card.premiumIsAnnual) {
+      pending.push({ kind: 'premium_basis', policyId: card.id, productName: card.productName, detail: '缴费方式为「' + card.paymentMethod + '」，该金额是每期保费、未年化，需核对' })
     }
   })
   unassigned.forEach((c) => {
