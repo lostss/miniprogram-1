@@ -1,7 +1,14 @@
 /**
  * ocr-flow 点击行为矩阵（动态层）
  * 对关键交互方法：构造假事件 → 调用 → 断言 setData / showModal 分支 / triggerEvent / 状态标志
- * 覆盖：匹配弹窗、角色卡、编辑 sheet、放弃/确认、保存态
+ * 覆盖：匹配弹窗、角色卡、放弃/确认、保存态、保存失败重试
+ *
+ * 2026-10-13 产品决策（识别结果弹窗只留「取消 / 保存」，编辑后移到报告）随之删除的用例：
+ *   - 编辑 sheet 整组（onEditCard / onEditSheetSave ×2 / onEditSheetClose）
+ *   - onProcPreview（点缩略图看大图）、onProcManualAdd（失败项手动录入）
+ *   - 重试路径整组（onProcRetryOne ×3 / onProcRetryAll ×2）
+ * 这些方法已从组件删除 → 用例保留只会变成"测不存在的东西"（原 11 条失败即此）。
+ * 保留 onFailedRetry：保存失败重试仍是弹窗内的出口。
  */
 
 let captured = null
@@ -145,53 +152,6 @@ describe('ocr-flow 点击矩阵：角色卡', function () {
   })
 })
 
-describe('ocr-flow 点击矩阵：编辑 sheet', function () {
-  test('onEditCard：打开保单编辑面板', function () {
-    const cfg = loadComponent()
-    const inst = makeInstance(cfg)
-    inst._procPolicies = [{ product_name: '康宁', sum_assured: '50万' }]
-    inst.onEditCard({ currentTarget: { dataset: { policyindex: 0 } } })
-    expect(inst.data.ocrSheet.visible).toBe(true)
-    expect(inst.data.ocrSheet.policyIndex).toBe(0)
-    expect(inst.data.ocrSheet.title).toContain('康宁')
-  })
-
-  test('onEditSheetClose：关闭面板并重置 mode', function () {
-    const cfg = loadComponent()
-    const inst = makeInstance(cfg)
-    inst.setData({ 'ocrSheet.visible': true, 'ocrSheet.mode': 'edit' })
-    inst.onEditSheetClose()
-    expect(inst.data.ocrSheet.visible).toBe(false)
-    expect(inst.data.ocrSheet.mode).toBe('view')
-  })
-
-  test('onEditSheetSave：编辑模式 → 更新保单并关闭（校验已移交 edit-sheet 组件）', function () {
-    const cfg = loadComponent()
-    const inst = makeInstance(cfg)
-    inst._procPolicies = [{ product_name: '康宁', sum_assured: '50万' }]
-    inst.setData({ 'ocrSheet.visible': true, 'ocrSheet.policyIndex': 0 })
-    // 契约变更（审计 #3）：sheet 以「万」回传，写库前转元 → 传 80 万 应落 800000 元
-    inst.onEditSheetSave({ detail: { sum_assured: '80' } })
-    expect(inst.data.ocrSheet.visible).toBe(false)
-    expect(inst.data.ocrSheet.mode).toBe('view')
-    expect(inst._procPolicies[0].sum_assured).toBe('800000')
-    expect(inst._procPolicies[0].field_confidence.sum_assured).toBe(0.99)
-  })
-
-  test('onEditSheetSave：新增模式 → 仅收集非空值入新保单（空值过滤）', function () {
-    const cfg = loadComponent()
-    const inst = makeInstance(cfg)
-    inst._procPolicies = []
-    inst.setData({ 'ocrSheet.visible': true, 'ocrSheet.policyIndex': -1 })
-    // 必填校验在 edit-sheet 组件内完成（product_name 非空才触发 save）；此处验证空值字段不入录
-    inst.onEditSheetSave({ detail: { product_name: '康宁', sum_assured: '80', effective_date: '' } })
-    expect(inst._procPolicies.length).toBe(1)
-    expect(inst._procPolicies[0].product_name).toBe('康宁')
-    expect(inst._procPolicies[0].sum_assured).toBe('800000')
-    expect(inst._procPolicies[0].effective_date).toBeUndefined()
-  })
-})
-
 describe('ocr-flow 点击矩阵：放弃 / 确认 / 保存态', function () {
   test('onProcDiscardAll：确认 → 清空 + 触发 discarded；取消 → 无副作用', function () {
     const cfg = loadComponent()
@@ -262,96 +222,9 @@ describe('ocr-flow 点击矩阵：放弃 / 确认 / 保存态', function () {
     inst.onSavedEnter()
     expect(inst.triggerEvent).toHaveBeenCalledWith('saved', expect.objectContaining({ manual: true }))
   })
-
-  test('onProcPreview：预览图片', function () {
-    const cfg = loadComponent()
-    const inst = makeInstance(cfg)
-    inst.onProcPreview({ currentTarget: { dataset: { src: 'cloud://t.jpg' } } })
-    expect(wxMock.previewImage).toHaveBeenCalledWith(expect.objectContaining({ urls: ['cloud://t.jpg'] }))
-  })
-
-  test('onProcManualAdd：打开手动录入面板并记录 fileId', function () {
-    const cfg = loadComponent()
-    const inst = makeInstance(cfg)
-    inst.onProcManualAdd({ currentTarget: { dataset: { fileid: 'cloud://f1' } } })
-    expect(inst.data.ocrSheet.visible).toBe(true)
-    expect(inst.data.ocrSheet.policyIndex).toBe(-1)
-    expect(inst._manualFileId).toBe('cloud://f1')
-  })
 })
 
-describe('ocr-flow 点击矩阵：重试路径（审计补充）', function () {
-  test('onProcRetryOne：重试成功 → 移除失败项并入库', async function () {
-    const cfg = loadComponent()
-    const inst = makeInstance(cfg)
-    inst._procErrors = [{ fileId: 'f1', thumb: 't.jpg', error: '识别失败' }]
-    jest.spyOn(inst, '_ocrRetryOne').mockResolvedValue({ policies: [{ product_name: '康宁' }], newFileId: 'cloud://n' })
-    const flowMod = require('../miniprogram/utils/ocr-flow')
-    const cleanup = jest.spyOn(flowMod, 'cleanupTempFiles').mockImplementation(function () {})
-
-    await inst.onProcRetryOne({ currentTarget: { dataset: { fileid: 'f1' } } })
-
-    expect(inst._procErrors.length).toBe(0)
-    expect(inst._procPolicies.length).toBe(1)
-    expect(inst._procPolicies[0].product_name).toBe('康宁')
-    expect(cleanup).toHaveBeenCalledWith(['cloud://n'])
-    expect(inst.data.ocrMask.procBusy).toBe(false)
-  })
-
-  test('onProcRetryOne：重试失败 → 失败项保留 + toast', async function () {
-    const cfg = loadComponent()
-    const inst = makeInstance(cfg)
-    inst._procPolicies = []
-    inst._procErrors = [{ fileId: 'f1', thumb: 't.jpg', error: '识别失败' }]
-    jest.spyOn(inst, '_ocrRetryOne').mockResolvedValue({ error: 'AI 超时' })
-
-    await inst.onProcRetryOne({ currentTarget: { dataset: { fileid: 'f1' } } })
-
-    // 失败项按 fileId 保留（错误文案经 classifyBatchResults 归一分组）
-    expect(inst._procErrors.length).toBe(1)
-    expect(inst._procErrors[0].fileId).toBe('f1')
-    expect(wxMock.showToast).toHaveBeenCalled()
-    expect(inst.data.ocrMask.procBusy).toBe(false)
-  })
-
-  test('onProcRetryOne：procBusy 时防重入', async function () {
-    const cfg = loadComponent()
-    const inst = makeInstance(cfg)
-    inst.setData({ 'ocrMask.procBusy': true })
-    const retry = jest.spyOn(inst, '_ocrRetryOne').mockResolvedValue({})
-    await inst.onProcRetryOne({ currentTarget: { dataset: { fileid: 'f1' } } })
-    expect(retry).not.toHaveBeenCalled()
-  })
-
-  test('onProcRetryAll：部分成功 → 成功入库、失败保留', async function () {
-    const cfg = loadComponent()
-    const inst = makeInstance(cfg)
-    // 真实流程中 _procPolicies/_procCash 已由识别阶段（_renderProc）初始化；onProcRetryAll 不依赖 _procRefresh 补初始化
-    inst._procPolicies = []
-    inst._procCash = []
-    inst._procErrors = [{ fileId: 'f1', thumb: 't1' }, { fileId: 'f2', thumb: 't2' }]
-    jest.spyOn(inst, '_ocrRetryOne').mockImplementation(function (fileId) {
-      return fileId === 'f1'
-        ? Promise.resolve({ policies: [{ product_name: '康宁' }] })
-        : Promise.resolve({ error: '失败' })
-    })
-
-    await inst.onProcRetryAll()
-
-    expect(inst._procPolicies.length).toBe(1)
-    expect(inst._procErrors.length).toBe(1)
-    expect(inst._procErrors[0].fileId).toBe('f2')
-    expect(inst.data.ocrMask.procBusy).toBe(false)
-  })
-
-  test('onProcRetryAll：无失败项 → 直接返回（不触发重试）', async function () {
-    const cfg = loadComponent()
-    const inst = makeInstance(cfg)
-    const retry = jest.spyOn(inst, '_ocrRetryOne').mockResolvedValue({})
-    await inst.onProcRetryAll()
-    expect(retry).not.toHaveBeenCalled()
-  })
-
+describe('ocr-flow 点击矩阵：保存失败重试', function () {
   test('onFailedRetry：重新执行保存流程', function () {
     const cfg = loadComponent()
     const inst = makeInstance(cfg)

@@ -1,7 +1,5 @@
 {
   "component": true,
   "styleIsolation": "apply-shared",
-  "usingComponents": {
-    "edit-sheet": "/components/edit-sheet/index"
-  }
+  "usingComponents": {}
 }

@@ -12,7 +12,7 @@ const errorHandler = require('../../utils/errorHandler')
 const roleInfer = require('../../utils/role-infer')
 // 领域写薄层（候选 5）：成员字段写收敛 field/value 语义
 const { saveMemberField } = require('../../utils/domain-writes')
-const { yuanToWan, wanToYuan } = require('../../utils/amount')
+const { yuanToWan } = require('../../utils/amount')
 // 置信度阈值契约（2026-09-24 口径自查：原为内联 0.95；下方 0.8 是 UI 三档底色的私有分界，不在契约内）
 const { OCR_RELIABLE_THRESHOLD } = require('../../utils/ocr-confidence')
 
@@ -27,8 +27,9 @@ Component({
   },
   data: {
     ocrMask: flow.defaultState(),
-    // 统一 edit-sheet 状态：mode='view' 查看态起步（按钮=编辑），手动录入 mode='edit' 直接编辑
-    ocrSheet: { visible: false, policyIndex: -1, fields: [], title: '', mode: 'view' }
+    // 2026-10-13：原 `ocrSheet`（弹窗内编辑态：mode='view' 查看起步 → 编辑 → 保存）随
+    // 「识别结果弹窗只留取消/保存」一并移除 —— 编辑一律后移到「报告 → 保单列表」，
+    // 此处不再挂 edit-sheet（组件已从 usingComponents 摘除）。
   },
   lifetimes: {
     detached() {
@@ -314,68 +315,17 @@ Component({
     },
 
     // ============ 重试 / 录入 / 预览 ============
-    async onProcRetryOne(e) {
-      var fileId = e.currentTarget.dataset.fileid
-      if (this.data.ocrMask.procBusy) return
-      var self = this, err = null
-      ;(this._procErrors || []).forEach(function(x) { if (x.fileId === fileId) err = x })
-      if (!err || err.retrying) return
-      err.retrying = true
-      this.setData({ 'ocrMask.procBusy': true })
-      this._procRefresh()
-      var r = await this._ocrRetryOne(fileId, err.thumb)
-      if (this._disposed) return
-      if (r.newFileId) { try { flow.cleanupTempFiles([r.newFileId]) } catch (e2) {} }
-      this._procErrors = (this._procErrors || []).filter(function(x) { return x.fileId !== fileId })
-      if (r.policies && r.policies.length) {
-        ;(r.policies).forEach(function(p) { self._procPolicies.push(p) })
-        ;(r.cashValues || []).forEach(function(cv) { self._procCash.push(cv) })
-      } else {
-        this._procErrors.push({ fileId: fileId, thumb: err.thumb, error: r.error || '识别失败', retrying: false })
-        wx.showToast({ title: r.error || '重试失败', icon: 'none' })
-      }
-      this.setData({ 'ocrMask.procBusy': false })
-      this._procRefresh(); this._persistBatch()
-    },
-    async onProcRetryAll() {
-      var self = this
-      var errs = (this._procErrors || []).filter(function(x) { return !x.retrying })
-      if (!errs.length || this.data.ocrMask.procBusy) return
-      this.setData({ 'ocrMask.procBusy': true })
-      var results = await Promise.allSettled(errs.map(function(x) { return self._ocrRetryOne(x.fileId, x.thumb) }))
-      if (this._disposed) return
-      var stillFailed = []
-      results.forEach(function(rs, i) {
-        var r = rs.status === 'fulfilled' ? rs.value : null
-        if (r && r.newFileId) { try { flow.cleanupTempFiles([r.newFileId]) } catch (e2) {} }
-        if (r && r.policies && r.policies.length) {
-          ;(r.policies).forEach(function(p) { self._procPolicies.push(p) })
-          ;(r.cashValues || []).forEach(function(cv) { self._procCash.push(cv) })
-        } else stillFailed.push({ fileId: errs[i].fileId, thumb: errs[i].thumb, error: (r && r.error) || '识别失败', retrying: false })
-      })
-      this._procErrors = stillFailed
-      this.setData({ 'ocrMask.procBusy': false })
-      this._procRefresh(); this._persistBatch()
-      if (!stillFailed.length) wx.showToast({ title: '全部重试成功', icon: 'none' })
-    },
-    onProcManualAdd(e) {
-      var fileId = e.currentTarget.dataset.fileid
-      if (this.data.ocrMask.procBusy) return
-      this._manualFileId = fileId
-      // 空表单直接编辑态（无值可查看，无需 view 态）
-      this.setData({ 'ocrSheet.visible': true, 'ocrSheet.policyIndex': -1, 'ocrSheet.fields': this._buildSheetFields({}), 'ocrSheet.title': '手动录入保单', 'ocrSheet.mode': 'edit' })
-    },
-    onProcPreview(e) {
-      var src = e.currentTarget.dataset.src
-      if (!src) return
-      wx.previewImage({ urls: [src], fail: function() { wx.showToast({ title: '图片已过期', icon: 'none' }) } })
-    },
+    // 2026-10-13 产品决策（识别结果弹窗只留「取消 / 保存」）：以下四项交互全部移除——
+    //   onProcRetryOne / onProcRetryAll（失败项重试，含复用内存 ocrText 的省钱路径）
+    //   onProcManualAdd（失败项手动录入）、onProcPreview（点缩略图看大图）
+    // 失败项改为保存时跳过（保存前弹窗已显式告知张数）。对应私有实现 `_ocrRetryOne`
+    // 暂时保留但**已无调用方**（重试能力本身仍是完整的，留待需要时接回或按 YAGNI 删除）。
     // UI 审计 交互 S1：宿主页 onBackPress 委托入口（report/index 两页共用）
-    // 返回键行为：先关编辑 sheet → saving 阶段不可中断 → 其余阶段确认放弃
+    // 返回键行为：saving 阶段不可中断 → 其余阶段确认放弃
+    // （2026-10-13：原「先关编辑 sheet」分支随弹窗内编辑能力移除）
     onBackPressed() {
       const mask = this.data.ocrMask
       if (!mask.visible) return false
-      if (this.data.ocrSheet.visible) { this.setData({ 'ocrSheet.visible': false }); return true }
       if (mask.phase === 'saving') { wx.showToast({ title: '正在保存保单信息，请稍候', icon: 'none' }); return true }
       this.onProcDiscardAll()
       return true
@@ -405,36 +355,9 @@ Component({
       })
     },
 
-    // ============ 单张移除（UX：失败项可单独丢弃，二次确认防误触；原"忽略"改"移除"） ============
-    onProcIgnore(e) {
-      var fileId = e.currentTarget.dataset.fileid
-      if (!fileId) return
-      var self = this
-      wx.showModal({
-        title: '移除该项',
-        content: '移除后该识别结果将删除，无法恢复。确定移除？',
-        confirmText: '移除',
-        confirmColor: '#B00020',
-        cancelText: '取消',
-        success: function (res) {
-          if (!res.confirm) return
-          var removed = (self._procErrors || []).filter(function(x) { return x.fileId !== fileId })
-          if (removed.length === (self._procErrors || []).length) return
-          self._procErrors = removed
-          // UX 场景：无待确认记录（错误/待核对/成功三组全空）时自动关闭卡片，不必再点"全部放弃"
-          if (!(self._procPolicies || []).length && !(self.data.ocrMask.procReview || []).length && !self._procErrors.length) {
-            self.setData(Object.assign(flow.hide(), { 'ocrMask._policies': [], 'ocrMask._cashValues': [], 'ocrMask._familyId': '' }))
-            self._clearBatch()
-            self._emitBusy()
-            self.triggerEvent('discarded')
-            wx.showToast({ title: '已移除，无待确认记录', icon: 'none' })
-            return
-          }
-          self._procRefresh(); self._persistBatch()
-          wx.showToast({ title: '已移除', icon: 'none' })
-        }
-      })
-    },
+    // ============ 单张移除 ============
+    // 2026-10-13 移除（同「只留取消/保存」决策）：失败项不再支持单张移除，
+    // 保存时统一跳过；若三组全空则保存路径自身会兜底关卡片（见 _doSave 的空批分支）。
 
     // ============ 全部确认 → 保存链 ============
     onProcConfirm() {
@@ -798,63 +721,12 @@ Component({
       if (this._roleResolve) { var r = this._roleResolve; this._roleResolve = null; r(null) }
     },
 
-    // ============ 编辑 sheet ============
-    onEditCard(e) {
-      var pi = e.currentTarget.dataset.policyindex
-      var mask = this.data.ocrMask
-      if (mask.confirming || mask.procBusy) return
-      var p = (this._procPolicies || [])[pi]
-      if (!p) return
-      // 查看态起步（按钮=编辑）：先看识别结果，[编辑] 后切编辑态 [保存]
-      this.setData({ 'ocrSheet.visible': true, 'ocrSheet.policyIndex': pi, 'ocrSheet.fields': this._buildSheetFields(p), 'ocrSheet.title': '保单 · ' + (p.product_name || '保单'), 'ocrSheet.mode': 'view' })
-    },
-    // 统一 edit-sheet 事件：编辑态保存（e.detail = {key:value}，edit-sheet 已完成校验）
-    onEditSheetSave(e) {
-      var sheet = this.data.ocrSheet
-      if (!sheet.visible) return
-      var data = e.detail || {}
-      // 审计 #3：保额 sheet 以「万」呈现，写库前转回元（与 edit-form 的 wanToYuan 同口径）；
-      // 填了「亿」等其它单位时保持原样，交下游 _toYuanAmount 解析
-      var saRaw = String(data.sum_assured == null ? '' : data.sum_assured).replace(/[,，\s]/g, '').replace(/万$/, '')
-      if (saRaw && /^\d+(\.\d+)?$/.test(saRaw)) data.sum_assured = String(wanToYuan(saRaw))
-      if (sheet.policyIndex === -1) {
-        // 手动录入新增：保留非空字段，清空项不入库
-        // M2：人工录入视为人工核对过，置 auto_confirmed=true（避免待核对组残留）
-        var np = { auto_confirmed: true }
-        Object.keys(data).forEach(function(k) {
-          var v = String(data[k] || '').trim()
-          if (v) { np[k] = v; np.field_confidence = np.field_confidence || {}; np.field_confidence[k] = 0.99 }
-        })
-        np.confidence = 0.99
-        this._procPolicies.push(np)
-        var fid = this._manualFileId
-        if (fid) { this._procErrors = (this._procErrors || []).filter(function(x) { return x.fileId !== fid }) }
-        this._manualFileId = ''
-        this.setData({ 'ocrSheet.visible': false, 'ocrSheet.mode': 'view' })
-        this._procRefresh(); this._persistBatch()
-        return
-      }
-      // 编辑识别结果：清空字段 = 删除错误识别值（A-M9）
-      var policies = (this._procPolicies || []).slice()
-      var p = policies[sheet.policyIndex]
-      if (!p) { this.setData({ 'ocrSheet.visible': false, 'ocrSheet.mode': 'view' }); return }
-      var np2 = Object.assign({}, p)
-      if (!np2.field_confidence) np2.field_confidence = {}
-      // M2：人工编辑核对过 → auto_confirmed=true（确认卡按 auto_confirmed 判定，
-      // 否则编辑后仍滞留"待核对"组；field_confidence=0.99 不联动该判定）
-      np2.auto_confirmed = true
-      Object.keys(data).forEach(function(k) {
-        var v = String(data[k] || '').trim()
-        if (v) { np2[k] = v; np2.field_confidence[k] = 0.99 }
-        else { delete np2[k]; delete np2.field_confidence[k] }
-      })
-      policies[sheet.policyIndex] = np2
-      this._procPolicies = policies
-      this.setData({ 'ocrSheet.visible': false, 'ocrSheet.mode': 'view' })
-      this._procRefresh(); this._persistBatch()
-    },
-    // 统一 edit-sheet 事件：关闭即清空 sheet 状态，防下次打开残留旧字段
-    onEditSheetClose() { this.setData({ 'ocrSheet.visible': false, 'ocrSheet.fields': [], 'ocrSheet.policyIndex': -1, 'ocrSheet.title': '', 'ocrSheet.mode': 'view' }) },
+    // ============ 编辑 sheet（已移除）============
+    // 2026-10-13 产品决策：识别结果弹窗只留「取消 / 保存」，不做点击修改。
+    // 原 onEditCard（点卡片看/改）、onEditSheetSave（保存编辑结果 + 手动录入新增）、
+    // onEditSheetClose 全部移除 → 编辑一律到「报告 → 保单列表」做（那边复用同一 edit-sheet）。
+    // 随之不再需要的私有实现 `_buildSheetFields` / `_fieldLabels` / `_fieldTone` /
+    // `_manualFileId` 暂时保留但已无调用方（YAGNI 清理留待下一轮，避免本轮 diff 过大）。
 
     // ============ 保存态 ============
     onFailedRetry() { if (!this._disposed) this._doSave() },

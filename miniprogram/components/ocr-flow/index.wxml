@@ -21,20 +21,22 @@
         </view>
       </view>
     </block>
-    <!-- 三组结果 -->
+    <!-- 结果只读呈现 + 两个操作（2026-10-13 产品决策：识别结果弹窗只留「取消 / 保存」）
+         原交互（点卡片进 edit-sheet 编辑、失败项单张重试/移除、全部重试、低置信待核对卡确认）
+         一律后移到「报告 → 保单列表」里做。此处只呈现：成功结果、失败图片与原因。
+         ⚠️ 低置信项（procReview）不再需要用户逐项确认，保存时按当前结果入库，
+            由整理报告的「待完善」区做索引 → 错值不会静默。 -->
     <block wx:elif="{{ocrMask.phase === 'done'}}">
       <view class="proc-head">
         <view class="ocr-done-title done-gold">识别完成</view>
-        <view class="ocr-done-sub">识别到 {{ocrMask._policies.length}} 份保单{{ocrMask._cashValues.length > 0 ? ' + ' + ocrMask._cashValues.length + ' 份现价表' : ''}}{{ocrMask.procError.length > 0 ? '，' + ocrMask.procError.length + ' 张未识别' : ''}}</view>
-        <!-- 2026-09-09 UX：预告后续步骤，避免"全部确认"被误认为终点（点后还需选归属/角色） -->
-        <view class="ocr-done-sub" wx:if="{{!skipMatch || !familyId}}">1 确认保单 › 2 选择归属 › 3 保存</view>
+        <view class="ocr-done-sub">识别到 {{ocrMask._policies.length}} 份保单{{ocrMask._cashValues.length > 0 ? ' + ' + ocrMask._cashValues.length + ' 份现价表' : ''}}{{ocrMask.procError.length > 0 ? '，' + ocrMask.procError.length + ' 张未识别（保存时跳过）' : ''}}</view>
       </view>
       <scroll-view class="proc-list" scroll-y>
         <!-- UI 审计 交互 L3：三组全空时兜底（正常业务不易触发，防御性） -->
         <view class="proc-empty" wx:if="{{ocrMask.procSuccess.length === 0 && ocrMask.procReview.length === 0 && ocrMask.procError.length === 0}}">暂无识别结果</view>
         <block wx:if="{{ocrMask.procSuccess.length > 0}}">
           <view class="proc-group-head"><text>识别成功 · {{ocrMask.procSuccess.length}}份</text></view>
-          <view class="proc-card" wx:for="{{ocrMask.procSuccess}}" wx:key="index" data-policyindex="{{item.policyIndex}}" bindtap="onEditCard">
+          <view class="proc-card" wx:for="{{ocrMask.procSuccess}}" wx:key="index">
             <image class="proc-thumb" wx:if="{{item.thumb}}" src="{{item.thumb}}" mode="aspectFill" />
             <view class="proc-info">
               <text class="proc-name">{{item.product_name}}<text class="proc-cat" wx:if="{{item.insurance_category}}"> · {{item.insurance_category}}</text></text>
@@ -49,8 +51,8 @@
           </view>
         </block>
         <block wx:if="{{ocrMask.procReview.length > 0}}">
-          <view class="proc-group-head"><text>待核对 · {{ocrMask.procReview.length}}份</text></view>
-          <view class="proc-card proc-card--review" wx:for="{{ocrMask.procReview}}" wx:key="index" data-policyindex="{{item.policyIndex}}" bindtap="onEditCard">
+          <view class="proc-group-head"><text>待核对 · {{ocrMask.procReview.length}}份（保存后可在报告里改）</text></view>
+          <view class="proc-card proc-card--review" wx:for="{{ocrMask.procReview}}" wx:key="index">
             <image class="proc-thumb" wx:if="{{item.thumb}}" src="{{item.thumb}}" mode="aspectFill" />
             <view class="proc-info">
               <text class="proc-name">{{item.product_name}}<text class="proc-cat" wx:if="{{item.insurance_category}}"> · {{item.insurance_category}}</text></text>
@@ -66,27 +68,21 @@
         <block wx:if="{{ocrMask.procError.length > 0}}">
           <view class="proc-group-head proc-group-head--err">
             <text>识别异常 · {{ocrMask.procError.length}}份</text>
-            <text class="proc-retry-all pressable" bindtap="onProcRetryAll">{{ocrMask.procBusy ? '重试中...' : '全部重试'}}</text>
           </view>
-          <view class="proc-card proc-card--err" wx:for="{{ocrMask.procError}}" wx:key="fileId" data-fileid="{{item.fileId}}" catchtap="onProcManualAdd">
-            <!-- 点击缩略图才展开大图（catchtap 阻止冒泡到卡片，卡片点击=展开空表单编辑） -->
-            <image class="proc-thumb" wx:if="{{item.thumb}}" src="{{item.thumb}}" mode="aspectFill" data-src="{{item.thumb}}" catchtap="onProcPreview" />
+          <view class="proc-card proc-card--err" wx:for="{{ocrMask.procError}}" wx:key="fileId">
+            <image class="proc-thumb" wx:if="{{item.thumb}}" src="{{item.thumb}}" mode="aspectFill" />
             <view class="proc-info">
               <!-- 失败原因横滚：单行横向滚动展示完整文案（原 ellipsis 截断空间不足） -->
               <scroll-view class="proc-err-scroll" scroll-x enhanced show-scrollbar="{{false}}">
-                <text class="proc-err">{{item.error}} · 点此手动录入</text>
+                <text class="proc-err">{{item.error}}</text>
               </scroll-view>
-            </view>
-            <view class="proc-side">
-              <text class="proc-ignore-btn pressable" data-fileid="{{item.fileId}}" catchtap="onProcIgnore">移除这一张</text>
-              <text class="proc-retry-btn pressable {{item.retrying ? 'is-busy' : ''}}" data-fileid="{{item.fileId}}" catchtap="onProcRetryOne">{{item.retrying ? '重试中' : '重试'}}</text>
             </view>
           </view>
         </block>
       </scroll-view>
       <view class="ocr-actions-row">
-        <button class="ocr-modify-btn pressable" catchtap="onProcDiscardAll" aria-label="丢弃全部结果">放弃全部</button>
-        <button class="ocr-confirm-btn pressable {{ocrMask.confirming ? 'is-loading' : ''}} {{(ocrMask.confirming || ocrMask.procBusy) ? 'is-disabled' : ''}}" bindtap="onProcConfirm" disabled="{{ocrMask.confirming || ocrMask.procBusy}}" aria-label="确认全部保单">{{ocrMask.confirming ? '保存中...' : (skipMatch && familyId ? '确认 ' + ocrMask._policies.length + ' 份' : '下一步：选择归属')}}</button>
+        <button class="ocr-modify-btn pressable" catchtap="onProcDiscardAll" aria-label="取消并丢弃本次结果">取消</button>
+        <button class="ocr-confirm-btn pressable {{ocrMask.confirming ? 'is-loading' : ''}} {{(ocrMask.confirming || ocrMask.procBusy) ? 'is-disabled' : ''}}" bindtap="onProcConfirm" disabled="{{ocrMask.confirming || ocrMask.procBusy}}" aria-label="保存识别结果">{{ocrMask.confirming ? '保存中...' : '保存'}}</button>
       </view>
     </block>
     <!-- 写入中（wrap 增高：进度条阶段留白稍大，避免卡片过矮） -->
@@ -185,5 +181,4 @@
   </view>
 </view>
 
-<!-- 编辑 sheet：复用统一 edit-sheet 组件（查看态起步 → [编辑] 切编辑态 → [保存]；与报告页保单明细 sheet 完全复用） -->
-<edit-sheet visible="{{ocrSheet.visible}}" title="{{ocrSheet.title}}" fields="{{ocrSheet.fields}}" mode="{{ocrSheet.mode}}" bind:save="onEditSheetSave" bind:close="onEditSheetClose" />
+
