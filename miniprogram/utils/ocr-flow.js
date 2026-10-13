@@ -11,7 +11,7 @@ const api = require('./apiClient')
 // 领域写薄层（候选 5）：批量保单写参数形状收口（cashValues → cash_values）
 const { writePoliciesBatch } = require('./domain-writes')
 // 置信度判定（单一真相源，与 ocr-confidence 同步）
-const { assessPolicy } = require('./ocr-confidence')
+const { assessPolicy, CONF_THRESHOLD } = require('./ocr-confidence')
 
 // 日志审计 #1：OCR 会话 traceId（随各 API 透传 _reqId，云函数写入日志 trace_id 串联全链路）
 var _lastReqId = ''
@@ -148,7 +148,9 @@ function _cacheOcrTexts(map) {
   }
 }
 function getCachedOcrText(fileId) { return (fileId && _ocrTextCache[fileId]) || null }
-function clearCachedOcrText(fileId) { if (fileId) delete _ocrTextCache[fileId] }
+// 2026-09-22 全面审计（死代码清理）：原 `clearCachedOcrText(fileId)` 已删除——全仓零调用。
+// 缓存本身有上限（上方 OCR_TEXT_CACHE_MAX=18，超出按插入序淘汰），并不需要显式清理；
+// 若将来确实需要"保存成功后立即丢弃该家 OCR 文本"，请连同调用点一起加回（PII 少留一份更好）。
 
 // 批量提取入口（单通道，2026-09-09 合并两阶段）：1 张与 N 张统一走 ocrExtract
 //   云端一次调用内完成：批量临时链接 → OCR 并发 → AI 提取并发 → 一次性填充所有槽位
@@ -169,8 +171,8 @@ async function batchOCR(fileIds, setData, opts) {
   if (setData) setData(setRecognizing(batchIds.length))
   var raw
   try {
-    // 网络审计：ocrService 平台超时上限 60s，前端 70s 略大于平台（原 100s 永不触发是无效配置；
-    // 也不宜改为 60s 相等——前端 timer 与平台同时超时，race 可能先拿到 timeout 丢真实错误码）
+    // 前端 timer 70s：与云函数超时保持差量——两者同时触发时 race 可能先拿到 timeout 丢真实错误码
+    // 云函数超时以 cloudbaserc.json ocrService.timeout 为唯一源（当前 100s），不在此处复述数值
     // 2026-09-10 traceId 修复：原实现生成 reqId 却只挂在写入调用上，OCR/AI 这两次主调用缺 trace_id，
     // 云端日志无法与前端的识别会话串联（reqId 变量此前是死变量）
     raw = await api('ocrExtract', { fileIds: batchIds, familyId: opts.familyId || '' }, { timeout: 70000, requestId: reqId })
@@ -450,7 +452,7 @@ function _lowFieldText(p) {
   var fc = (p && p.field_confidence) || {}
   var names = []
   Object.keys(fc).forEach(function(k) {
-    if (fc[k] < 0.9) {
+    if (fc[k] < CONF_THRESHOLD) {
       var label = LOW_FIELD_LABELS[k]
       if (label && names.indexOf(label) === -1) names.push(label)
     }
@@ -459,9 +461,23 @@ function _lowFieldText(p) {
   return names.slice(0, 2).join('、') + '待确认' + (names.length > 2 ? '等' : '')
 }
 
+// 同图绑定标识辅助（2026-09-12）：现价表携带的 from_policy（来源保单键）与保单是否指向同一份合同。
+// 仅用于确认卡打标（展示层近似），不参与写库决策——写库判定由云端 cash-value-matcher 负责。
+function _samePolicyHint(fp, p) {
+  if (!fp || !p) return false
+  if (fp.policy_number && p.policy_number) return fp.policy_number === p.policy_number
+  if (!fp.product_name || !p.product_name) return false
+  if (fp.insured_name && p.insured_name && fp.insured_name !== p.insured_name) return false
+  var clean = function(s) {
+    return String(s || '').replace(/[（(].*$/, '').replace(/(保险|股份|有限|分公司|公司)/g, '').replace(/\s+/g, '').substring(0, 8)
+  }
+  return clean(fp.product_name) === clean(p.product_name)
+}
+
 function classifyBatchResults(policies, cashValues, errors, thumbMap) {
   var success = []
   var review = []
+  var cardsByIndex = {}
   ;(policies || []).forEach(function(p, pi) {
     var low = assessPolicy(p)
     var card = {
@@ -473,12 +489,23 @@ function classifyBatchResults(policies, cashValues, errors, thumbMap) {
       confidence: p.confidence || 0,
       low: low,
       lowFields: low ? _lowFieldText(p) : '',
+      // 含现价表标记：mixed 图提取出保单 + 现价表时，在保单卡上明示（下方循环回填）
+      hasCash: false,
       thumb: ''
     }
+    cardsByIndex[pi] = card
     if (low) review.push(card); else success.push(card)
   })
   ;(cashValues || []).forEach(function(cv) {
-    success.push({ kind: 'cash', policyIndex: -1, product_name: cv.product_name || '现价表', insurance_category: '现金价值表', effective_date: '', confidence: 0, low: false, thumb: '' })
+    // 同图绑定标识：mixed 图的现价表此前"静默入库"（确认卡上只显示保单卡），
+    // 用户无法知道这张图还带出了现价表；此处按 from_policy 在对应保单卡上打标。
+    var fp = cv && cv.from_policy
+    if (fp) {
+      ;(policies || []).forEach(function(p, pi) {
+        if (cardsByIndex[pi] && !cardsByIndex[pi].hasCash && _samePolicyHint(fp, p)) cardsByIndex[pi].hasCash = true
+      })
+    }
+    success.push({ kind: 'cash', policyIndex: -1, product_name: cv.product_name || '现价表', insurance_category: '现金价值表', effective_date: '', confidence: 0, low: false, hasCash: false, sameImage: !!fp, thumb: '' })
   })
   var errorCards = (errors || []).map(function(e) {
     var ec = e.error_code || 'ocr_exception'
@@ -541,7 +568,6 @@ module.exports = {
   batchOCR,
   retryAiOnly,
   getCachedOcrText,
-  clearCachedOcrText,
   saveCashValuesWithRetry,
   confirmWritePolicies,
   errorToUI, errorLabel,

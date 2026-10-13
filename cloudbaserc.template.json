@@ -5,7 +5,10 @@
     {
       "name": "conversationAI",
       "timeout": 60,
-      "installDependency": true
+      "installDependency": true,
+      "envVariables": {
+        "DEEPSEEK_API_KEY": "REPLACE_WITH_REAL_DEEPSEEK_API_KEY"
+      }
     },
     {
       "name": "dataQuery",
@@ -25,7 +28,12 @@
     {
       "name": "ocrService",
       "timeout": 100,
-      "installDependency": true
+      "installDependency": true,
+      "envVariables": {
+        "DEEPSEEK_API_KEY": "REPLACE_WITH_REAL_DEEPSEEK_API_KEY",
+        "TENCENT_SECRET_ID": "REPLACE_WITH_REAL_TENCENT_SECRET_ID",
+        "TENCENT_SECRET_KEY": "REPLACE_WITH_REAL_TENCENT_SECRET_KEY"
+      }
     },
     {
       "name": "reportAI",
@@ -38,7 +46,10 @@
     {
       "name": "cleanup",
       "timeout": 60,
-      "installDependency": true
+      "installDependency": true,
+      "envVariables": {
+        "NODE_ENV": "production"
+      }
     },
     {
       "name": "reportPdf",

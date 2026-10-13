@@ -9,7 +9,10 @@ var _parseExpiry = null
 function _loadExpiry() {
   if (!_parseExpiry) _parseExpiry = require('../parse-expiry').parseExpiry
 }
-const { yuanToWan } = require('../amount')
+// 现价/回本计算：跨树契约（与后端 report-coverage / reportPdf 共用，勿再内联公式）
+const { breakEvenYear } = require('../cash-value-math')
+// 终身/趸交哨兵判定的单一事实源（2026-09-22 口径自查：原为各处内联比较，已因此漏过一次）
+const { isLifetimeTerm, isSinglePayTerm } = require('../policy-status')
 
 /**
  * 解析 insurance_period 为到期年份（null=无明确到期年/终身）
@@ -30,7 +33,7 @@ function parseExpiryYear(period, startY, age) {
 function _coverTermYear(p, startY, age) {
   if (p.insurance_period) return parseExpiryYear(p.insurance_period, startY, age)
   var ct = p.coverage_term
-  if (ct === 105 || ct === '105' || ct === 0 || ct === '0') return null // 终身，无到期节点
+  if (isLifetimeTerm(ct)) return null // 终身，无到期节点
   if (ct) {
     var n = parseInt(ct, 10)
     if (!isNaN(n) && n > 0) return startY + n
@@ -44,7 +47,7 @@ function _coverTermYear(p, startY, age) {
 function _payTermYear(p, startY, age) {
   if (p.payment_period) return parseExpiryYear(p.payment_period, startY, age)
   var pt = p.premium_term
-  if (pt === 1 || pt === '1' || pt === 0 || pt === '0') return null // 趸交/终身缴费，无"缴完"节点
+  if (isSinglePayTerm(pt)) return null // 趸交/终身缴费，无"缴完"节点
   if (pt) {
     var n = parseInt(pt, 10)
     if (!isNaN(n) && n > 0) return startY + n
@@ -54,20 +57,14 @@ function _payTermYear(p, startY, age) {
 
 /**
  * 现价=已缴保费的"回本"年份（保单年度 y），无现价表/永不回本返回 null
- * 公式与 report-coverage 回本判定一致：row.v(每万元保额表值) × scale >= annual_premium × row.y
+ * 2026-09-15：实现收敛到跨树契约 cash-value-math.js
+ * （原三处逐字同构：此处 / report-coverage 回本列 / reportPdf._findBreakeven）
  * @param {object} p - 保单
  * @param {object} cv - 现价表项 { cash_values: [{y,v}] }
  */
 function findBreakEvenYear(p, cv) {
-  if (!p || !cv || !cv.cash_values || !cv.cash_values.length) return null
-  var scale = Math.max(1, Math.round(yuanToWan(p.sum_assured || 0)))
-  var premium = p.annual_premium || 0
-  if (scale <= 0 || premium <= 0) return null
-  for (var i = 0; i < cv.cash_values.length; i++) {
-    var row = cv.cash_values[i]
-    if (row.v * scale >= premium * row.y) return row.y
-  }
-  return null
+  if (!p || !cv) return null
+  return breakEvenYear(cv.cash_values, p.annual_premium, p.sum_assured)
 }
 
 /**

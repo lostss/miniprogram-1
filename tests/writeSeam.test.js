@@ -13,74 +13,21 @@ jest.mock('../cloudfunctions/dataWrite/_shared/domain/stageMachine', () => ({
 
 const { writeSeam, advanceStage } = require('../cloudfunctions/dataWrite/_shared/writeSeam')
 const { evaluateStage } = require('../cloudfunctions/dataWrite/_shared/domain/stageMachine')
+const { makeMemoryDb } = require('./helpers/memory-db')
 
 // ---------------------------------------------------------------------------
 // Mock DB 构造器
 // ---------------------------------------------------------------------------
 
 function makeMockDb(collections = {}) {
-  const calls = { updates: [], adds: [], removes: [], queries: [], counts: [] }
   // 深拷贝初始数据，避免测试间状态共享
   const store = {}
   Object.keys(collections).forEach(k => {
     store[k] = collections[k].map(x => ({ ...x }))
   })
-
-  function matchWhere(rows, w) {
-    return rows.filter(x => Object.keys(w).every(k => x[k] === w[k]))
-  }
-
-  const db = {
-    collection: (name) => {
-      if (!store[name]) store[name] = []
-      const data = store[name]
-      return {
-        add: ({ data: d }) => {
-          calls.adds.push({ name, data: d })
-          const rec = { _id: 'id_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), ...d }
-          data.push(rec)
-          return Promise.resolve({ _id: rec._id })
-        },
-        where: (w) => {
-          calls.queries.push({ name, where: w })
-          return {
-            update: ({ data: d }) => {
-              calls.updates.push({ name, where: w, data: d })
-              return Promise.resolve({ stats: { updated: matchWhere(data, w).length } })
-            },
-            remove: () => {
-              calls.removes.push({ name, where: w })
-              return Promise.resolve({ stats: { removed: matchWhere(data, w).length } })
-            },
-            get: () => Promise.resolve({ data: matchWhere(data, w) }),
-            limit: (n) => ({
-              get: () => Promise.resolve({ data: matchWhere(data, w).slice(0, n) })
-            }),
-            count: () => {
-              calls.counts.push({ name, where: w })
-              return Promise.resolve({ total: matchWhere(data, w).length })
-            }
-          }
-        },
-        doc: (id) => ({
-          get: () => Promise.resolve({ data: data.find(x => x._id === id) || null }),
-          update: ({ data: d }) => {
-            calls.updates.push({ name, docId: id, data: d })
-            const rec = data.find(x => x._id === id)
-            if (rec) Object.assign(rec, d)
-            return Promise.resolve({ stats: { updated: rec ? 1 : 0 } })
-          },
-          remove: () => {
-            calls.removes.push({ name, docId: id })
-            const idx = data.findIndex(x => x._id === id)
-            if (idx >= 0) data.splice(idx, 1)
-            return Promise.resolve({ stats: { removed: idx >= 0 ? 1 : 0 } })
-          }
-        })
-      }
-    }
-  }
-  return { db, calls }
+  // 调用记录（queries/adds/updates/removes/counts）：测试用它断言"是否发生了某次写入/查询"
+  const calls = { updates: [], adds: [], removes: [], queries: [], counts: [] }
+  return { db: makeMemoryDb(store, { spy: calls }), calls }
 }
 
 // 等待 fire-and-forget 的 advanceStage 异步钩子完成
@@ -375,5 +322,38 @@ describe('writeSeam — 钩子配置', () => {
       u => u.name === 'families' && u.data && 'engagement_stage' in u.data
     )
     expect(stageUpdates.length).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 7. 软删保单不得参与阶段推进（2026-09-22 全面审计 P1 回归）
+// ---------------------------------------------------------------------------
+describe('advanceStage：软删保单不计入保单数', () => {
+  // 事故：deletePolicy 只把保单置 status:'deleted'（不物理删），而原查询
+  // `where({family_id,_openid}).count()` 把已删保单也算进去 → 删光保单后 engagement_stage
+  // 仍按"有保单"推进（onboarding→profiling），阶段与真实数据不符。
+  test('3 张保单其中 1 张 deleted → evaluateStage 收到 2', async () => {
+    const { db } = makeMockDb({
+      families: [{ _id: 'fam1', _openid: 'op1', engagement_stage: 'stage_1' }],
+      policies: [
+        { _id: 'p1', _openid: 'op1', family_id: 'fam1', status: 'active' },
+        { _id: 'p2', _openid: 'op1', family_id: 'fam1', status: 'active' },
+        { _id: 'p3', _openid: 'op1', family_id: 'fam1', status: 'deleted' }
+      ]
+    })
+    evaluateStage.mockReturnValue('stage_2')
+    await advanceStage(db, 'fam1', 'op1')
+    expect(evaluateStage).toHaveBeenCalled()
+    expect(evaluateStage.mock.calls[0][1]).toBe(2)
+  })
+
+  test('保单全部 deleted → 计为 0（不再虚报有保单）', async () => {
+    const { db } = makeMockDb({
+      families: [{ _id: 'fam1', _openid: 'op1', engagement_stage: 'stage_1' }],
+      policies: [{ _id: 'p1', _openid: 'op1', family_id: 'fam1', status: 'deleted' }]
+    })
+    evaluateStage.mockReturnValue('stage_1')
+    await advanceStage(db, 'fam1', 'op1')
+    expect(evaluateStage.mock.calls[0][1]).toBe(0)
   })
 })

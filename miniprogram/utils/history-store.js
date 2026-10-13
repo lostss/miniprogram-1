@@ -30,14 +30,36 @@ function _readCache(familyId) {
   try {
     const c = wx.getStorageSync(CACHE_PREFIX + familyId)
     if (c && c.fetchedAt && Array.isArray(c.messages) && c.messages.length && (Date.now() - c.fetchedAt) < TTL_MS) {
-      return c.messages
+      return c
     }
+    // 2026-09-22 全面审计 P2-3：过期/破损缓存此前只 return null、**不清理**。
+    // 每个 familyId 一个 key 长期驻留 storage（上限 10MB），key 只在删家庭或对话往返时
+    // 才作废 → 用久了 storage 逼近上限，此后所有 setStorageSync 静默失败（本文件 :42 吞异常），
+    // 直接受害者是 ocr-flow 的批次快照（_persistBatch）——OCR 中断恢复能力无声消失。
+    // 读到即销毁：过期数据的唯一价值就是腾出空间。
+    if (c) { try { wx.removeStorageSync(CACHE_PREFIX + familyId) } catch (e2) { /* 存储异常：忽略 */ } }
   } catch (e) { /* 非小程序环境（jest）/存储异常：静默跳过缓存 */ }
   return null
 }
 
-function _writeCache(familyId, ms) {
-  try { wx.setStorageSync(CACHE_PREFIX + familyId, { messages: ms, fetchedAt: Date.now() }) } catch (e) { /* 存储满/隐私模式：静默降级为无缓存 */ }
+function _writeCache(familyId, ms, oldestCreatedAt) {
+  // oldestCreatedAt 随缓存持久化：缓存命中路径据此恢复翻页游标（P1-8 修复），
+  // 否则命中缓存的会话"加载更多"误报"没有更多了"
+  try { wx.setStorageSync(CACHE_PREFIX + familyId, { messages: ms, fetchedAt: Date.now(), oldestCreatedAt: oldestCreatedAt || null }) } catch (e) { /* 存储满/隐私模式：静默降级为无缓存 */ }
+}
+
+/**
+ * 让某家庭的本地缓存失效（2026-09-18 审计 P1-F4）。
+ *
+ * 为什么需要：缓存保存的是**上一次网络拉取的快照**。会话内新发消息后快照即陈旧，
+ * 但 `onCollapse` 只 `reset()`（清内存态、不动 storage）→ 3 分钟内重展开会命中旧快照并
+ * 整体 `replace`，刚发的 N 条从界面消失；SWR 后台刷新只写 storage 不回填 UI，本会话不自愈。
+ * 故 `_postChat` 一次往返结束后（服务端已落库）主动作废缓存，让下次冷读重新拉取。
+ * 只在"发生过对话往返"时作废——纯浏览会话仍享受秒开。
+ */
+function invalidate(familyId) {
+  if (!familyId) return
+  try { wx.removeStorageSync(CACHE_PREFIX + familyId) } catch (e) { /* 存储异常：静默降级为无缓存 */ }
 }
 
 // C2（2026-08-30 审计）：时间格式化抽为公共导出（原 chat-panel 与 history-store 两处重复实现）
@@ -107,6 +129,9 @@ function createHistoryStore() {
   let historyLoaded = false
   let loadingMore = false
   let oldestMsgTime = null
+  // SWR 游标竞态防护：'more' 已把游标推进到更深层后，SWR 后台刷新不得回写游标
+  // （否则游标被重置回浅层 → 下一次"加载更多"重复 prepend 已显示消息）
+  let cursorAdvanced = false
 
   async function load(familyId, mode) {
     if ((mode === 'more' && loadingMore) || (!mode && historyLoaded) || !familyId) return 0
@@ -122,16 +147,21 @@ function createHistoryStore() {
         const cached = _readCache(familyId)
         if (cached) {
           historyLoaded = true
+          // P1-8 修复：命中缓存时恢复翻页游标（原仅网络路径设置 → 3min TTL 内打开会话无法"加载更多"）
+          if (cached.oldestCreatedAt) oldestMsgTime = cached.oldestCreatedAt
           _fetch(familyId, { familyId, limit: PAGE_SIZE, mode: 'latest' })
             .then(raw => {
               if (raw && raw.length) {
                 const ms = _toMs(raw)
                 ms.reverse() // desc → 正序（与首次加载一致）
-                _writeCache(familyId, ms)
+                // 刷新成功后同步前移游标 + 重写缓存（旧缓存无 oldestCreatedAt 字段时借此补齐）；
+                // 仅当用户未在此期间下拉翻页时回写（游标已走深则保留深层游标，防重复 prepend）
+                if (!cursorAdvanced) oldestMsgTime = raw[raw.length - 1].created_at
+                _writeCache(familyId, ms, raw[raw.length - 1].created_at)
               }
             })
             .catch(() => {})
-          return { replace: cached, rawCount: cached.length }
+          return { replace: cached.messages, rawCount: cached.messages.length }
         }
       }
       const raw = await _fetch(familyId, params)
@@ -144,15 +174,18 @@ function createHistoryStore() {
           if (mode === 'more') {
             // P1-1 修复：desc 数组须 reverse 转正序（旧→新）再插顶，否则头部出现局部倒序段
             ms.reverse()
+            cursorAdvanced = true
             return { prepend: ms, rawCount: raw.length }
           }
           historyLoaded = true
           // 首次加载：desc 数组 reverse 转正序（旧→新）——原未 reverse 导致历史倒序展示、
           // 且倒序数组 slice(-15) 让 AI 上下文取到最旧 15 条消息
           ms.reverse()
-          _writeCache(familyId, ms)
+          _writeCache(familyId, ms, oldestMsgTime)
           return { replace: ms, rawCount: raw.length }
         }
+        // 服务端明确返回空数组：这就是"没有历史消息"，属已加载（与上方 null=业务失败 区分）
+        if (!mode) historyLoaded = true
       }
     } catch (e) {
       console.error('[history-store] 加载消息失败:', (e && e.message) || e)
@@ -161,7 +194,11 @@ function createHistoryStore() {
     } finally {
       if (mode === 'more') loadingMore = false
     }
-    if (!mode) historyLoaded = true
+    // 2026-09-22 修（全面审计 · 前端 P2）：只有**真的拿到数据**（或服务端明确返回空）才算已加载。
+    // _fetch 在业务失败（api 解析为 ok:false，如冷启动 401）时返回 null，原实现落到这里就
+    // `historyLoaded = true` → 之后所有 load() 在上方 `(!mode && historyLoaded) return 0` 处短路，
+    // 而 chat-panel 对"空结果"只渲染首启空态 → 用户看到"小秘可以帮你"，以为对话历史被清空了，
+    // 且整个会话内不自愈（只有收起面板 reset() 才能恢复）。业务失败不置位 → 下次重试会重新拉取。
     return 0
   }
 
@@ -169,9 +206,10 @@ function createHistoryStore() {
     historyLoaded = false
     loadingMore = false
     oldestMsgTime = null
+    cursorAdvanced = false
   }
 
-  return { load, reset }
+  return { load, reset, invalidate }
 }
 
-module.exports = { createHistoryStore, fmtTime, fmtCountdown }
+module.exports = { createHistoryStore, invalidate, fmtTime, fmtCountdown }

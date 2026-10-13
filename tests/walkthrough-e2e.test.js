@@ -92,7 +92,7 @@ describe('穿行 v2 — 主业务交易', function() {
     expect(facts.some(f => f.family_id === familyId && String(f.predicate).includes('年收入'))).toBe(true)
 
     // ---- 财务写入（upsertFinances：字段别名归一化，singleton by family）----
-    const uf = await dataWrite.main({ action: 'updateFinances', familyId, income: 30, fixed_expense: 10, debt: 100, debt_type: '房贷' }, {})
+    const uf = await dataWrite.main({ action: 'updateFinances', familyId, income: 30, debt: 100, debt_type: '房贷' }, {})
     expect(uf.code).toBe(200)
     const finances = await readAll('finances')
     expect(finances.length).toBe(1)

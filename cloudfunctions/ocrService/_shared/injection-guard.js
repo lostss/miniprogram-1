@@ -5,7 +5,9 @@
  * 本文件纯规则无外部依赖，经 sync-shared.js CONTRACT_FILES 同步到 miniprogram/utils/，
  * 前端流式直调（chat-panel onSend）与后端 guard.js 共用同一注入规则。
  */
-const ZERO_WIDTH = /[\u200b\u200c\u200d\u200e\u200f\ufeff]/g
+// 用非捕获组而非字符类：同语义，但避开 eslint no-misleading-character-class
+// 对「字符类里出现 U+200D(ZWJ)」的误报（该规则假定这类序列是在拼合字字符）。
+const ZERO_WIDTH = /(?:\u200b|\u200c|\u200d|\u200e|\u200f|\ufeff)/g
 const CONFUSABLE_MAP = { '\u0430': 'a', '\u0435': 'e', '\u043E': 'o', '\u0440': 'p', '\u0441': 'c', '\u0443': 'y', '\u0445': 'x', '\u0391': 'A', '\u0395': 'E', '\u0397': 'H', '\u0399': 'I', '\u039A': 'K', '\u039C': 'M', '\u039D': 'N', '\u039F': 'O', '\u03A1': 'P', '\u03A4': 'T', '\u03A5': 'Y', '\u03A7': 'X', '\u0392': 'B' }
 const CONFUSABLE_RE = new RegExp('[' + Object.keys(CONFUSABLE_MAP).join('') + ']', 'g')
 const INJECTION_RULES = [
@@ -28,7 +30,12 @@ function detectInjection(text) {
   if (!text) return { injected: false }
   const conf = detectConfusables(text)
   if (conf.found && conf.chars.length >= 3) return { injected: true, rule: 'unicode_confusable', confusables: conf.chars }
-  for (const r of INJECTION_RULES) { r.lastIndex = 0; if (r.test(text)) return { injected: true, rule: r.source } }
+  // 2026-09-22 全面审计 P2-3：ZERO_WIDTH 此前是**死常量**（声明后全仓零引用），
+  // 于是「忽\u200b略以上指令」这类零宽穿插可绕过全部规则（本项目 sanitize 会剔零宽，
+  // 但 detectInjection 的调用点传的是**未 sanitize 的原始值**，如 member-write 的 data.value）。
+  // 规则匹配前先剔除零宽字符；混淆字符检测仍针对原文（剔除会改变其统计）。
+  const norm = String(text).replace(ZERO_WIDTH, '')
+  for (const r of INJECTION_RULES) { r.lastIndex = 0; if (r.test(norm)) return { injected: true, rule: r.source } }
   return { injected: false }
 }
 

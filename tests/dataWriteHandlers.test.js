@@ -7,66 +7,19 @@
  * 接口即测试面：通过 createHandler 的公开入口（event.action + event._authOpenid）
  * 触发真实 handler，校验规则改动自动被测试捕获。
  */
+const { makeMemoryDb } = require('./helpers/memory-db')
 
-// 共享 mock：补全所有 command 操作符（neq/push/inc/nin/gt/lt/or/and/pull）
+// 共享 mock：DB mock 收敛到 tests/helpers/memory-db（2026-09-15 架构审查候选 4）
 var mockStore = { families: [], members: [], finances: [], policies: [], facts: [], messages: [], operation_logs: [], agent_logs: [] }
 
+/**
+ * 旧实现是 57 行手写 mock，且 where 为空实现（恒返回全表）——查询条件从未被验证，
+ * 于是"某个 action 忘了带 family_id 过滤"这类缺陷测试也发现不了。
+ * adapter 真实过滤（neq/in/nin/or/and… 均支持）；本文件 seed 已带
+ * _openid='test_openid' 与 family_id，可直接迁移。
+ */
 function mockMakeDb() {
-  return {
-    collection: function (name) {
-      var rows = mockStore[name] || (mockStore[name] = [])
-      var api = {
-        where: function () { return api },
-        field: function () { return api },
-        orderBy: function () { return api },
-        limit: function () { return api },
-        get: function () { return Promise.resolve({ data: rows.slice() }) },
-        count: function () { return Promise.resolve({ total: rows.length }) },
-        update: function () { return Promise.resolve({ stats: { updated: 1 } }) },
-        remove: function () { return Promise.resolve({ stats: { removed: 1 } }) },
-        add: function (payload) {
-          var id = 'mock_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)
-          var rec = Object.assign({ _id: id }, payload && payload.data ? payload.data : payload)
-          rows.push(rec)
-          return Promise.resolve({ _id: id })
-        },
-        doc: function (id) {
-          return {
-            get: function () {
-              var rec = rows.find(function (r) { return r._id === id })
-              return Promise.resolve({ data: rec || null })
-            },
-            update: function (payload) {
-              var rec = rows.find(function (r) { return r._id === id })
-              if (rec && payload && payload.data) Object.assign(rec, payload.data)
-              return Promise.resolve({ stats: { updated: rec ? 1 : 0 } })
-            },
-            remove: function () {
-              var idx = rows.findIndex(function (r) { return r._id === id })
-              if (idx >= 0) rows.splice(idx, 1)
-              return Promise.resolve({ stats: { removed: idx >= 0 ? 1 : 0 } })
-            }
-          }
-        }
-      }
-      return api
-    },
-    command: {
-      neq: function (v) { return { $ne: v } },
-      push: function (v) { return { $push: v } },
-      pull: function (v) { return { $pull: v } },
-      inc: function (v) { return { $inc: v } },
-      gt: function (v) { return { $gt: v } },
-      gte: function (v) { return { $gte: v } },
-      lt: function (v) { return { $lt: v } },
-      lte: function (v) { return { $lte: v } },
-      in: function (v) { return { $in: v } },
-      nin: function (v) { return { $nin: v } },
-      or: function (arr) { return { $or: arr } },
-      and: function (arr) { return { $and: arr } },
-      serverDate: function () { return new Date('2026-01-01') }
-    }
-  }
+  return makeMemoryDb(mockStore)
 }
 
 jest.mock('wx-server-sdk', function () {
@@ -99,12 +52,14 @@ function call(action, extra) {
 }
 
 function seedFamily(id) {
-  mockStore.families.push({ _id: id || 'f1', _openid: 'test_openid', family_id: id || 'f1', family_name: '测试家庭', members: [], engagement_stage: 'profiling' })
+  mockStore.families.push({ _id: id || 'f1', _openid: 'mock_openid', family_id: id || 'f1', family_name: '测试家庭', members: [], engagement_stage: 'profiling' })
 }
 
 describe('dataWrite handlers — 真实 handler 调用', function () {
   beforeEach(function () {
-    mockStore = { families: [], members: [], finances: [], policies: [], facts: [], messages: [], operation_logs: [], agent_logs: [] }
+    // ⚠️ 必须原地清空、不能重新赋值 mockStore：adapter 在构造时固化 store 引用
+    // （旧的手写 mock 每次动态读 mockStore 变量，所以能容忍重建；adapter 不能）。
+    Object.keys(mockStore).forEach(function (k) { mockStore[k].length = 0 })
     seedFamily('f1')
   })
 
@@ -155,14 +110,27 @@ describe('dataWrite handlers — 真实 handler 调用', function () {
   })
 
   describe('writeOpLog', function () {
-    // writeOpLog 内部用 event.action 作为 logAction（createHandler 路由也用 event.action，二者复用同名字段）
-    test('缺少 action 时返回 400（handler 内 event.action 既路由又作 logAction）', async function () {
-      // action='writeOpLog' 本身就是 logAction，不会缺；测缺 familyId 时的兼容路径
+    // 2026-09-12 修复（埋点前置缺陷）：apiClient 把本 action 映射为路由 {action:'writeOpLog'}，
+    // 真正的事件名在 logAction。原实现取 event.action → 线上 979 条日志里前端上报的事件类型全部丢失
+    // （都落成 action:'writeOpLog'），无法按事件聚合；产品埋点依赖此修复才能生效。
+    test('缺少 logAction → 400（event.action 是路由名，不再当事件名）', async function () {
       var res = await call('writeOpLog', { result: { status: 'ok' } })
-      expect(res.code).toBe(200)
+      expect(res.code).toBe(400)
     })
-    test('成功写入返回 200', async function () {
-      var res = await call('writeOpLog', { familyId: 'f1', result: { status: 'ok' } })
+    test('logAction 生效：落库 action 为事件名（可按事件聚合）', async function () {
+      var res = await call('writeOpLog', {
+        familyId: 'f1',
+        logAction: 'product_report_open',
+        result: { status: 'ok' },
+        meta: { view: 'shared' }
+      })
+      expect(res.code).toBe(200)
+      var rec = mockStore.operation_logs[mockStore.operation_logs.length - 1]
+      expect(rec.action).toBe('product_report_open')
+      expect(rec.meta).toEqual({ view: 'shared' })
+    })
+    test('成功写入返回 200 且落库', async function () {
+      var res = await call('writeOpLog', { familyId: 'f1', logAction: 'frontend_error', result: { status: 'error', summary: 'x' } })
       expect(res.code).toBe(200)
       expect(mockStore.operation_logs.length).toBeGreaterThanOrEqual(1)
     })
@@ -201,15 +169,17 @@ describe('dataWrite handlers — 真实 handler 调用', function () {
   })
 
   describe('createFamily', function () {
-    // createFamily 检查重名，mock 的 where().count() 返回全部行数，需清空 families
-    beforeEach(function () { mockStore.families = [] })
+    // createFamily 检查重名 → 需清空 families（原地清空，理由同上）
+    beforeEach(function () { mockStore.families.length = 0 })
     test('缺少 family_name 返回 400', async function () {
       var res = await call('createFamily', {})
       expect(res.code).toBe(400)
     })
-    test('缺少 members 返回 400', async function () {
+    // 2026-09-12 契约变更：允许无成员建档（第一次见面、还没拿到保单时最需要先建档案）
+    test('缺少 members → 允许建档（member_count 0）', async function () {
       var res = await call('createFamily', { family_name: '李四家庭' })
-      expect(res.code).toBe(400)
+      expect(res.code).toBe(200)
+      expect(mockStore.families[0].family_structure.member_count).toBe(0)
     })
     test('成功创建返回 200 且写入 families 集合', async function () {
       var res = await call('createFamily', {
@@ -224,26 +194,28 @@ describe('dataWrite handlers — 真实 handler 调用', function () {
 
   describe('updatePolicy', function () {
     function seedPolicy() {
-      var rec = { _id: 'pol_test1', _openid: 'test_openid', family_id: 'f1', member_id: '', product_name: '康健华尊', insured_name: '张三', insurance_category: '医疗险', effective_date: '2025-01-01', insurance_period: '1年', status: 'active' }
+      // 必须带业务字段 id：locatePolicy 按 `id` 定位（policy-locate.js:31），不是 _id。
+      // 旧 mock（where 空实现）靠"表里只有一条"侥幸命中，实际未验证定位逻辑。
+      var rec = { _id: 'db_pol_test1', id: 'pol_test1', _openid: 'mock_openid', family_id: 'f1', member_id: '', product_name: '康健华尊', insured_name: '张三', insurance_category: '医疗险', effective_date: '2025-01-01', insurance_period: '1年', status: 'active' }
       mockStore.policies.push(rec)
       return rec
     }
-    beforeEach(function () { mockStore.policies = [] })
+    beforeEach(function () { mockStore.policies.length = 0 })
     test('生效日期格式非法（AI 误填保障期间）返回 400 且不落库', async function () {
       var t = seedPolicy()
-      var res = await call('updatePolicy', { familyId: 'f1', policyId: t._id, data: { effective_date: '1年' } })
+      var res = await call('updatePolicy', { familyId: 'f1', policyId: t.id, data: { effective_date: '1年' } })
       expect(res.code).toBe(400)
       expect(t.effective_date).toBe('2025-01-01')
     })
     test('保障期间字段可更新（白名单）且落库', async function () {
       var t = seedPolicy()
-      var res = await call('updatePolicy', { familyId: 'f1', policyId: t._id, data: { insurance_period: '终身' } })
+      var res = await call('updatePolicy', { familyId: 'f1', policyId: t.id, data: { insurance_period: '终身' } })
       expect(res.code).toBe(200)
       expect(t.insurance_period).toBe('终身')
     })
     test('合法生效日期可更新', async function () {
       var t = seedPolicy()
-      var res = await call('updatePolicy', { familyId: 'f1', policyId: t._id, data: { effective_date: '2026-03-01' } })
+      var res = await call('updatePolicy', { familyId: 'f1', policyId: t.id, data: { effective_date: '2026-03-01' } })
       expect(res.code).toBe(200)
       expect(t.effective_date).toBe('2026-03-01')
     })

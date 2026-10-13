@@ -74,7 +74,7 @@ async function migrateFamily(fam) {
 
   // 2. 内嵌 financial_snapshot → finances 集合
   const snap = fam.financial_snapshot || {}
-  const hasSnap = snap.income != null || (snap.debt && (snap.debt.amount != null || snap.debt !== '')) || snap.fixed_expense != null
+  const hasSnap = snap.income != null || (snap.debt && (snap.debt.amount != null || snap.debt !== ''))
   if (hasSnap) {
     const finExisting = await db.collection('finances').where({ family_id: familyId }).limit(1).get()
     if (!finExisting.data || finExisting.data.length === 0) {
@@ -85,7 +85,6 @@ async function migrateFamily(fam) {
           annual_income: snap.income != null ? snap.income : null,
           total_debt: (debt && debt.amount != null) ? debt.amount : (typeof debt === 'object' ? null : debt),
           debt_type: (debt && debt.type) || '',
-          fixed_annual_expense: snap.fixed_expense != null ? snap.fixed_expense : null,
           created_at: new Date(), updated_at: new Date()
         }
       })
@@ -112,7 +111,7 @@ async function migrateFamily(fam) {
   await db.collection('families').doc(familyId).update({
     data: {
       members: [],
-      financial_snapshot: { income: null, debt: { amount: null, type: '' }, fixed_expense: null },
+      financial_snapshot: { income: null, debt: { amount: null, type: '' } },
       updated_at: new Date()
     }
   }).catch(e => console.error('[migrate] 清理 families 内嵌字段失败:', e.message))

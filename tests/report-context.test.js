@@ -37,6 +37,25 @@ describe('buildSummaryMd', () => {
     expect(md).toContain('有效保单：2份 | 已失效/过期：1份')
   })
 
+  // 2026-09-22（沿用 2026-09-04「一年期短险单独聚合」决策）：AI 上下文原先只给「总保额」，
+  // 而其中的一年期部分（百万医疗 400 万这类）每年需续保，模型会照抄成长期保障厚度。
+  // 注：限额**是**保额的一部分（2026-09-22 决策：条款自身即称"保险金额=各项医疗费用保险金年限额之和"），
+  // 单列的理由是**期限**，不是类型。
+  test('一年期短险单列 + 明确引用口径', () => {
+    const md = buildSummaryMd([
+      { status: 'active', annual_premium: 657, sum_assured: 4000000, insurance_period: '至2022年07月09日', effective_date: '2021-07-10' },
+      { status: 'active', annual_premium: 5000, sum_assured: 500000, insurance_period: '终身' }
+    ], { income: '20' })
+    expect(md).toContain('有效保单总保额：450万')
+    expect(md).toContain('其中一年期短险：400万')
+    expect(md).toContain('勿表述为长期保障厚度')
+  })
+
+  test('无一年期短险 → 不出该行（不制造噪声）', () => {
+    const md = buildSummaryMd([{ status: 'active', annual_premium: 5000, sum_assured: 500000, insurance_period: '终身' }], {})
+    expect(md).not.toContain('其中一年期短险')
+  })
+
   test('无 status 字段视为 active', () => {
     const policies = [{ annual_premium: 1000, sum_assured: 100000 }] // 无 status
     const md = buildSummaryMd(policies, {})
@@ -56,16 +75,15 @@ describe('buildSummaryMd', () => {
     expect(md).toContain('不计算占收入比')
   })
 
-  test('snap 含 debt / fixed_expense → 显示', () => {
+  test('snap 含 debt → 显示总负债行；已移除的 fixed_expense 即使传入也不注入', () => {
     const md = buildSummaryMd([], { debt: '房贷100万', fixed_expense: '8000元/月' })
-    expect(md).toContain('家庭负债：房贷100万')
-    expect(md).toContain('固定支出：8000元/月')
+    expect(md).toContain('家庭总负债：房贷100万')
+    expect(md).not.toContain('固定支出')
   })
 
-  test('snap 不含 debt / fixed_expense → 不显示该行', () => {
+  test('snap 不含 debt → 不显示该行', () => {
     const md = buildSummaryMd([], {})
-    expect(md).not.toContain('家庭负债')
-    expect(md).not.toContain('固定月支出')
+    expect(md).not.toContain('家庭总负债')
   })
 
   test('income 字符串数字也能解析', () => {
@@ -85,6 +103,33 @@ describe('buildPrevReportMd', () => {
     expect(md).toContain('上一版结论')
     expect(md).toContain('当前保障充足')
     expect(md).not.toContain('上一版摘要')
+  })
+
+  // 2026-09-22（数据质量批次 3）：把"上一版是否已过期"透给模型。
+  // insight_stale 由 writeSeam 在每次写家庭数据时置位；原先它只在写侧使用、上下文看不到，
+  // 于是 prompt 里「若上次说缺重疾险、这次已有，在 review 中说明变化」无从执行——
+  // 模型能看到差异，却分不清"上一版说错了"还是"数据变了"。
+  test('insight_stale=true → 标注数据已变更，且结论本身仍保留（供对比变化）', () => {
+    const md = buildPrevReportMd({
+      last_conclusion: '当前保障充足',
+      insight_stale: true,
+      last_analysis_at: new Date(2026, 7, 8)
+    })
+    expect(md).toContain('此后家庭数据已发生变更')
+    expect(md).toContain('2026-08-08')
+    expect(md).toContain('以当前数据为准')
+    expect(md).toContain('当前保障充足')
+  })
+
+  test('insight_stale=false → 不出现过期提示（未变更时不制造噪声）', () => {
+    const md = buildPrevReportMd({ last_conclusion: 'x', insight_stale: false })
+    expect(md).not.toContain('此后家庭数据已发生变更')
+  })
+
+  test('stale 但缺 last_analysis_at → 中性表述（不得出现 Invalid Date）', () => {
+    const md = buildPrevReportMd({ last_conclusion: 'x', insight_stale: true })
+    expect(md).toContain('较早时间')
+    expect(md).not.toContain('Invalid Date')
   })
 
   test('只有 last_summary', () => {
@@ -282,6 +327,6 @@ describe('buildGapSnapshot（缺口矩阵口径）', () => {
     const md = buildGapSnapshot([], { income: 30, debt: { amount: 100, type: '房贷' } }, [
       { member_id: 'm1', name: '张三', role: '本人', income: 30 }
     ])
-    expect(_row(md, '张三', '寿险')).toContain('负债100万')
+    expect(_row(md, '张三', '寿险')).toContain('总负债100万')
   })
 })

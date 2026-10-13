@@ -64,17 +64,28 @@ page {
   --font-serif: 'Songti SC', 'STSong', 'Noto Serif CJK SC', 'Source Han Serif SC', 'Noto Serif SC', 'SimSun', serif;
   --font-mono: 'SF Mono', Monaco, 'Cascadia Code', monospace;
 
-  /* 字号阶梯（UI 打磨：消除 26/30 两档 2rpx 重复，层级 20→24→28→32→36→40→44→52 每档 ≥4rpx） */
-  --fs-tiny: 20rpx;
-  --fs-caption: 24rpx;
-  --fs-base: 28rpx;
-  --fs-body: 28rpx;
-  --fs-lg: 32rpx;
-  --fs-xl: 36rpx;
-  --fs-2xl: 40rpx;
-  --fs-display: 44rpx;
-  --fs-3xl: 52rpx;
-  --fs-hero: 52rpx;
+  /* 字号阶梯（UI 打磨：消除 26/30 两档 2rpx 重复，每档 ≥4rpx）
+     2026-09-12 整体上调一档（各 +4rpx）：目标用户是 40+ 代理人，原正文基准 28rpx=14px 低于
+     16px 可读基线，tiny 20rpx=10px（"已失效"这类状态字几乎看不清）；而小程序不像 H5 那样
+     跟随系统字号缩放，只能靠基准上调兜住。
+     新层级 24→28→32→36→40→44→48→56，对应 px（750rpx 机型）：12/14/16/18/20/22/24/28。
+     ⚠️ 字号是全局量：上调后"固定宽高 + 文字"的元素需同步放宽（表格列 min-width、facts 日期列、
+     表单 label 宽），hero 小圆点的固定偏移也随首行高变化——见各文件内 2026-09-12 注释。 */
+  --fs-tiny: 24rpx;
+  --fs-caption: 28rpx;
+  --fs-base: 32rpx;
+  --fs-body: 32rpx;
+  --fs-lg: 36rpx;
+  --fs-xl: 40rpx;
+  --fs-2xl: 44rpx;
+  --fs-display: 48rpx;
+  --fs-3xl: 56rpx;
+  --fs-hero: 56rpx;
+  /* 长文阅读档（2026-09-13）：专供 markdown 长段落正文（report 档），与"UI 层级阶梯"分开管。
+     理由：长文正文字号与标题的层级诉求不同——标题要拉开层级，正文要按阅读舒适度单独定。
+     此前正文直接复用 --fs-lg（标题档），导致"调正文"必然牵动标题。独立成档后，页面只需覆盖
+     本变量即可只动正文。默认值与 --fs-lg 相同，未覆盖时行为不变。 */
+  --fs-reading: 36rpx;
 
   --fw-normal: 400;
   --fw-medium: 500;
@@ -311,7 +322,9 @@ page ::selection { background: rgba(201,169,110,0.25); color: var(--text-primary
 /* UI 打磨：状态动画不用回弹缓动（过冲在 popIn keyframe 内已含），改 ease-out-expo */
 .ocr-done-title { font-size:var(--fs-2xl); font-weight:var(--fw-semi); color:var(--text-primary); margin-bottom:var(--sp-2); animation:popIn 0.4s var(--ease-out-expo) }
 .ocr-done-sub { font-size:var(--fs-caption); color:var(--text-tertiary); margin-bottom:var(--sp-5); text-align:center }
-.ocr-fail-tip { color:var(--amber); font-size:var(--fs-tiny); margin-top:var(--sp-1) }
+/* 2026-09-12 可访问性：--amber(#B8912E) 白底仅 2.73:1，且 tiny(20rpx=10px) 双重偏小 → 换
+   --amber-deep(#7C5E1C)=6.05:1 并提到 caption 档（失败提示属需看清的信息，不是装饰） */
+.ocr-fail-tip { color:var(--amber-deep); font-size:var(--fs-caption); margin-top:var(--sp-1) }
 .ocr-summary-list { width:100%; max-height:300rpx; margin-bottom:var(--sp-6) }
 .ocr-actions-row { width:100%; display:flex; gap:var(--sp-3) }
 /* UI 审计 #②：accent 白字 2.24:1 不达标，改深色主文字色（7.62:1） */

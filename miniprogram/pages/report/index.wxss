@@ -1,5 +1,16 @@
 .page { height:100vh; background:var(--bg-root); display:flex; flex-direction:column; overflow:hidden }
-.content { flex:1; min-height:0 }
+/* 2026-09-13：报告页字号局部回调（只作用于滚动内容区，不影响页面层操作 UI）。
+   一、正文类再降（"正文再小一点"）：--fs-reading / --fs-base 32 → 30rpx（16 → 15px）。
+       为什么是 15px 而非 14px：14px 与次要信息档 --fs-caption（28rpx = 14px）撞号，
+       正文会与"单位/时间戳/表格数值"变成同一层级、层级被压平。30rpx 这个长文专用档
+       正是为此存在（见 app.wxss 里 --fs-reading 的注释）。
+   二、标题档保持上一轮的降幅：--fs-lg 32 / --fs-xl 36rpx，仍比正文高 2~4rpx，层级清晰。
+   三、不动信息类（caption 28 / tiny 24），也不动 --fs-body——hero 告警是 2~3 行短句，
+       保留 32rpx；顺带也就无需同步 .hero-alert-dot 的固定偏移（它按 32rpx 首行高算的）。
+   注：CSS 自定义属性沿 DOM 继承、不受组件样式隔离影响，故这一处覆盖即可作用于其下所有组件
+   （report-markdown / markdown-render）；而挂页面层的操作界面（成员 Sheet / 信息核实 / 对话面板）
+   不在 .content 内，按钮文案不受影响。 */
+.content { flex:1; min-height:0; --fs-reading: 30rpx; --fs-base: 30rpx; --fs-lg: 32rpx; --fs-xl: 36rpx }
 
 /* 保障摘要 + 覆盖检查融合卡：数据在上，检查在下（原独立 Hero 卡已并入） */
 /* 正文卡片间距：sp-6（24rpx，与卡内 padding 同值，紧凑连贯） */
@@ -15,7 +26,12 @@
 .hero-conclusion-tag { display:inline-block; font-size:var(--fs-tiny); color:var(--accent-deep); border:1rpx solid var(--border-accent); border-radius:6rpx; padding:0 8rpx; margin-right:10rpx; vertical-align:2rpx; }
 .summary-check { margin-top:var(--sp-5); padding-top:var(--sp-4); border-top:1rpx solid var(--border-accent); }
 .hero-alert { display:flex; align-items:flex-start; gap:var(--sp-3); padding:var(--sp-3) 0; }
-.hero-alert-dot { width:10rpx; height:10rpx; border-radius:50%; margin-top:calc(var(--fs-body) * var(--lh-body) / 2 - 5rpx); flex-shrink:0; background:var(--ok); }
+/* 2026-09-12 解耦：原 margin-top:calc(var(--fs-body) * var(--lh-body) / 2 - 5rpx) 把"首行光学中心"
+   绑死两个 token 的乘积——任何人按字号/行高建议调整 token 时，红/黄/绿点会整体偏移而这行无人想起。
+   改固定偏移：22rpx = 首行光学中心(32rpx×1.7÷2 = 27.2) − 点半径 5rpx 的整数近似。
+   2026-09-12 字号整体上调一档后同步从 18rpx → 22rpx——这正是解耦的收益：只需改这一个数，
+   不必推演两个 token 的乘积。 */
+.hero-alert-dot { width:10rpx; height:10rpx; border-radius:50%; margin-top:22rpx; flex-shrink:0; background:var(--ok); }
 .hero-alert.is-warn .hero-alert-dot { background:var(--red); }
 .hero-alert-text { font-size:var(--fs-body); line-height:var(--lh-body); flex:1; color:var(--text-primary); }
 .hero-alert.is-warn .hero-alert-text { color:var(--red); font-weight:var(--fw-medium); }
@@ -39,16 +55,24 @@
 .title-bar { display:flex; align-items:flex-start; padding:0 var(--sp-5); }
 .report-title { flex:1; min-width:0; padding:var(--sp-7) 0 var(--sp-5); display:flex; flex-direction:column; gap:var(--sp-2); }
 .title-name { font-size:var(--fs-display); font-weight:var(--fw-bold); color:var(--text-primary); letter-spacing:var(--ls-wide); font-family:var(--font-serif); }
-.title-subrow { display:flex; align-items:baseline; justify-content:space-between; gap:var(--sp-3); }
+/* flex-wrap：页头时间接上"数据更新于"标签后变长（多 5 字），窄屏下让 meta 换到第二行，而不是挤压副标题 */
+.title-subrow { display:flex; align-items:baseline; justify-content:space-between; gap:var(--sp-3); flex-wrap:wrap; }
 .title-sub { font-size:var(--fs-caption); font-weight:var(--fw-normal); color:var(--text-secondary); letter-spacing:var(--ls-wide); }
 /* 报告生成时间（副标题层级，衬线小字区别于主副标题） */
 .title-meta { font-size:var(--fs-tiny); color:var(--text-tertiary); letter-spacing:var(--ls-wide); font-variant-numeric:tabular-nums; flex-shrink:0; }
-/* 活报告模型（2026-09）：summary 家庭保障结构标签（AI 产出，置于摘要卡顶，暖金小字最多两行） */
-.summary-tag { font-size:var(--fs-caption); color:var(--accent-deep); line-height:var(--lh-body); letter-spacing:var(--ls-wide); margin-bottom:var(--sp-4); display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
+
 /* 保障分析生成时间（分析卡头下方，tini 次级说明，不占标题区主位） */
 .deep-meta { display:block; font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-body); margin:var(--sp-1) 0 var(--sp-4); }
 /* 时效标识（owner）：数据已更新、保障分析待刷新（暖金胶囊弱提示） */
 .title-stale { align-self:flex-start; font-size:var(--fs-tiny); color:var(--amber-deep); background:var(--amber-dim); padding:4rpx 14rpx; border-radius:999rpx; }
+/* 定性模式常驻披露（2026-09-18 报告页审计）：tier=degraded → 报告不含量化测算。
+   与 .title-stale 同处页头，但语义更重（影响整份报告的可解读性，不是"待刷新"这种弱提示），
+   故用中性卡片底 + 左侧金色色条，避免与琥珀胶囊混淆；触控热区沿用伪元素外扩 88rpx 基准。 */
+.title-qual { align-self:stretch; display:flex; align-items:center; gap:var(--sp-3); margin-top:var(--sp-2); padding:var(--sp-2) var(--sp-3); background:var(--bg-card); border-left:4rpx solid var(--accent-deep); border-radius:var(--r-lg); }
+.title-qual-text { flex:1; font-size:var(--fs-caption); color:var(--text-secondary); line-height:var(--lh-body); }
+.title-qual-act { position:relative; flex-shrink:0; font-size:var(--fs-caption); font-weight:var(--fw-semi); color:var(--accent-deep); }
+.title-qual-act::after { content:''; position:absolute; border:none; left:-20rpx; right:-20rpx; top:50%; height:88rpx; transform:translateY(-50%); }
+.title-qual-act:active { opacity:0.6; }
 /* 活报告模型（2026-09）：待澄清项（owner）——完善信息引导，轻卡片 */
 /* 2026-09-09 色彩语义收敛：原用 --amber-dim 与「风险/警示」同色，引导类内容改中性底，
    让暖金只承担「AI 产出」、浅红只承担「风险」 */
@@ -70,6 +94,9 @@
 
 /* ========== 底部操作（转发 + 深度分析，设计稿 v4） ========== */
 .report-footer { display:flex; gap:var(--sp-4); padding:var(--sp-4) var(--sp-5); }
+/* 2026-09-18 报告页审计：owner 模式下方有 FAB 条承担安全区（.fab-wrap 自带 env()），此处再加会多出约 34px 空隙；
+   shared 模式无 FAB、scroll-view 直达屏幕底 → 仅该模式补底部安全区 */
+.report-footer--shared { padding-bottom:calc(var(--sp-4) + env(safe-area-inset-bottom)); }
 .report-footer .footer-share, .report-footer .footer-export { margin:0; }
 /* UI 打磨：footer 按钮 88→80rpx，弱化与底部 FAB 输入条 88rpx 双条带的层叠拥挤 */
 /* 2026-09-02：深度分析生成入口已移至结论下的 deep-entry，footer 移除 analyze 按钮 */
@@ -79,6 +106,64 @@
 .footer-share::after, .footer-export::after { border:none; }
 /* 分享模式（客户查看）底部水印 */
 .share-watermark { flex:1; display:flex; align-items:center; justify-content:center; font-size:var(--fs-tiny); color:var(--text-tertiary); }
+
+/* ========== 客户档案要点（facts 时间线，2026-09-12） ========== */
+/* 复盘场景补口：facts 此前只落库无渲染。默认折叠，展开后为"时间 + 事实"两列列表 */
+.facts-card { margin:var(--sp-6) var(--sp-5); padding:var(--sp-5) var(--sp-5) var(--sp-4); background:var(--bg-card); border-radius:var(--r-xl); border:1rpx solid var(--border); box-shadow:var(--shadow-sm); }
+.facts-head { display:flex; align-items:center; gap:var(--sp-3); }
+.facts-title { font-family:var(--font-serif); font-size:var(--fs-lg); font-weight:var(--fw-normal); color:var(--text-primary); letter-spacing:var(--ls-wide); }
+.facts-count { font-size:var(--fs-tiny); color:var(--text-tertiary); }
+.facts-arrow { margin-left:auto; font-size:var(--fs-tiny); color:var(--accent-deep); }
+.facts-list { margin-top:var(--sp-4); }
+.facts-item { display:flex; gap:var(--sp-3); padding:var(--sp-2) 0; border-bottom:1rpx solid var(--border); }
+.facts-item:last-child { border-bottom:none; }
+/* 2026-09-12：tiny 20→24rpx 后日期列需同步放宽（否则"2026-09-12"会被挤成两行） */
+.facts-time { flex-shrink:0; width:150rpx; font-size:var(--fs-tiny); color:var(--text-tertiary); }
+.facts-text { flex:1; font-size:var(--fs-base); color:var(--text-primary); line-height:var(--lh-body); word-break:break-word; }
+.facts-more { padding-top:var(--sp-2); font-size:var(--fs-tiny); color:var(--text-tertiary); text-align:center; }
+/* 2026-09-14 四档结构：关键属性（常驻）/ 需要留意 / 待核实 / 记录时间线 */
+.facts-sec { padding:var(--sp-4) 0 var(--sp-2); font-size:var(--fs-caption); color:var(--text-tertiary); letter-spacing:var(--ls-wide); }
+.facts-sec:first-child { padding-top:0; }
+.facts-member { display:flex; flex-direction:column; gap:2rpx; padding:var(--sp-2) 0; border-bottom:1rpx solid var(--border); }
+.facts-member:last-child { border-bottom:none; }
+.facts-member-name { font-size:var(--fs-base); color:var(--text-primary); font-weight:var(--fw-medium); }
+.facts-member-text { font-size:var(--fs-caption); color:var(--text-secondary); line-height:var(--lh-body); word-break:break-word; }
+/* 需要留意（constraint）：暖金强调——项目语义色只有 ok 系（无红/黄），保持克制不刺眼 */
+.facts-warn { display:flex; gap:var(--sp-2); padding:var(--sp-2) 0; }
+.facts-mark { flex-shrink:0; width:32rpx; height:32rpx; line-height:32rpx; text-align:center; border-radius:var(--r-full); font-size:var(--fs-tiny); background:var(--accent-dim); color:var(--accent-deep); margin-top:4rpx; }
+.facts-mark--muted { background:transparent; color:var(--text-tertiary); }
+.facts-warn-text { flex:1; font-size:var(--fs-base); color:var(--text-primary); line-height:var(--lh-body); word-break:break-word; }
+/* 待核实（lead）：整体弱化 + "未确认"标记（防止被当成客户确认的事实） */
+.facts-lead { display:flex; gap:var(--sp-2); align-items:baseline; padding:var(--sp-2) 0; }
+.facts-lead-text { flex:1; font-size:var(--fs-base); color:var(--text-secondary); line-height:var(--lh-body); word-break:break-word; }
+.facts-lead-tag { flex-shrink:0; font-size:var(--fs-tiny); color:var(--text-tertiary); border:1rpx solid var(--border); border-radius:var(--r-full); padding:0 var(--sp-2); }
+
+/* ========== 客户版预览（2026-09-12） ========== */
+/* 入口：owner 侧自检"这份报告能否拿出手"，不占 footer 主按钮位 */
+.preview-entry { display:flex; justify-content:center; padding:0 var(--sp-5) var(--sp-2); }
+.preview-entry-btn { position:relative; font-size:var(--fs-caption); color:var(--accent-deep); background:var(--accent-dim); border-radius:var(--r-full); padding:var(--sp-2) var(--sp-5); }
+/* 触控热区：伪元素透明外扩至 ≥88rpx */
+.preview-entry-btn::after { content:''; position:absolute; left:-20rpx; right:-20rpx; top:50%; height:88rpx; transform:translateY(-50%); }
+.preview-entry-btn:active { opacity:0.6; }
+/* 成交标记开启态（owner）：与预览按钮同排，开启后实心强调 */
+.preview-entry-btn.is-on { background:var(--ok-dim); color:var(--ok-deep); font-weight:var(--fw-semi); }
+/* 反馈入口（MVP 验证）：正文末一行，克制不抢主视觉 */
+.feedback-row { display:flex; flex-direction:column; align-items:center; gap:var(--sp-3); padding:var(--sp-4) var(--sp-5) var(--sp-2); }
+.feedback-q { font-size:var(--fs-caption); color:var(--text-secondary); }
+.feedback-btns { display:flex; gap:var(--sp-4); }
+.feedback-btn { font-size:var(--fs-caption); color:var(--accent-deep); background:var(--bg-input); border-radius:var(--r-full); padding:var(--sp-2) var(--sp-6); position:relative; }
+.feedback-btn::after { content:''; position:absolute; left:0; right:0; top:50%; height:88rpx; transform:translateY(-50%); }
+.feedback-btn:active { opacity:0.6; }
+/* 预览态顶部提示条：2026-09-12 移出 scroll-view，改作页面级固定条。
+   原为 position:sticky top:0 z-index:30，与组件内 .toc（sticky top:0 z-index:20）争夺同一
+   吸附位 → 目录被完全覆盖且点不到。现由 .page 的 flex 列布局天然固定在顶部（不滚动，故
+   无需 sticky）；flex-shrink:0 防被 scroll-view 挤压；z-index 仅用于压住滚动内容的投影。
+   有意不纳入宽屏限宽名单：它是"模式提示"色带，全宽更符合顶部条语义（正文块才需要 720 居中）。 */
+.preview-bar { flex-shrink:0; position:relative; z-index:30; display:flex; align-items:center; justify-content:space-between; gap:var(--sp-3); padding:var(--sp-3) var(--sp-5); background:var(--accent-dim); border-bottom:1rpx solid var(--border-accent); }
+.preview-bar-text { font-size:var(--fs-caption); color:var(--accent-deep); }
+.preview-bar-exit { position:relative; flex-shrink:0; font-size:var(--fs-caption); font-weight:var(--fw-semi); color:var(--accent-deep); }
+.preview-bar-exit::after { content:''; position:absolute; left:-20rpx; right:-20rpx; top:50%; height:88rpx; transform:translateY(-50%); }
+.preview-bar-exit:active { opacity:0.6; }
 
 /* ========== 成员管理 Sheet ========== */
 .member-manage-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:var(--overlay-dim); z-index:var(--z-sheet); animation:fadeIn var(--dur-base) var(--ease-out); -webkit-backdrop-filter:blur(8rpx); backdrop-filter:blur(8rpx); }
@@ -155,14 +240,17 @@
 .rd-dim-head { display:flex; align-items:center; gap:var(--sp-2); padding:var(--sp-2) 0; border-bottom:1rpx solid var(--border); }
 .rd-dim-status { font-size:var(--fs-base); width:40rpx; text-align:center; }
 .rd-ok { color:var(--text-tertiary); }
-.rd-warn { color:var(--accent); }
-.rd-block { color:var(--accent); font-weight:var(--fw-bold); }
+/* 2026-09-12 可访问性：--accent(#C9A96E) 白底对比度仅 2.24:1（AA 需 4.5:1），换 --accent-deep
+   (#8B6F3C)=4.58:1 达标——项目本就收敛出 *-deep 专供文字，这里此前漏用。 */
+.rd-warn { color:var(--accent-deep); }
+.rd-block { color:var(--accent-deep); font-weight:var(--fw-bold); }
 .rd-dim-title { font-size:var(--fs-base); font-weight:var(--fw-semi); color:var(--text-primary); }
 .rd-dim-count { margin-left:auto; font-size:var(--fs-caption); color:var(--text-tertiary); }
 .rd-item { display:flex; align-items:center; justify-content:space-between; padding:var(--sp-2) 0; }
 .rd-item-label { font-size:var(--fs-base); color:var(--text-secondary); }
-.rd-fix { background:var(--bg-card); color:var(--accent); border:1rpx solid var(--accent); font-size:var(--fs-caption); height:56rpx; line-height:56rpx; padding:0 var(--sp-4); border-radius:var(--r-full); margin:0; }
-.rd-fix::after { border:none }
+.rd-fix { position:relative; background:var(--bg-card); color:var(--accent-deep); border:1rpx solid var(--accent-deep); font-size:var(--fs-caption); height:56rpx; line-height:56rpx; padding:0 var(--sp-4); border-radius:var(--r-full); margin:0; }
+/* 触控热区：原 56rpx（28px）低于 88rpx 基准；伪元素透明外扩（保留 button 默认边框的 border:none 复位） */
+.rd-fix::after { content:''; position:absolute; border:none; left:-12rpx; right:-12rpx; top:50%; height:88rpx; transform:translateY(-50%); }
 .readiness-actions { display:flex; flex-direction:column; gap:var(--sp-2); margin-top:var(--sp-3); }
 .rd-btn { height:84rpx; border-radius:var(--r-lg); font-size:var(--fs-base); display:flex; align-items:center; justify-content:center; margin:0; }
 .rd-btn--primary { background:var(--accent); color:var(--btn-text-on-accent); }
@@ -190,7 +278,15 @@
 .deep-analysis { margin:var(--sp-6) var(--sp-5); padding:var(--sp-6) var(--sp-5); background:var(--bg-card); border-radius:var(--r-xl); border:1rpx solid var(--border); box-shadow:var(--shadow-sm); }
 .deep-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-4); }
 .deep-title { font-family:var(--font-serif); font-size:var(--fs-xl); font-weight:var(--fw-normal); color:var(--text-primary); letter-spacing:var(--ls-wide); }
-.deep-badge { font-size:var(--fs-tiny); color:var(--accent-deep); background:var(--accent-dim); padding:var(--sp-1) var(--sp-3); border-radius:var(--r-full); }
+.deep-badge { font-size:var(--fs-tiny); color:var(--accent-deep); background:var(--accent-dim); padding:var(--sp-1) var(--sp-3); border-radius:var(--r-full);
+  /* V1.5：deep-head 内新增语气切换后，badge 用 auto 外边距保持右对齐（子元素 2 个或 3 个时视觉一致） */
+  margin-left:auto; }
+/* V1.5 语气切换（2026-09-12）：owner 可见；触控热区由伪元素外扩至 ≥88rpx */
+.deep-tone { position:relative; font-size:var(--fs-tiny); color:var(--text-tertiary); margin-left:var(--sp-3); flex-shrink:0; }
+.deep-tone::after { content:''; position:absolute; left:-20rpx; right:-20rpx; top:50%; height:88rpx; transform:translateY(-50%); }
+.deep-tone:active { opacity:0.6 }
+/* V1.5 隐私说明（2026-09-12）：核对弹窗内明确数据用途与隔离方式，降低敏感信息录入抵触 */
+.readiness-privacy { font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-body); padding:var(--sp-3) 0 0; }
 .deep-insights { display:flex; flex-direction:column; gap:var(--sp-3); margin-bottom:var(--sp-4); }
 .deep-insight { display:flex; gap:var(--sp-2); padding:var(--sp-4); background:var(--accent-dim); border-radius:var(--r-lg); border-left:4rpx solid var(--accent); }
 .deep-insight-text { font-size:var(--fs-base); color:var(--text-primary); line-height:var(--lh-body); }
@@ -219,9 +315,14 @@
 .sk-shimmer { background:linear-gradient(90deg,var(--bg-input) 25%,var(--accent-dim) 37%,var(--bg-input) 63%); background-size:400% 100%; animation:shimmer 1.8s ease infinite; }
 
 /* 2026-09-06 宽屏行宽约束：PC/平板微信下报告正文区限宽居中，长文行宽回到舒适区（手机 <768px 不受影响） */
+/* 2026-09-12 修复：原名单漏掉 V1.5 新增的三块（.facts-card/.preview-entry/.feedback-row）→
+   它们在 720px 正文两侧"鼓出来"，其中 .facts-card 夹在两张限宽卡片中间最明显；
+   同时删除 .hints 死名（区块已按审计 C4 删除，见 wxml 注释，规则本体亦无残留）。
+   .preview-bar 有意不在名单：已改为页面级全宽模式提示条（见其规则注释）。 */
 @media (min-width: 768px) {
-  .title-bar, .title-divider, .summary-card, .hints, .empty-report,
-  .deep-entry, .deep-analysis, .deep-clarify, .report-disclaimer, .report-footer {
+  .title-bar, .title-divider, .summary-card, .empty-report,
+  .deep-entry, .deep-analysis, .deep-clarify, .report-disclaimer, .report-footer,
+  .facts-card, .preview-entry, .feedback-row {
     width: 720px; max-width: calc(100vw - 96px); box-sizing: border-box;
     margin-left: auto; margin-right: auto;
   }

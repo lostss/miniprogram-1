@@ -1,8 +1,8 @@
 /**
  * upsertFinances 字段白名单 + 别名归一化测试
  *
- * 背景：对话 AI 手写 updateFinances args 字段名不可控（曾产出 liability/monthly_expense_ex_premium），
- * 透传落库导致读取端（total_debt/fixed_annual_expense）读不到 → 只更新收入。
+ * 背景：对话 AI 手写 updateFinances args 字段名不可控（曾产出 liability 等别名），
+ * 透传落库导致读取端（total_debt）读不到 → 只更新收入。
  * 修复：upsertFinances 入口白名单 + 别名映射，非白名单字段丢弃。
  */
 const mockWs = {
@@ -41,23 +41,24 @@ beforeEach(() => {
 })
 
 describe('upsertFinances - 字段归一化', () => {
-  test('标准字段直通（annual_income/total_debt/fixed_annual_expense）', async () => {
+  test('标准字段直通（annual_income/total_debt/annual_premium_budget）', async () => {
     safeQuery.mockResolvedValue({ data: [] })
-    const r = await upsertFinances({}, 'fam_1', 'op_1', { annual_income: 250000, total_debt: 200000, fixed_annual_expense: 96000 })
+    const r = await upsertFinances({}, 'fam_1', 'op_1', { annual_income: 250000, total_debt: 200000, annual_premium_budget: 20000 })
     expect(r.code).toBe(200)
     expect(mockWs.silentAdd).toHaveBeenCalledWith('finances', expect.objectContaining({
-      annual_income: 250000, total_debt: 200000, fixed_annual_expense: 96000
+      annual_income: 250000, total_debt: 200000, annual_premium_budget: 20000
     }))
   })
 
-  test('A 通道别名（liability/monthly_expense_ex_premium）归一化到标准字段', async () => {
+  test('别名 liability 归一化；已移除字段（fixed_annual_expense/monthly_expense_ex_premium）丢弃', async () => {
     safeQuery.mockResolvedValue({ data: [] })
     const r = await upsertFinances({}, 'fam_1', 'op_1', { annual_income: 250000, liability: 200000, monthly_expense_ex_premium: 8000 })
     expect(r.code).toBe(200)
     const added = mockWs.silentAdd.mock.calls[0][1]
     expect(added.annual_income).toBe(250000)
     expect(added.total_debt).toBe(200000)
-    expect(added.fixed_annual_expense).toBe(8000)
+    // 2026-09-12 字段治理：固定支出已从数据模型移除，其历史别名不再映射
+    expect(added.fixed_annual_expense).toBeUndefined()
     // 别名键不应残留
     expect(added.liability).toBeUndefined()
     expect(added.monthly_expense_ex_premium).toBeUndefined()

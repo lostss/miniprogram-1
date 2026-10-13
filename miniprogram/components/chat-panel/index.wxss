@@ -3,7 +3,10 @@
 /* FAB 栏全高（88rpx 输入框 + 上下 sp-4×2 内边距），消息底部预留依赖此变量（消除 120rpx 魔法数） */
 .drag-bar { width:56rpx; height:6rpx; background:var(--accent-muted); border-radius:3rpx; margin:var(--sp-6) auto var(--sp-5); flex-shrink:0 }
 /* UI 打磨：标题区与消息区分层（底部金色细线呼应报告页 h1n 分割线语言） */
-.chat-title { text-align:center; margin-bottom:var(--sp-5); flex-shrink:0; display:flex; flex-direction:column; align-items:center; gap:var(--sp-1); padding-bottom:var(--sp-5); border-bottom:1rpx solid var(--border-accent); }
+.chat-title { text-align:center; margin-bottom:var(--sp-5); flex-shrink:0; display:flex; flex-direction:column; align-items:center; gap:var(--sp-1); padding-bottom:var(--sp-5); border-bottom:1rpx solid var(--border-accent); position:relative; }
+/* 审计 P3：原仅能点遮罩关闭（drag-bar 是 6rpx 装饰条，不可感知）→ 补显式关闭按钮 */
+.chat-close { position:absolute; right:var(--sp-3); top:50%; transform:translateY(-50%); width:88rpx; height:88rpx; display:flex; align-items:center; justify-content:center; border-radius:50% }
+.chat-close-icon { width:28rpx; height:28rpx; opacity:.6 }
 .chat-title-text { font-size:var(--fs-body); font-weight:var(--fw-semi); color:var(--text-primary); font-family:var(--font-serif); letter-spacing:var(--ls-wide) }
 .chat-title-sub { font-size:var(--fs-tiny); color:var(--text-tertiary); letter-spacing:var(--ls-wider) }
 .msg-list { flex:1; min-height:0; }
@@ -24,7 +27,9 @@
 /* UI 审计 #②：用户气泡 accent 白字 2.24:1 不达标，改深色文字（7.62:1） */
 .bubble.user { background:var(--accent); color:var(--btn-text-on-accent); border-radius:18rpx 6rpx 18rpx 18rpx; }
 
-.retry-btn { display:inline-flex; align-items:center; justify-content:center; margin-top:var(--sp-3); padding:var(--sp-2) var(--sp-5); border:1rpx solid var(--accent-muted); border-radius:var(--r-full); font-size:var(--fs-caption); color:var(--accent-deep); background:transparent }
+.retry-btn { position:relative; display:inline-flex; align-items:center; justify-content:center; margin-top:var(--sp-3); padding:var(--sp-2) var(--sp-5); border:1rpx solid var(--accent-muted); border-radius:var(--r-full); font-size:var(--fs-caption); color:var(--accent-deep); background:transparent }
+/* 2026-09-12 触控热区：padding-only 实际高约 40rpx，低于项目 88rpx 基准（伪元素透明外扩） */
+.retry-btn::after { content:''; position:absolute; left:0; right:0; top:50%; height:88rpx; transform:translateY(-50%); }
 .retry-btn:active { opacity:0.6 }
 
 /* 默认执行+撤销（②）：执行结果 + 撤销按钮 */
@@ -47,7 +52,9 @@
 .confirm-card-badge { font-size:var(--fs-tiny); color:var(--accent-deep); background:var(--accent-dim); border-radius:var(--r-full); padding:var(--sp-1) var(--sp-4); letter-spacing:var(--ls-wide); }
 .confirm-card-summary { font-size:var(--fs-base); line-height:var(--lh-body); color:var(--text-secondary); word-break:break-all; }
 .confirm-card-actions { display:flex; justify-content:flex-end; gap:var(--sp-3); }
-.confirm-btn { display:inline-flex; align-items:center; justify-content:center; min-width:120rpx; padding:var(--sp-3) var(--sp-6); border-radius:var(--r-full); font-size:var(--fs-caption); letter-spacing:var(--ls-wide); }
+.confirm-btn { position:relative; display:inline-flex; align-items:center; justify-content:center; min-width:120rpx; padding:var(--sp-3) var(--sp-6); border-radius:var(--r-full); font-size:var(--fs-caption); letter-spacing:var(--ls-wide); }
+/* 2026-09-12 触控热区：实际高约 48rpx，不足 88rpx；仅纵向外扩，横向不扩以免与相邻按钮热区重叠 */
+.confirm-btn::after { content:''; position:absolute; left:0; right:0; top:50%; height:88rpx; transform:translateY(-50%); }
 .confirm-btn--cancel { background:transparent; border:1rpx solid var(--border); color:var(--text-tertiary); }
 .confirm-btn--cancel:active { background:var(--bg-input); }
 .confirm-btn--ok { background:var(--accent); color:var(--btn-text-on-accent); }

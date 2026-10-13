@@ -12,6 +12,7 @@ function createReportAnalysis(deps) {
   const setData = deps.setData
   const onDone = deps.onDone // (cid) => void，成功路径回调（页面负责 _refreshReportSequence）
   const onBlocked = deps.onBlocked // (readiness) => void，422 门禁明细回调（页面负责渲染补全清单）
+  const getTone = deps.getTone // () => 'direct' | 'warm'，V1.5 语气模式（缺省时不下发 tone，保持既有请求形态）
   let _busy = false
   let _aborted = false
   let _tick = null
@@ -38,7 +39,10 @@ function createReportAnalysis(deps) {
     }, 1000)
     // R3v2 审计 #7：原 action 'reportAI' 未在 apiClient DIRECT_FN 注册（只有 generateReport）→ 功能永远失败
     // 改走 generateReport + 显式 60s 超时（reportAI 函数 timeout=60s，默认 30s 会先断+重试双份计费）
-    api('generateReport', { familyId: cid }, { timeout: 60000, retries: 0     }).then(q => {
+    // V1.5 语气模式：仅在用户切到共情版时下发 tone（缺省不下发 → 请求形态与历史一致）
+    const payload = { familyId: cid }
+    if (typeof getTone === 'function' && getTone() === 'warm') payload.tone = 'warm'
+    api('generateReport', payload, { timeout: 60000, retries: 0 }).then(q => {
       // 审计 P2-4：_disposed 检查必须最先——页面卸载后 setData 会告警（destroy 已 clear interval，此处重复 clear 无害）
       // P1-2 修复：myReq !== _reqSeq 表示本请求已被更新的 start 取代（cancel→restart），结果作废且不复位 _busy
       if (_disposed || myReq !== _reqSeq) return

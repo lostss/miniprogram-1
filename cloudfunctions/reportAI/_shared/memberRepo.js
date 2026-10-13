@@ -52,17 +52,16 @@ async function getMembers(db, familyId, openid) {
 async function getFinance(db, familyId, openid) {
   const res = await safeQuery(db, 'finances', { family_id: familyId }, openid)
   const f = res.data && res.data[0]
-  if (!f) return { income: null, debt: { amount: null, type: '' }, fixed_expense: null, annual_premium_budget: null }
+  if (!f) return { income: null, debt: { amount: null, type: '' }, annual_premium_budget: null }
   return {
     income: _toWan(f.annual_income, f.income),
     debt: { amount: _toWan(f.total_debt, f.debt), type: f.debt_type || '' },
-    fixed_expense: _toWan(f.fixed_annual_expense, f.fixed_expense),
     annual_premium_budget: f.annual_premium_budget != null ? f.annual_premium_budget : null
   }
 }
 
-/** 元 → 万（数值审计 #1）：newVal 为元键（annual_income/total_debt/fixed_annual_expense）÷10000 转万；
- *  fallbackVal 为旧万键（income/debt/fixed_expense，表单路径曾存万）原样返回。
+/** 元 → 万（数值审计 #1）：newVal 为元键（annual_income/total_debt）÷10000 转万；
+ *  fallbackVal 为旧万键（income/debt，表单路径曾存万）原样返回。
  *  原实现对 fallback 也 ÷10000 导致 80 万 → 0.01 万（10000× 塌缩）。 */
 function _toWan(newVal, fallbackVal) {
   if (newVal != null) {
@@ -78,13 +77,22 @@ function _toWan(newVal, fallbackVal) {
 }
 
 /** 按 member_id / _id / name 定位成员文档 */
-async function findMember(db, familyId, openid, key) {
+// 2026-09-22 全面审计 P2：三次定位都必须排除软删成员（status:'deleted'）。
+// 原实现不过滤 → 已删成员仍可被 queryMemberProfile 读出（含属性与保单）、
+// 也能被 upsertMember/setMemberField 改写，与 getMembers（本文件 L48）和
+// queryMembers（entity-query）的既定口径不一致。
+// 2026-09-28 补：`opts.includeDeleted` 供**写入侧**定位（upsertMember）—— 那里必须能看见软删成员，
+// 否则会为同一个人另建一条文档（实测复现）；过滤用于读侧，写入侧命中后恢复 status='active'。
+async function findMember(db, familyId, openid, key, opts) {
   if (!key) return null
-  let res = await safeQuery(db, 'members', { family_id: familyId, member_id: key }, openid)
+  const includeDeleted = !!(opts && opts.includeDeleted)
+  const notDeleted = db.command.neq('deleted')
+  const withStatus = (where) => (includeDeleted ? where : Object.assign({}, where, { status: notDeleted }))
+  let res = await safeQuery(db, 'members', withStatus({ family_id: familyId, member_id: key }), openid)
   if (res.data && res.data.length > 0) return res.data[0]
-  res = await safeQuery(db, 'members', { family_id: familyId, _id: key }, openid)
+  res = await safeQuery(db, 'members', withStatus({ family_id: familyId, _id: key }), openid)
   if (res.data && res.data.length > 0) return res.data[0]
-  res = await safeQuery(db, 'members', { family_id: familyId, name: key }, openid)
+  res = await safeQuery(db, 'members', withStatus({ family_id: familyId, name: key }), openid)
   return (res.data && res.data[0]) || null
 }
 
@@ -143,14 +151,21 @@ async function upsertMember(db, familyId, openid, { memberId, memberName, role, 
   const checkConflict = confirmOnConflict && !confirmed
 
   // 优先 memberId
+  // 2026-09-28 全面审计 P2（已实测复现）：`findMember` 自 09-22 起会过滤软删成员 →
+  // 传一个**已软删**成员的 memberId 时会落空，直接掉进下方创建分支，为同一个人**多建一条**
+  // members 文档（只传 occupation 时新文档连 name 都没有）。README 自己写过"同一个人被登记成
+  // 两条成员记录（污染成员主数据）比挂错更糟"。现：定位时**包含**软删，命中则恢复 status='active'。
   if (memberId) {
-    const existing = await findMember(db, familyId, openid, memberId)
+    const existing = await findMember(db, familyId, openid, memberId, { includeDeleted: true })
     if (existing) {
       if (checkConflict) {
         const conflict = _detectMemberConflict(existing, cleanData, userProvidedBirth)
         if (conflict) return { code: 409, needsConfirm: true, msg: '与历史信息矛盾，需代理人确认', data: { memberId: existing.member_id, action: 'pending_confirm', conflict, proposed: cleanData } }
       }
       const ws = writeSeam(db, openid, familyId)
+      // 与 family-write._syncMembers 的 S3-6 同口径：重新写回的成员必须回到在册状态，
+      // 否则"更新成功"却在前端列表/画像/报告里都看不到
+      if (existing.status === 'deleted') updateData.status = 'active'
       await ws.silentUpdateDoc('members', existing._id, updateData)
       await ws.triggerHooks()
       return { code: 200, data: { memberId: existing.member_id, action: 'updated' } }
@@ -158,6 +173,9 @@ async function upsertMember(db, familyId, openid, { memberId, memberName, role, 
   }
 
   // memberName + role 匹配
+  // 2026-09-28 审计 P2（已实测复现）：此处不过滤软删 —— 用户说"谢敏是教师"时，谢敏若是被软删的，
+  // 原实现会命中那条已删文档、写入成功并回 200「updated」，但成员在列表/画像/报告里始终不可见
+  // （假成功）。现命中软删文档时一并恢复 status='active'（与 _syncMembers 的 S3-6 同口径）。
   if (memberName) {
     const query = { family_id: familyId, name: memberName }
     if (role) query.role = role
@@ -169,6 +187,7 @@ async function upsertMember(db, familyId, openid, { memberId, memberName, role, 
         if (conflict) return { code: 409, needsConfirm: true, msg: '与历史信息矛盾，需代理人确认', data: { memberId: ex.member_id, action: 'pending_confirm', conflict, proposed: cleanData } }
       }
       const ws = writeSeam(db, openid, familyId)
+      if (ex.status === 'deleted') updateData.status = 'active'
       await ws.silentUpdateDoc('members', ex._id, updateData)
       await ws.triggerHooks()
       return { code: 200, data: { memberId: ex.member_id, action: 'updated' } }
@@ -176,6 +195,8 @@ async function upsertMember(db, familyId, openid, { memberId, memberName, role, 
   }
 
   // 不存在 → 创建
+  // 2026-09-28 审计 P2：无名字不得建档（原实现能落出一条没有 name 的成员文档）
+  if (!memberName && !data.name) return { code: 400, msg: '成员缺少姓名' }
   const newMemberId = 'mem_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6)
   const newMember = {
     member_id: newMemberId,
@@ -227,29 +248,37 @@ async function updateMemberFields(db, familyId, openid, memberId, fields) {
 }
 
 // ---------- finances: upsert by family_id (singleton) ----------
-// 字段白名单 + 别名归一化：对话 AI 手写 args 字段名不可控（曾产出 liability/monthly_expense_ex_premium
-// 等别名），透传落库会导致读取端（total_debt/fixed_annual_expense）读不到。此处只接受标准字段并映射别名，
+// 字段白名单 + 别名归一化：对话 AI 手写 args 字段名不可控（曾产出 liability 等别名），
+// 透传落库会导致读取端（total_debt）读不到。此处只接受标准字段并映射别名，
 // 非白名单字段一律丢弃，防止静默写入脏字段。
+// 2026-09-12 字段治理：fixed_annual_expense / fixed_expense / monthly_expense(_ex_premium) 已移除——
+// 该字段不参与任何计算或结论；历史落库值保留在文档中但不再读写。传入这些键会被当成非白名单静默丢弃。
 const FINANCE_FIELD_MAP = {
   annual_income: 'annual_income',
-  income: 'annual_income',
   total_debt: 'total_debt',
-  debt: 'total_debt',
-  liability: 'total_debt',
-  fixed_annual_expense: 'fixed_annual_expense',
-  fixed_expense: 'fixed_annual_expense',
-  monthly_expense_ex_premium: 'fixed_annual_expense',
-  monthly_expense: 'fixed_annual_expense',
   debt_type: 'debt_type',
-  annual_premium_budget: 'annual_premium_budget'
+  annual_premium_budget: 'annual_premium_budget',
+  // 输入别名 —— **与规范键同单位（元）**，语义由 tests/walkthrough-e2e 钉住（`income:30` → `annual_income:30`）。
+  //
+  // ⚠️ 2026-09-27 澄清（这条口径已被反复误读：曾被审计报为"万键写进元字段 → 少报 10000×"）：
+  // 这里的 `income` / `debt` 是**入参键名**；而读侧 `_toWan(f.annual_income, f.income)` 兼容的是
+  // **存量文档里的旧字段**（历史 `financial_snapshot` 表单路径把万写进过 `finances.income/debt`），
+  // 后者单位是**万**。两者同名不同事 —— 这正是误读的根源。实证（2026-09-27 线上）：唯一 `finances`
+  // 文档存的是 `annual_income:300000` / `total_debt:150000`（元），**从无旧万键落库**；
+  // 且前端财务编辑走 edit-form → `financial_snapshot`(万) → `updateFamily` → family-write 已 `wanToYuan`，
+  // 不经此映射。故此处**不做 ×10000 换算**（换算等于替调用方假定语义，会反向放大 10000 倍），
+  // 也**不拒绝**（会改掉被测试钉住的既有契约）。
+  income: 'annual_income',
+  debt: 'total_debt',
+  liability: 'total_debt'
 }
 function _normalizeFinancePatch(patch) {
-  const out = {}
+  const norm = {}
   for (const key of Object.keys(patch || {})) {
     const std = FINANCE_FIELD_MAP[key]
-    if (std) out[std] = patch[key]
+    if (std) norm[std] = patch[key]
   }
-  return out
+  return norm
 }
 async function upsertFinances(db, familyId, openid, patch) {
   const norm = _normalizeFinancePatch(patch)
@@ -294,13 +323,11 @@ async function createMembersForFamily(db, familyId, openid, members) {
   return created.map((res, i) => ({ ...docs[i], _id: res && res._id }))
 }
 
-/** 删除家庭时级联清空成员文档 */
-async function deleteMembersForFamily(db, familyId, openid) {
-  try {
-    const res = await safeQuery(db, 'members', { family_id: familyId }, openid)
-    await Promise.all((res.data || []).map(m => db.collection('members').doc(m._id).remove().catch(() => {})))
-  } catch (_) { /* 静默 */ }
-}
+// 2026-09-27 删除（dsh 审计 P3 · 死代码）：`deleteMembersForFamily` 已移除。
+// 它原先是「删除家庭时事务外静默清成员」，已被 family-write._updateFamilyDelete 的
+// batchTx 级联（`ws.batchRemove('members', …)`）取代 —— 后者失败可感知（触发 207 保留 family 可重试），
+// 而本函数 `try/catch` 静默吞错，正是"家庭已删但成员孤儿残留"的成因。
+// 全仓 grep 确认零调用方（仅定义 + 本文件导出 + family-write 里一处历史注释），故直接删除。
 
 // ---------- ② 默认执行+撤销（2026-08-30）：写前快照与恢复 ----------
 /** 写前财务快照（撤销定位用）：返回 finances 文档全文，无则 null（新建场景） */
@@ -376,7 +403,7 @@ async function restoreMember(db, familyId, openid, before, after) {
 module.exports = {
   getMembers, getFinance, findMember,
   upsertMember, setMemberField, updateMemberFields,
-  upsertFinances, createMembersForFamily, deleteMembersForFamily,
+  upsertFinances, createMembersForFamily,
   snapshotFinance, snapshotMember, restoreFinance, restoreMember,
   _MEMBER_FIELDS, _MEMBER_FIELD_ZH, FINANCE_FIELD_MAP, calcAgeYears, _shapeMember
 }

@@ -15,11 +15,13 @@
 const { buildStructuredCoverage } = require('./report-coverage')
 const { yuanToWan } = require('./_shared/amount')
 const { evaluateCoverage } = require('./_shared/gap-core')
+// 2026-09-22：一年期判定的单一实现（短险单列用，与 reportPdf/页面同源）
+const { isOneYearPolicy } = require('./_shared/policy-status')
 
 /**
  * 保单汇总数据预计算 Markdown（禁止 AI 自行推算）
  * @param {array} policies - 保单数组（已 ensureStatus）
- * @param {object} snap - financial_snapshot { income, debt, fixed_expense }
+ * @param {object} snap - financial_snapshot { income, debt }
  * @returns {string}
  */
 function buildSummaryMd(policies, snap) {
@@ -37,19 +39,21 @@ function buildSummaryMd(policies, snap) {
   lines.push(income > 0
     ? `- 年保费合计：${totalPremium}元（占家庭年收入 ${premiumRatio}%）`
     : `- 年保费合计：${totalPremium}元（家庭年收入未填写，不计算占收入比）`)
+  // 总保额含医疗险报销年限额（2026-09-22 决策：条款自身即称"保险金额=各项医疗费用保险金年限额之和"，
+  // 不按报销型/给付型拆分，详见 docs/data-model-v2.md「保额口径」）。需要注意的是**期限**而非类型。
   lines.push(`- 有效保单总保额：${Number((totalSumAssured / 10000).toFixed(1))}万`)
+  // 2026-09-22（沿用 2026-09-04「一年期短险单独聚合」决策；该决策原先只落到报告页摘要卡，
+  // PDF 与 AI 上下文都没有）：总保额里混着一/年期报销型限额，直接引用会虚高保障感。
+  // 这里单列一行并**明确引用口径** —— 否则模型会照抄"总保额 2310 万"当作长期保障厚度。
+  const shortTermWan = Number((activePolicies.reduce((s, p) => s + (isOneYearPolicy(p) ? (p.sum_assured || 0) : 0), 0) / 10000).toFixed(1))
+  if (shortTermWan > 0) lines.push(`- 其中一年期短险：${shortTermWan}万（每年需续保；引用"总保额"时必须同时说明这一部分，勿表述为长期保障厚度）`)
   lines.push(`- 有效保单：${activePolicies.length}份 | 已失效/过期：${expiredCount}份`)
   if (s.debt) {
     const d = s.debt
     const dVal = d && typeof d === 'object' ? ((d.amount || 0) + (d.type ? '（' + d.type + '）' : '')) : d
-    lines.push(`- 家庭负债：${dVal}`)
+    lines.push(`- 家庭总负债：${dVal}`)
   }
-  // 口径修复（2026-09-06）：曾误标"固定月支出"致 AI 把年支出写成"每月 X 万"。
-  // 数值（真实 finances 路径 _financeSnap 元→万年口径）标"（年）…万"；字符串（历史/带单位）原样透出，不硬标月/年避免误导
-  if (s.fixed_expense) {
-    const fe = s.fixed_expense
-    lines.push(typeof fe === 'number' ? `- 固定支出（年）：${fe}万` : `- 固定支出：${fe}`)
-  }
+  // 2026-09-12 字段治理：固定支出已从数据模型移除（不参与任何计算/结论），不再注入 AI 上下文
   return lines.join('\n')
 }
 
@@ -65,7 +69,7 @@ function buildSummaryMd(policies, snap) {
  * 同算法 → 同数字。本函数自此只做 Markdown 格式化，不做任何计算。
  *
  * @param {array} policies - 已 ensureStatus 的保单数组
- * @param {object} snap - 财务快照 { income(万), debt(万|{amount,type}), fixed_expense }
+ * @param {object} snap - 财务快照 { income(万), debt(万|{amount,type}) }
  * @param {array} members - 家庭成员列表（含 name/role/income(万)）
  * @returns {string}
  */
@@ -107,7 +111,23 @@ function buildPrevReportMd(familyMeta) {
   if (fm.last_conclusion) prev.push('**上一版结论**：' + fm.last_conclusion)
   if (fm.last_summary) prev.push('**上一版摘要**：' + fm.last_summary)
   if (!prev.length) return ''
-  return '## 上一版报告结论（参考，禁止照抄，以当前数据为准重新生成）\n' + prev.join('\n')
+  // 2026-09-22（数据质量批次 3）：把"上一版是否已过期"一并透给模型。
+  // insight_stale=true 表示**上一版分析之后家庭数据又被改过**（writeSeam 每次写入置位）。
+  // 原先只给结论与摘要 → 模型能看到"与当前数据的差异"，却看不出**原因**，
+  // 于是 prompt 里那条「若上次说缺重疾险、这次已有，在 review 中说明变化」无从执行：
+  // 它无法区分"上一版说错了"与"数据变了"。补这一行后两条路径才可分。
+  const staleLine = fm.insight_stale
+    ? '⚠️ 上一版生成于 ' + _fmtMetaDate(fm.last_analysis_at) + '，**此后家庭数据已发生变更**——若与下方当前数据冲突，一律以当前数据为准，并在 review 中说明变化（禁止照抄旧结论）。'
+    : ''
+  return '## 上一版报告结论（参考，禁止照抄，以当前数据为准重新生成）\n' +
+    (staleLine ? staleLine + '\n' : '') + prev.join('\n')
+}
+
+/** 日期（仅到天，供上一版参考标注用；解析不出时给中性表述而非 invalid date） */
+function _fmtMetaDate(ts) {
+  const d = ts ? new Date(ts) : null
+  if (!d || isNaN(d.getTime())) return '较早时间'
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
 }
 
 /**
@@ -118,7 +138,7 @@ function buildPrevReportMd(familyMeta) {
  */
 function _financeSnap(v2ctx, familyMeta) {
   const fin = (v2ctx && v2ctx.datasets && v2ctx.datasets.finances && v2ctx.datasets.finances[0]) || {}
-  const has = fin && (fin.annual_income != null || fin.income != null || fin.total_debt != null || fin.debt != null || fin.fixed_annual_expense != null || fin.fixed_expense != null)
+  const has = fin && (fin.annual_income != null || fin.income != null || fin.total_debt != null || fin.debt != null)
   if (!has) return (familyMeta && familyMeta.financial_snapshot) || {}
   // 元键（annual_income 等）→ 万；旧万键（income 等）原样
   const wan = function (newVal, fallbackVal) {
@@ -129,7 +149,6 @@ function _financeSnap(v2ctx, familyMeta) {
   const snap = {}
   if (fin.annual_income != null || fin.income != null) snap.income = wan(fin.annual_income, fin.income)
   if (fin.total_debt != null || fin.debt != null) snap.debt = { amount: wan(fin.total_debt, fin.debt), type: fin.debt_type || '' }
-  if (fin.fixed_annual_expense != null || fin.fixed_expense != null) snap.fixed_expense = wan(fin.fixed_annual_expense, fin.fixed_expense)
   return snap
 }
 

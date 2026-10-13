@@ -37,8 +37,8 @@
   /* 2026-09-06：默认档段落距 16→12rpx，与紧凑档(8rpx)差距收敛为 1.5 倍，报告页内密度观感更顺 */
   margin: var(--sp-3) 0;
   color: var(--text-primary);
-  /* 2026-09-06 可读性：中文长文两端对齐，边列整齐 */
-  text-align: justify;
+  /* 2026-09-12：移除 text-align:justify。汉字等宽、天然齐右，justify 对 CJK 收益极小，却在
+     短段与中英混排时把字距拉开；且 Android WebView 的 CJK justify 支持不一致。 */
 }
 
 .md-br {
@@ -770,16 +770,21 @@
 .markdown-container--compact .md-paragraph { margin: var(--sp-2) 0; }
 
 /* ============================================================
-   报告阅读语境（2026-09-09）：报告页长文正文 28→30rpx、段距 12→16rpx。
+   报告阅读语境（2026-09-09）：报告页长文正文放大一档、段距 12→16rpx。
    背景：截图实测大段点评/建议在手机上偏小偏密；此档只作用于传 variant="report" 的调用，
    聊天气泡（compact）不受影响。
+   2026-09-12：原硬编码 font-size:30rpx（4 处）——30 不在字号阶梯内（app.wxss 注释明确
+   "消除 26/30 两档"），等于为修可读性又造了一个阶梯外中间值。改用阶梯内最高正文档
+   --fs-lg(32rpx)：既回到 token（不再有孤立硬编码），又顺带把报告正文从 30 提到 32rpx。
    ============================================================ */
-.markdown-container--report { font-size: 30rpx; line-height: var(--lh-body); }
-.markdown-container--report .md-paragraph { margin: var(--sp-4) 0; font-size: 30rpx; }
+/* 2026-09-13：正文改用独立的 --fs-reading（长文阅读档），标题仍用 --fs-lg/--fs-xl——
+   这样"只调报告正文"不会牵动章节号与卡片标题的层级。 */
+.markdown-container--report { font-size: var(--fs-reading); line-height: var(--lh-body); }
+.markdown-container--report .md-paragraph { margin: var(--sp-4) 0; font-size: var(--fs-reading); }
 .markdown-container--report .md-list { margin: var(--sp-4) 0; }
 .markdown-container--report .list-item { margin: var(--sp-2) 0; }
 .markdown-container--report .list-text,
-.markdown-container--report .list-num { font-size: 30rpx; }
+.markdown-container--report .list-num { font-size: var(--fs-reading); }
 .markdown-container--report .list-subline { font-size: var(--fs-caption); line-height: var(--lh-body); }
 .markdown-container--report .md-heading--4,
 .markdown-container--report .md-heading--5,

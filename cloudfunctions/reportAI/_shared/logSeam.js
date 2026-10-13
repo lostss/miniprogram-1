@@ -1,5 +1,17 @@
 /**
- * logSeam.js — 统一日志写入缝（agent_logs + operation_logs 单一事实源）
+ * logSeam.js — 统一日志写入缝：**业务层 CRUD 审计 + AI 生命周期日志**的唯一入口。
+ *
+ * ⚠️ 措辞修正（2026-09-24 口径自查）：旧版头部写「agent_logs + operation_logs **单一事实源**」，
+ * 属**过度声明** —— 这两个集合另有两条**有意**直写路径，它们不是违规，别去"修"：
+ *   ① `_shared/ai-client.js` 的 `_defaultObserve`：AI 调用级观测默认落 operation_logs，
+ *      字段用 `logAction`（与 CRUD 审计的 `action` **刻意区分**，看板据此分流）；
+ *      函数入口可用 `setAiObserver` 覆盖为自定义写路径。
+ *   ② `_shared/member-matcher.js`：匹配结果审计走 `wsLog.silentAdd('operation_logs', ...)`
+ *      —— 该调用**无 familyId 钩子**，故不走 logOperation。
+ *   ③ 业务指标追加：`logAI` 返回的 `logId` 供函数层 `db.collection('agent_logs').doc(logId).update(...)`
+ *      追加自定义字段（见 ai-gateway.js 用法示例）—— 只追加**业务字段**，不要改 status
+ *      （status 走 `updateLogStatus`，它是有意收敛的那一处）。
+ * 本文件负责的是 `logAI`（agent_logs 生命周期 + `updateLogStatus` 追加）与 `logOperation`（CRUD 审计）。
  *
  * 解决问题：架构审计第 6 轮发现 agent-log.js + operation-logger.js 都是伪共享，
  * 4 处绕过直接 db.collection().add()，schema 各自漂移。本模块统一所有日志写入。
@@ -18,7 +30,7 @@
  * @param {object} entry
  *   - openid, action（必填）
  *   - familyId?, sessionId?, model?, status?
- *   - tokens? { input, output, total }, cost?
+ *   - tokens? { input, output, total }, cost?, currency?
  *   - tools?, metrics?
  *   - userText?, replyText?, outputCards?, rawText?
  *   - activatedDimensions?, coreInsights?
@@ -42,6 +54,10 @@ async function logAI(db, entry) {
       // AI 调用指标
       tokens: entry.tokens || null,
       cost: entry.cost != null ? entry.cost : null,
+      // 2026-09-15：cost 必须与货币同时落库——hy3 是 USD、deepseek-* 是 CNY，
+      // 不带 currency 时跨模型求和会静默把两种货币当同一种（config.PRICING 有专门警告）。
+      // 此前 calcTokenUsage 已返回 currency，但无任何消费点持久化它 → 警告实际不可执行。
+      currency: entry.currency || '',
       // 工具执行
       tools: entry.tools || [],
       metrics: entry.metrics || {},

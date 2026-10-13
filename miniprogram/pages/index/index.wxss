@@ -1,6 +1,12 @@
 /* ========== 页面容器 ========== */
-.page { background:var(--bg-root); padding:0 var(--sp-6); padding-bottom:calc(120rpx + env(safe-area-inset-bottom)) }
-.page-fixed { overflow:hidden }
+/* 2026-09-12 修复：底部留白须躲开 FAB。.fab 为 fixed、bottom=calc(--sp-8 + safe)=48rpx+safe、
+   直径 96rpx → 占据底部 48→144rpx。原留白 120rpx 比 FAB 顶端矮 24rpx，最后一张卡底部被压住、
+   长按删除触点也落在遮挡区。176rpx = 144 + 32rpx 间隙。 */
+.page { background:var(--bg-root); padding:0 var(--sp-6); padding-bottom:calc(176rpx + env(safe-area-inset-bottom)) }
+/* 2026-09-22 修复（UX 审计 P2）：原 `overflow:hidden` 在空态把超出视口的内容直接**裁掉且无法滚动**
+   （空态实测约 780rpx 起：brand-header 120 + 上传框 200 + 步骤 80 + 提示 100 + 新增建档入口 88+48），
+   系统大字号/小屏机型下底部内容不可达。改为可滚动（无溢出时行为与原来一致）。 */
+.page-fixed { overflow-y:auto; -webkit-overflow-scrolling:touch }
 
 /* ========== 品牌头 ========== */
 .brand-header { padding-top:var(--sp-13); padding-bottom:var(--sp-7) }
@@ -21,6 +27,9 @@
 .ob-step-line { width:48rpx; height:1rpx; background:var(--border); margin-bottom:28rpx }
 .empty-hint { text-align:center; padding-top:100rpx }
 .empty-hint-text { font-size:var(--fs-caption); color:var(--text-tertiary); letter-spacing:2rpx }
+/* 2026-09-22：空态手动建档入口（UX 审计 P1）。88rpx 命中区 + 文字链视觉。 */
+.empty-create { display:inline-flex; align-items:center; justify-content:center; min-height:88rpx; margin-top:48rpx; padding:0 var(--sp-5); font-size:var(--fs-caption); color:var(--accent-deep); border-bottom:1rpx solid var(--border-accent) }
+.empty-create:active { opacity:0.6 }
 
 /* UI 审计 R-M5：首页加载错误态 */
 .load-error { display:flex; flex-direction:column; align-items:center; gap:var(--sp-3); margin-top:var(--sp-6) }

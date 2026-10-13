@@ -1,7 +1,7 @@
 /**
  * amount.js — 金额单位契约（架构审计 #1 实施）
  *
- * 权威口径：DB 金额字段统一存**元**（finances.annual_income/total_debt/fixed_annual_expense、
+ * 权威口径：DB 金额字段统一存**元**（finances.annual_income/total_debt、
  * policies.sum_assured/annual_premium）；展示/对话/AI 上下文统一转**万**。
  * 所有 元↔万 换算必须经本文件，禁止散落 `/10000`、`*10000`、`/100/100`（防口径漂移）。
  * 换算结果与历史实现逐位一致：元→万保留 2 位小数（Math.round(n/100)/100）。

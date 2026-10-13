@@ -10,14 +10,25 @@
  */
 const session = require('./session-store')
 const api = require('./apiClient')
+// 2026-09-20（复核批次 A）：删除家庭后清聊天历史快照。复用 history-store 的模块级 invalidate
+// （与"会话内新消息后作废快照"同一实现），避免在此手写 'chat_history_' 前缀造成魔法字符串漂移。
+const { invalidate: invalidateChatCache } = require('./history-store')
 
 // 首页最近客户缓存键（index 页读写与删除清理共用同一常量，防魔法字符串漂移）
 const HOME_CACHE_KEY = 'homeRecentClients'
+// 全部客户页缓存键（clients 页冷启动秒开渲染；删除家庭时与首页缓存一并清理，防已删家庭闪回）
+const CLIENTS_CACHE_KEY = 'clientsAllList'
 
 // 跳转到家庭报告页（设置 activeFamily + navigateTo）
 function navigateToFamily(familyId) {
   session.setActiveFamily(familyId)
-  wx.navigateTo({ url: '/pages/report/index?familyId=' + familyId })
+  // 2026-09-22 全面审计（前端 P3）：补 fail 分支。导航失败（栈超限/URL 异常）此前是**完全静默**的
+  // ——点击后什么都没发生，用户只会反复点。同页 ocr-flow 的 chooseMedia、报告页 onExitPreview
+  // 都有 fail 兜底，此处对齐。
+  wx.navigateTo({
+    url: '/pages/report/index?familyId=' + familyId,
+    fail: function() { wx.showToast({ title: '打开失败，请重试', icon: 'none' }) }
+  })
 }
 
 // 确认删除家庭（ActionSheet"删除" → Modal 二次确认 → deleteFamily → toast → onSuccess）
@@ -53,7 +64,12 @@ function confirmDeleteFamily(opts) {
               // 存储审计 P1：删除家庭后清理本地残留——last_family_id 指向已删 ID（现价表 404）、
               // match_cache 5min 内把同名新家庭路由到旧 ID（写错家庭）、homeRecentClients 陈旧
               if (session.getActiveFamily() === familyId) session.clear()
-              try { wx.removeStorageSync('match_cache'); wx.removeStorageSync(HOME_CACHE_KEY) } catch (e) {}
+              // 2026-09-20（复核批次 A）：补清聊天历史快照。原三键清单漏了它——家庭档案已删，
+              // 本地仍留着该家庭的全部对话（小秘回答里含保额/家庭情况等 PII），而快照是
+              // 按 familyId 存的独立 key，随家庭数增长（每个约十余条消息），逼近小程序 10MB 上限。
+              // 语义与 invalidate 的原用途一致：数据源已变 → 快照作废。
+              invalidateChatCache(familyId)
+              try { wx.removeStorageSync('match_cache'); wx.removeStorageSync(HOME_CACHE_KEY); wx.removeStorageSync(CLIENTS_CACHE_KEY) } catch (e) {}
               if (typeof onSuccess === 'function') onSuccess()
             } else {
               wx.showToast({ title: (r2.code === 207 ? '仍有部分数据未能清理，请稍后重试' : (r2.msg || '删除失败')), icon: 'none' })
@@ -68,4 +84,4 @@ function confirmDeleteFamily(opts) {
   })
 }
 
-module.exports = { navigateToFamily, confirmDeleteFamily, HOME_CACHE_KEY }
+module.exports = { navigateToFamily, confirmDeleteFamily, HOME_CACHE_KEY, CLIENTS_CACHE_KEY }

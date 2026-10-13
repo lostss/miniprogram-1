@@ -279,6 +279,20 @@ describe('ai-gateway', () => {
         .rejects.toThrow('AI service unavailable')
       expect(rawCallChat).toHaveBeenCalledTimes(1)
     })
+
+    test('14b. AI 调用失败也落 agent_logs 且带 tokens/cost（err.usage 透传，2026-09-12）', async () => {
+      const messages = [{ role: 'user', content: '你好' }]
+      const err = new Error('ai_empty')
+      err.code = 'ai_empty'
+      err.usage = { prompt_tokens: 600, completion_tokens: 0, total_tokens: 600 }
+      await expect(safeCallChat(messages, jest.fn(() => Promise.reject(err)), ctx, {}))
+        .rejects.toThrow('ai_empty')
+      expect(logSeam.logAI).toHaveBeenCalledWith(ctx.db, expect.objectContaining({
+        status: 'fail',
+        tokens: expect.objectContaining({ input: 600, total: 600 }),
+        error: expect.objectContaining({ code: 'AI_CALL_FAIL', reason: 'ai_empty' })
+      }))
+    })
   })
 
   describe('月度 token 配额', () => {
@@ -316,10 +330,54 @@ describe('ai-gateway', () => {
 
       expect(result.text).toBe('hello')
       expect(quotaDb.collection).toHaveBeenCalledWith('agents')
-      expect(where).toHaveBeenCalledWith({ openid: 'openid_test', _openid: 'openid_test' })
-      expect(update).toHaveBeenCalledWith({
-        data: { token_used_monthly: { $inc: 150 }, token_used_total: { $inc: 150 } }
+      // 2026-09-22 全面审计 P1-2/P1-3：定位键由 {openid,_openid} 改为 {openid, quota_period: 本月}
+      // —— _openid 条件对「历史文档缺 _openid」命中 0 条会走补建分支造出第二份 agents 档案，
+      // 使配额校验取到无 limit 的那份而永久失效；quota_period 则承担跨月重置判据。
+      expect(where).toHaveBeenCalledWith(expect.objectContaining({ openid: 'openid_test' }))
+      const upd = update.mock.calls[0][0].data
+      expect(upd.token_used_monthly).toEqual({ $inc: 150 })
+      expect(upd.token_used_total).toEqual({ $inc: 150 })
+      expect(typeof upd.quota_period).toBe('string')
+      expect(upd.quota_period).toMatch(/^\d{4}-\d{2}$/)
+    })
+
+    test('20. agents 未建档（update 命中 0）→ 补建文档（原实现静默丢弃，配额虚高）', async () => {
+      const add = jest.fn().mockResolvedValue({ _id: 'a1' })
+      const update = jest.fn().mockResolvedValue({ stats: { updated: 0 } })
+      const quotaDb = {
+        command: { inc: v => ({ $inc: v }) },
+        collection: jest.fn(() => ({ where: jest.fn(() => ({ update })), add }))
+      }
+      await safeCallChat(
+        [{ role: 'user', content: 'hi' }],
+        jest.fn(() => ({ text: 'hello', usage: { prompt_tokens: 100, completion_tokens: 50 } })),
+        { cloud, db: quotaDb, openid: 'openid_test' },
+        {}
+      )
+      expect(add).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          openid: 'openid_test', _openid: 'openid_test',
+          token_used_monthly: 150, token_used_total: 150
+        })
       })
+    })
+
+    test('21. 补建时并发冲突（add 抛错）→ 回退再累加一次', async () => {
+      const update = jest.fn()
+        .mockResolvedValueOnce({ stats: { updated: 0 } })
+        .mockResolvedValueOnce({ stats: { updated: 1 } })
+      const add = jest.fn().mockRejectedValue(new Error('duplicate key'))
+      const quotaDb = {
+        command: { inc: v => ({ $inc: v }) },
+        collection: jest.fn(() => ({ where: jest.fn(() => ({ update })), add }))
+      }
+      await safeCallChat(
+        [{ role: 'user', content: 'hi' }],
+        jest.fn(() => ({ text: 'hello', usage: { prompt_tokens: 10, completion_tokens: 5 } })),
+        { cloud, db: quotaDb, openid: 'openid_test' },
+        {}
+      )
+      expect(update).toHaveBeenCalledTimes(2)
     })
 
     test('17. 配额累加失败不阻断主流程（update 抛错仍返回结果）', async () => {
@@ -342,9 +400,10 @@ describe('ai-gateway', () => {
 
     test('18. calcTokenUsage：OpenAI 格式与驼峰格式映射', () => {
       // 未传 model（或未登记模型）→ 回落旧口径 COST_PER_1K，精度提到 6 位（原 4 位会把 0.00012 抹成 0.0001）
-      expect(calcTokenUsage({ prompt_tokens: 100, completion_tokens: 50 })).toEqual({ input: 100, output: 50, total: 150, cost: 0.0006 })
-      expect(calcTokenUsage({ input_tokens: 10, output_tokens: 20, totalTokens: 30 })).toEqual({ input: 10, output: 20, total: 30, cost: 0.00012 })
-      expect(calcTokenUsage({})).toEqual({ input: 0, output: 0, total: 0, cost: 0 })
+      // 2026-09-15：返回值新增 currency（未命中模型按 CNY）——消费方禁止跨货币直接相加 cost
+      expect(calcTokenUsage({ prompt_tokens: 100, completion_tokens: 50 })).toEqual({ input: 100, output: 50, total: 150, cost: 0.0006, currency: 'CNY' })
+      expect(calcTokenUsage({ input_tokens: 10, output_tokens: 20, totalTokens: 30 })).toEqual({ input: 10, output: 20, total: 30, cost: 0.00012, currency: 'CNY' })
+      expect(calcTokenUsage({})).toEqual({ input: 0, output: 0, total: 0, cost: 0, currency: 'CNY' })
     })
 
     test('18b. calcTokenUsage：按模型计价并拆分缓存命中（DeepSeek V4.1 Flash）', () => {
@@ -353,10 +412,12 @@ describe('ai-gateway', () => {
         { prompt_tokens: 1500, completion_tokens: 1000, prompt_cache_hit_tokens: 500 },
         'deepseek-flash'
       )
-      expect(r).toEqual({ input: 1500, output: 1000, total: 2500, cost: 0.00501 })
+      expect(r).toEqual({ input: 1500, output: 1000, total: 2500, cost: 0.00501, currency: 'CNY' })
       // 缓存命中部分超过 input 时不出现负数成本（防御异常 usage）
       const r2 = calcTokenUsage({ prompt_tokens: 10, completion_tokens: 0, prompt_cache_hit_tokens: 999 }, 'deepseek-flash')
       expect(r2.cost).toBeGreaterThanOrEqual(0)
+      // 货币随模型变动：hy3 计价单位是 USD（跨模型汇总前必须按 currency 分组，否则两种货币被当同一种相加）
+      expect(calcTokenUsage({ prompt_tokens: 100, completion_tokens: 100 }, 'hy3').currency).toBe('USD')
     })
 
     test('19. bumpAgentTokens：DB 无 collection / total<=0 静默跳过', async () => {

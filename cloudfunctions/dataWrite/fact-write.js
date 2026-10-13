@@ -1,13 +1,14 @@
 /**
  * fact-write — 事实（facts）写入领域
  *
- * 导出：addFact / addMemberFact / updateFactConfidence / deleteFact
- * 常量：FACT_STRATEGIES / DIM_TO_PREDICATE
+ * 导出：addFact / updateFactConfidence / deleteFact
+ * 常量：DIM_TO_PREDICATE
+ * 2026-09-27（dsh 审计 P3）：`addMemberFact` 函数与导出、`strategyOf` 再导出均已删除（详见各自原位注释）。
  *
  * 依赖关系（单向，无循环）：
  *   - fact-write → fact-member-sync（_syncFactToMember，仅反向同步）
- *   - member-write / message-write → fact-write（addMemberFact / DIM_TO_PREDICATE）
- *   架构审计第 13 轮：_writeMemberFact 移回本文件改名 addMemberFact，
+ *   - member-write / message-write → fact-write（`addFact` / DIM_TO_PREDICATE）
+ *   架构审计第 13 轮：_writeMemberFact 曾移回本文件改名 addMemberFact（现删除），
  *   fact-member-sync 仅保留 fact→members 反向同步，循环依赖彻底消失，懒加载删除。
  */
 const _ = require('wx-server-sdk').database().command
@@ -15,85 +16,29 @@ const { writeSeam } = require('./_shared/writeSeam')
 const { _syncFactToMember } = require('./fact-member-sync')
 const { detectInjection } = require('./_shared/guard')
 const { desensitize } = require('./_shared/pii-rules')
+const { AXIS_SET, axisOf, kindOf, strategyOf } = require('./_shared/fact-vocab')
 
 // S2：表单路径维度 → 统一谓词（predicate 三元组），使 submitProfiling 写入的 fact 在报告/分析中可见
-// 单一事实源：家庭级（收入/负债/固定支出/年保费预算）+ 成员级（职业/健康/教育程度/偏好/年龄/性别）
+// 单一事实源：家庭级（收入/负债/年保费预算）+ 成员级（职业/健康/教育程度/偏好/年龄/性别）
+// 2026-09-12 字段治理：固定支出维度已移除（数据模型不再有该字段）
 const DIM_TO_PREDICATE = {
-  '收入': '个人年收入', '职业': '职业', '健康': '健康异常', '负债': '负债',
-  '固定支出': '固定支出', '教育程度': '教育程度', '偏好': '有偏好',
+  '收入': '个人年收入', '职业': '职业', '健康': '健康异常',
+  // 2026-09-12 用词统一：维度标签兼容「负债」与「总负债」，写入谓词统一为「总负债」
+  '负债': '总负债', '总负债': '总负债',
+  '教育程度': '教育程度', '偏好': '有偏好',
   '年龄': '年龄', '性别': '性别', '年保费预算': '年保费预算'
 }
 
-// P0-2：谓词归一化映射——AI 偶发近义词偏差的兜底
-// 常见同义词自动归并到规范谓词，未命中映射的原样保留（L2 兜底语义）
-const PREDICATE_NORMALIZE = {
-  '患病': '健康异常', '疾病': '健康异常', '病史': '健康异常', '病史记录': '病史时间线',
-  '收入': '个人年收入', '年薪': '个人年收入', '月薪': '个人年收入',
-  '保险': '拥有保障', '买了': '拥有保障', '购买保险': '拥有保障',
-  '房子': '房产价值', '房产': '房产价值', '存款': '金融资产', '理财': '金融资产',
-  '计划': '未来计划', '打算': '未来计划',
-  '退休年龄': '退休预期年龄', '贷款期限': '负债期限',
-  '婚姻': '婚姻状态', '婚史': '婚姻状态',
-  '抽烟': '吸烟习惯', '喝酒': '饮酒习惯',
-  '企业': '企业类型', '公司类型': '企业类型'
-}
-
-/**
- * 谓词归一化：先查 PREDICATE_NORMALIZE，命中则替换；未命中原样返回
- */
-function normalizePredicate(predicate) {
-  if (!predicate) return predicate
-  return PREDICATE_NORMALIZE[predicate] || predicate
-}
+// 2026-09-14：PREDICATE_NORMALIZE 手写同义表已删除 → 归一化迁移到 _shared/fact-vocab.js（axis 字典）。
+// 关键语义变化：谓词不再被"替换"为规范词（保留 AI 原话，见 addFact），归一化结果落 axis 字段；
+// 未命中槽的事实 axis 留空但照常落库（旧实现未命中即被谓词字面量困住，消费侧白名单再筛一次 = 等于没采）。
 
 // ---------- addFact ----------
 // S2 统一事实 schema：predicate 三元组（CONTEXT.md 规范）。conversationAI.addFact 经 dataWrite 网关调用
-// P0-2：FACT_STRATEGIES 补全新增 L1 谓词的策略
-//   - versioned：状态/数值类，新值覆盖旧值（旧值 superseded）
-//   - dedup：关系/事件类，同值不重复写入
-const FACT_STRATEGIES = {
-  // 关系类
-  '配偶': 'dedup', '子女': 'dedup', '父母': 'dedup',
-  // 保障类
-  // 2026-09-10 修复：拥有保障/公司提供保障 原为 versioned，而 versioned 的 supersede 条件只有
-  // subject_id + predicate（不含 object_id），导致同一成员的多份保单边互相作废——
-  // 实测 11 份保单只剩 3 条边，画像缺保 → 报告误判"谢敏无任何保障"（实际有重疾70万+定寿100万）。
-  // 改 dedup：按 subject + predicate + object_value 去重，同成员多份不同产品并存，重复导入才 skipped。
-  // 安全性：边的 object_value 是「产品名(id后缀)」不含保额，保额变化走保单节点的 versioned 属性，不受影响。
-  '拥有保障': 'dedup', '公司提供保障': 'dedup', '投保': 'dedup',
-  // 人况类
-  '职业': 'versioned', '个人年收入': 'versioned', '健康异常': 'versioned', '病史时间线': 'dedup',
-  '年龄': 'versioned', '性别': 'versioned', '教育程度': 'versioned',
-  '婚姻状态': 'versioned', '职业状态': 'versioned', '吸烟习惯': 'versioned', '饮酒习惯': 'versioned',
-  'BMI指数': 'versioned',
-  // 经济依赖
-  '收入来源': 'versioned', '抚养赡养人数': 'versioned', '社保情况': 'versioned',
-  // 风险敞口
-  '负债': 'versioned', '负债期限': 'versioned', '房贷余额': 'versioned',
-  '固定支出': 'versioned', '教育支出预期': 'versioned', '赡养支出预期': 'versioned',
-  // 现有保障
-  '保额': 'versioned', '年缴保费': 'versioned', '险种': 'versioned',
-  '生效日': 'versioned', '承保公司': 'versioned', '保障期间': 'versioned',
-  '公司团险': 'versioned', '免赔额': 'versioned', '等待期': 'versioned',
-  '缴费期': 'versioned', '缴费方式': 'versioned', '特殊条款': 'versioned',
-  // 家庭资产
-  '持有资产': 'dedup', '房产价值': 'versioned', '金融资产': 'versioned',
-  '企业经营权': 'dedup', '资产持有比例': 'versioned', '婚前财产': 'dedup',
-  // 财富目标
-  '未来计划': 'versioned', '教育规划': 'versioned', '退休规划': 'versioned',
-  '传承意图': 'versioned', '资产隔离需求': 'versioned', '婚嫁规划': 'versioned',
-  // 关键时点
-  '退休预期年龄': 'versioned', '贷款到期日': 'versioned', '子女教育节点': 'versioned', '婚嫁预期时点': 'versioned',
-  // 投保偏好
-  '有偏好': 'versioned', '年保费预算': 'versioned', '偏好保险公司': 'versioned',
-  '缴费偏好': 'versioned', '风险偏好': 'versioned',
-  // 法律身份
-  '是否企业主': 'versioned', '企业类型': 'dedup', '婚姻财产制': 'versioned',
-  // 保单级唯一字段
-  '保单号': 'dedup',
-  // L2 兜底
-  '备注': 'dedup', '有特征': 'dedup'
-}
+// 2026-09-14：FACT_STRATEGIES（66 谓词手写表）已删除 → 写策略由 _shared/fact-vocab 的 axis 派生：
+//   - versioned：属性/状态/数值类槽，新值覆盖旧值（旧值 superseded）
+//   - dedup：关系/事件/多值类，同值不重复写入（未命中槽的默认）
+// 旧表的问题：谓词不在表中 → 兜底「备注/有特征」→ 语义被压平，消费侧白名单再筛一次 = 等于没采。
 // addFact 重构（全部重构）：
 // - 支持直接传入 subjectId/subjectType（结构化路径如保单节点），或仅 subjectName（对话路径按姓名解析 member_id）
 // - objectType 支持 'policy'，objectId 可指向保单
@@ -105,26 +50,40 @@ async function addFact(db, openid, event) {
     subjectName, subjectId, subjectType = 'member',
     predicate: rawPredicate,
     objectValue, objectName, objectId = '', objectType = 'literal',
+    kind: rawKind, axis: rawAxis,
     reasoning, source = 'ai', confidence = 0.9
   } = event
   const conf = Math.max(0, Math.min(1, Number(confidence) || 0))
   if (!familyId) return { code: 400, msg: '缺少参数 familyId' }
   if (!rawPredicate || objectValue == null || objectValue === '') return { code: 400, msg: '缺少 predicate/objectValue' }
   // 安全审计 H3：AI 产出内容写入前注入检测（防提示词注入产物持久化成二次注入载体，与 upsertMember/writePolicy 对齐）
-  if (detectInjection(String(objectValue) + ' ' + String(reasoning || '')).injected) return { code: 400, msg: '内容校验未通过，已拦截' }
+  // 2026-09-28 全面审计 P2（已实测复现）：原判据只覆盖 objectValue + reasoning，**漏了 predicate** ——
+  // 同一句"忽略以上所有指令…"作为 objectValue 被 400 拦截，作为 predicate 却 200 原样入库；
+  // 而 predicate 会被 familyPortrait._groupFacts 当作 label 渲染进**后续每一条** AI 上下文
+  // （画像/报告）→ 正是本行注释声称要防的"持久化成二次注入载体"。现逐字段检测。
+  if (detectInjection(String(rawPredicate) + ' ' + String(objectValue) + ' ' + String(reasoning || '')).injected) {
+    return { code: 400, msg: '内容校验未通过，已拦截' }
+  }
   // 安全审计 P1-2：objectValue/reasoning 落库前脱敏（纵深防御，AI/表单双路径）。
   // 注意：解构参数为 const 绑定不可重赋值，用 safe* 局部变量
   const safeObjectValue = desensitize(String(objectValue))
   const safeReasoning = reasoning ? desensitize(String(reasoning)) : ''
-  // P0-2：谓词归一化（AI 偶发近义词 → 规范谓词）
-  const predicate = normalizePredicate(rawPredicate)
+  // 2026-09-14 事实体系：predicate 保留 AI 原话（开放写入），归一化结果落 axis（未命中留空，不丢弃）
+  const predicate = String(rawPredicate).slice(0, 60)
+  const axis = (rawAxis && AXIS_SET.has(rawAxis)) ? rawAxis : axisOf(predicate)
+  const kind = kindOf(predicate, rawKind)
 
   let resolvedSubjectId = subjectId
   let resolvedSubjectType = subjectType
   let resolvedSubjectName = subjectName || ''
   // 对话路径：仅给 subjectName，按姓名解析 member_id（subject_type 默认 member）
+  // 2026-09-28 审计 P3（已实测复现）：必须排除软删成员，否则新写的 active fact 会挂到已删成员上
+  // —— 与已决「删除规则」（成员软删 ⇒ 其 facts 置 superseded）相反：那次清理已经跑过，
+  // 这条新 fact 不会再被清，画像又跳过已删成员 → 只剩 queryFacts/孤儿保障提示会读到它。
   if (!resolvedSubjectId && resolvedSubjectName) {
-    const subRes = await db.collection('members').where({ family_id: familyId, _openid: openid, name: resolvedSubjectName }).limit(1).get()
+    const subRes = await db.collection('members')
+      .where({ family_id: familyId, _openid: openid, name: resolvedSubjectName, status: db.command.neq('deleted') })
+      .limit(1).get()
     if (!subRes.data || subRes.data.length === 0) return { code: 404, msg: '未找到主体成员：' + resolvedSubjectName }
     resolvedSubjectId = subRes.data[0].member_id
     resolvedSubjectType = 'member'
@@ -138,29 +97,40 @@ async function addFact(db, openid, event) {
   if (!resolvedSubjectId) return { code: 400, msg: '缺少主体标识（subjectId 或 subjectName）' }
 
   const now = new Date()
-  const strategy = FACT_STRATEGIES[predicate] || 'dedup'
+  const strategy = strategyOf(predicate, axis)
   // writeSeam 接缝：silent 写入 + 末尾统一 triggerHooks，避免多次 markFamilyMutated
   const ws = writeSeam(db, openid, familyId)
   if (strategy === 'dedup') {
-    const exists = await db.collection('facts').where({ family_id: familyId, _openid: openid, subject_id: resolvedSubjectId, predicate, object_value: safeObjectValue, status: 'active' }).limit(1).get()
+    // 去重键含 axis：同槽的不同说法（"年薪" 与 "个人年收入"）算同一条，避免重复落库
+    const dupWhere = { family_id: familyId, _openid: openid, subject_id: resolvedSubjectId, object_value: safeObjectValue, status: 'active' }
+    if (axis) dupWhere.axis = axis
+    else dupWhere.predicate = predicate
+    const exists = await db.collection('facts').where(dupWhere).limit(1).get()
     if (exists.data && exists.data.length > 0) return { code: 200, data: { action: 'skipped', reason: '已存在' } }
   }
   let resolvedObjectId = objectId
   if (objectType === 'member' && objectName && !resolvedObjectId) {
-    const objRes = await db.collection('members').where({ family_id: familyId, _openid: openid, name: objectName }).limit(1).get()
+    // 同上：对象侧同样排除软删成员（关系边不应指向已删成员）
+    const objRes = await db.collection('members')
+      .where({ family_id: familyId, _openid: openid, name: objectName, status: db.command.neq('deleted') })
+      .limit(1).get()
     if (objRes.data && objRes.data.length > 0) resolvedObjectId = objRes.data[0].member_id
   }
   const addRes = await ws.silentAdd('facts', {
     family_id: familyId,
     subject_type: resolvedSubjectType, subject_id: resolvedSubjectId, subject_name: resolvedSubjectName,
-    predicate, object_type: objectType, object_id: resolvedObjectId, object_value: safeObjectValue, object_value_type: 'string',
+    predicate, axis, kind,
+    object_type: objectType, object_id: resolvedObjectId, object_value: safeObjectValue, object_value_type: 'string',
     confidence: conf, source, status: 'active', reasoning: safeReasoning, created_at: now
   })
   // 审计 H2：先 add 后 supersede，并在 where 排除刚写入的 fact——
   // 原"先 supersede 后 add"在同轮并发 addFact（writePolicy→policyToFacts 多 fact 并发）时旧值链互相作废
   if (strategy === 'versioned') {
     // 5.2b：已 agent_confirmed 的事实不被普通事实覆盖（除非新事实也是 agent_confirmed）
-    const whereActive = { family_id: familyId, subject_id: resolvedSubjectId, predicate, status: 'active' }
+    // 2026-09-14：按归一化槽（axis）消解——同槽不同说法（"年薪"/"个人年收入"）也要互相作废；未归一的退回谓词字面量
+    const whereActive = { family_id: familyId, subject_id: resolvedSubjectId, status: 'active' }
+    if (axis) whereActive.axis = axis
+    else whereActive.predicate = predicate
     if (source !== 'agent_confirmed' && _ && typeof _.neq === 'function') whereActive.source = _.neq('agent_confirmed')
     if (addRes && addRes._id && _ && typeof _.neq === 'function') whereActive._id = _.neq(addRes._id)
     await ws.silentUpdateWhere('facts', whereActive, { status: 'superseded' }).catch(async (e) => {
@@ -171,22 +141,19 @@ async function addFact(db, openid, event) {
     })
   }
   await ws.triggerHooks()
-  // 高置信度事实反向同步回 members（健康/职业/收入），覆盖对话路径（表单路径由 addMemberFact 同步）
-  await _syncFactToMember(db, familyId, openid, resolvedSubjectId, predicate, safeObjectValue, conf)
+  // 高置信度事实反向同步回 members（健康/职业/收入）。原注写"覆盖对话路径（表单路径由 addMemberFact 同步）"——
+  // addMemberFact 已于 2026-09-27 作为死代码删除，此处只陈述本函数实际所做的事（反向同步）。
+  // 2026-09-14：按 axis 判定目标字段（predicate 已自由化，不能再靠字面量匹配）
+  await _syncFactToMember(db, familyId, openid, resolvedSubjectId, axis, safeObjectValue, conf)
   return { code: 200, data: { action: strategy === 'dedup' ? 'added' : strategy, factId: addRes._id } }
 }
 
-// ---------- addMemberFact ----------
-// 成员级事实统一写入（predicate 三元组 + status 标记，供 buildPortrait 消费）
-// 架构审计第 13 轮：从 fact-member-sync 移回，预设 subjectType:'member' + source:'user_form'，
-// 消除 fact-write ↔ fact-member-sync 循环依赖根因。
-async function addMemberFact(db, openid, { familyId, memberId, memberName, predicate, value, confidence = 1 }) {
-  if (!memberId || !predicate) return
-  return addFact(db, openid, {
-    familyId, subjectId: memberId, subjectType: 'member', subjectName: memberName,
-    predicate, objectValue: String(value), source: 'user_form', confidence
-  })
-}
+// ---------- addMemberFact：已于 2026-09-27 删除（dsh 审计 P3 · 死代码）----------
+// 它原是「成员级事实统一写入」的便捷入口（预设 subjectType:'member' + source:'user_form'），
+// 但全仓 grep 确认**零调用方**：member-write / message-write 都是直接调 `addFact`，
+// 文件头与 fact-member-sync 的注释却仍写着"member-write / message-write → fact-write（addMemberFact）"
+// —— 过时注释会让下一个读者以为它在用（本次审计即据此把它列为"零调用方，请确认"）。
+// 结论：函数与其导出、以及那两处过时注释一并清理。
 
 // ---------- updateFactConfidence ----------
 // 5.2a：代理人确认低置信度事实后，将其置信度升级为 1.0 并标记 agent_confirmed（受 5.2b 防降级/防覆盖保护）
@@ -201,13 +168,16 @@ async function updateFactConfidence(db, openid, event) {
   // 重新激活前，先 supersede 同 subject+predicate 的其他 active 事实（避免多 active 并存）
   // K-S4 修复：与 addFact versioned 路径（5.2b）对齐——被激活的事实若非 agent_confirmed，
   // 不得覆盖同 subject+predicate 下已 agent_confirmed 的用户确认事实
-  if (rec.subject_id && rec.predicate) {
+  if (rec.subject_id && (rec.axis || rec.predicate)) {
     const _ = db.command
     const whereSupersede = {
       family_id: familyId, _openid: openid,
-      subject_id: rec.subject_id, predicate: rec.predicate,
+      subject_id: rec.subject_id,
       status: 'active', _id: _.neq(factId)
     }
+    // 按归一化槽消解；未归一的退回谓词字面量
+    if (rec.axis) whereSupersede.axis = rec.axis
+    else whereSupersede.predicate = rec.predicate
     if (rec.source !== 'agent_confirmed') whereSupersede.source = _.neq('agent_confirmed')
     await ws.silentUpdateWhere('facts', whereSupersede, { status: 'superseded' }).catch(e => console.error('[fact-write] updateFactConfidence supersede 失败:', e.message))
   }
@@ -236,4 +206,6 @@ async function deleteFact(db, openid, event) {
   return { code: 200, data: { deleted: true, factId } }
 }
 
-module.exports = { addFact, addMemberFact, updateFactConfidence, deleteFact, FACT_STRATEGIES, DIM_TO_PREDICATE, normalizePredicate, PREDICATE_NORMALIZE }
+// 2026-09-27（dsh 审计 P3）：`strategyOf` 的**再导出**已删 —— 它在本文件 L88 仍被调用（保留顶部 import），
+// 但没有第二个消费方从本模块取它（测试与其他模块一律直接从契约 `_shared/fact-vocab` 取）→ 再导出是死面。
+module.exports = { addFact, updateFactConfidence, deleteFact, DIM_TO_PREDICATE }

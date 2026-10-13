@@ -4,40 +4,19 @@
  * - 高置信度 fact（健康/职业/收入，confidence≥0.8）反向同步回 members
  * 注意：CloudBase add/update 入参包在 { data: {...} } 中，存储记录为 { _id, data: {...} }
  */
-var mockStore = { families: [], members: [], facts: [], agent_logs: [], operation_logs: [] }
+const { makeMemoryDb } = require('./helpers/memory-db')
 
-function mockMakeDb() {
-  return {
-    collection: function (name) {
-      var rows = mockStore[name] || (mockStore[name] = [])
-      var api = {
-        where: function () { return api },
-        field: function () { return api },
-        orderBy: function () { return api },
-        limit: function () { return api },
-        get: function () { return Promise.resolve({ data: rows }) },
-        count: function () { return Promise.resolve({ total: rows.length }) },
-        update: function () { return Promise.resolve({ stats: { updated: 1 } }) },
-        remove: function () { return Promise.resolve({ stats: { removed: 1 } }) },
-        add: function (payload) { var id = 'mock_' + Date.now() + Math.random(); var rec = Object.assign({ _id: id }, payload.data ? payload.data : payload); rows.push(rec); return Promise.resolve({ _id: id }) },
-        doc: function (id) {
-          return {
-            get: function () { return Promise.resolve({ data: rows.find(function (r) { return r._id === id }) || null }) },
-            update: function (payload) { var rec = rows.find(function (r) { return r._id === id }); if (rec && payload.data) Object.assign(rec, payload.data); return Promise.resolve({ stats: { updated: 1 } }) },
-            remove: function () { return Promise.resolve({ stats: { removed: 1 } }) }
-          }
-        }
-      }
-      return api
-    },
-    command: { neq: function (v) { return { $ne: v } }, push: function (v) { return { $push: v } }, serverDate: function () { return new Date('2026-01-01') } }
-  }
-}
+// 2026-09-15 架构审查候选 4：DB mock 统一为 tests/helpers/memory-db。
+// 旧桩的 where() 不过滤（恒返回全表）、update() 恒 updated:1 —— 条件读写写错也测不出来。
+// store 即表容器：db 持有其引用，故**加载期构造**（被测模块 require 阶段即取 database()）
+// 且重置只能原地清空（length = 0），不可重新赋值。
+const mockStore = { families: [], members: [], facts: [], agent_logs: [], operation_logs: [] }
+const mockMemDb = makeMemoryDb(mockStore)
 
 jest.mock('wx-server-sdk', function () {
   return {
     init: jest.fn(), DYNAMIC_CURRENT_ENV: 'env-mock',
-    database: jest.fn(function () { return mockMakeDb() }),
+    database: jest.fn(function () { return mockMemDb }),
     getWXContext: jest.fn(function () { return { OPENID: 'mock_openid' } }),
     callFunction: jest.fn(function () { return Promise.resolve({ result: { code: 200 } }) })
   }
@@ -63,7 +42,8 @@ function seedMember(extra) {
 
 describe('Phase 4 fact→members / source', function () {
   beforeEach(function () {
-    mockStore = { families: [], members: [], facts: [], agent_logs: [], operation_logs: [] }
+    // 原地清空（不重新赋值）：db 持有 mockStore 的引用（见文件头说明）
+    Object.keys(mockStore).forEach(function (k) { mockStore[k].length = 0 })
     mockStore.families.push({ _id: 'f1', _openid: 'mock_openid', members: [{ member_id: 'm1', name: '张三' }], engagement_stage: 'profiling' })
   })
 

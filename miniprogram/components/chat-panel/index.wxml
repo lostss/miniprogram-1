@@ -3,7 +3,7 @@
   <view class="chat-overlay" catchtap="onCollapse" catchtouchmove="onNoop"></view>
   <view class="chat-panel" catchtouchmove="onNoop">
     <view class="drag-bar"></view>
-    <view class="chat-title"><text class="chat-title-text">小秘</text><text class="chat-title-sub">AI 保障顾问</text></view>
+    <view class="chat-title"><text class="chat-title-text">小秘</text><text class="chat-title-sub">AI 保障顾问</text><view class="chat-close pressable" bindtap="onCollapse" aria-label="关闭对话"><image class="chat-close-icon" src="/images/close.svg" mode="aspectFit" /></view></view>
     <scroll-view class="msg-list" scroll-y scroll-into-view="{{scrollIntoView}}" scroll-with-animation="{{false}}" show-scrollbar="{{false}}" enhanced bounces="{{false}}" refresher-enabled refresher-threshold="60" refresher-default-style="black" refresher-triggered="{{refreshingMore}}" bindrefresherrefresh="onPullRefresh">
       <view class="msg-inner">
         <!-- 空态引导：无消息且未处理中时显示，引导首次使用 -->
@@ -41,8 +41,13 @@
               </view>
             </view>
             <text wx:if="{{!item.isError && item.time}}" class="ai-msg-time">{{item.time}}</text>
-            <!-- 错误重试按钮 -->
-            <view wx:if="{{item.isError}}" class="retry-btn pressable" catchtap="onRetrySend" data-idx="{{index}}" aria-label="重试发送">重试</view>
+            <!-- 错误重试按钮 — 2026-09-19 修（流程审计 UX2）：必须同时要求 retryText。
+                 确认卡动作失败（userText 为 {CONFIRM:}/{KEEP:}）刻意不设 retryText——重发一条
+                 "确认/取消"指令没有意义（常见失败原因就是"该确认操作已失效"），其错误文案也因此
+                 不带"（可点击重试）"。但原条件只看 isError → 渲染出一个点了直接 return 的死按钮
+                 （onRetrySend 遇空 retryText 静默返回）。加上 retryText 后，按钮只在真能重试时出现，
+                 与文案自洽。 -->
+            <view wx:if="{{item.isError && item.retryText}}" class="retry-btn pressable" catchtap="onRetrySend" data-idx="{{index}}" aria-label="重试发送">重试</view>
           </view>
           </block>
           <!-- 用户消息：保留气泡右对齐 -->

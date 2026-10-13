@@ -38,6 +38,14 @@ describe('REPORT_PROMPT 篇幅与去重约束', () => {
     expect(REPORT_PROMPT).toContain('最多 5 条（超过即违规）')
   })
 
+  // 2026-09-22 数据质量批次 2：plan 段实测 599/450 字（+33%）。
+  // 机制：6 个深度分析维度每块都写着「融入位置：plan…」，会被叠加成 6 段 → 故点名限制贡献维度数。
+  test('plan 段有机制性约束（超标的真实原因：多个维度都往 plan 里写）', () => {
+    expect(REPORT_PROMPT).toContain('plan 是最容易超的一段')
+    expect(REPORT_PROMPT).toContain('最多允许 2 个维度向 plan 贡献内容')
+    expect(REPORT_PROMPT).toContain('plan 超过 450 字即违规')
+  })
+
   test('保留生活化表达（去重不等于术语化）', () => {
     expect(REPORT_PROMPT).toContain('保留生活化表达')
     expect(REPORT_PROMPT).toContain('鼓励')

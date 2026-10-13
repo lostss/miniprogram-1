@@ -12,38 +12,19 @@
 var mockStore = { members: [], facts: [], policies: [] }
 var mockFailCollections = []
 
+// DB mock 收敛到 tests/helpers/memory-db（2026-09-15 架构审查候选 4）。
+// failCollections 用函数形式读取（测试会重新赋值 mockFailCollections 变量）。
 jest.mock('wx-server-sdk', function() {
-  var mockDb = {
-    collection: jest.fn(function(name) {
-      var rows = mockStore[name] || []
-      var makeQuery = function() { return {
-        where: jest.fn(function() { return makeQuery() }),
-        field: jest.fn(function() { return makeQuery() }),
-        orderBy: jest.fn(function() { return makeQuery() }),
-        skip: jest.fn(function() { return makeQuery() }),
-        limit: jest.fn(function() { return makeQuery() }),
-        get: jest.fn(function() {
-          if (mockFailCollections.indexOf(name) >= 0) {
-            return Promise.reject(new Error(name + ' query failed'))
-          }
-          return Promise.resolve({ data: rows })
-        })
-      }}
-      return makeQuery()
-    }),
-    command: {
-      neq: function(v) { return { $ne: v } },
-      gte: function(v) { return { $gte: v } },
-      lt: function(v) { return { $lt: v } },
-      in: function(v) { return { $in: v } }
-    }
-  }
+  const { makeMemoryDb } = require('./helpers/memory-db')
   return {
     init: jest.fn(), DYNAMIC_CURRENT_ENV: 'env-mock',
-    database: jest.fn(function() { return mockDb }),
+    database: jest.fn(function() {
+      return makeMemoryDb(mockStore, { failCollections: function() { return mockFailCollections } })
+    }),
     getWXContext: jest.fn(function() { return { OPENID: 'mock_openid', APPID: 'mock_appid' } })
   }
 })
+const { makeMemoryDb } = require('./helpers/memory-db')
 
 var dataQuery = require('../cloudfunctions/dataQuery/index')
 
@@ -51,7 +32,9 @@ describe('queryMemberProfile (mock DB)', function() {
   beforeEach(function() {
     mockStore = {
       members: [{ _id: 'm1', family_id: 'f1', _openid: 'mock_openid', member_id: 'mem_001', name: '张三', role: '本人', gender: '男', age: 35, income: 30 }],
-      facts: [{ subject_id: 'mem_001', predicate: '健康异常', object_value: '轻度脂肪肝', status: 'active', confidence: 1 }],
+      // facts 必须与 members/policies 同样带 _openid + family_id——查询按两者过滤，
+      // 旧空过滤 mock 让这条 seed 的缺字段从未暴露（真实过滤下 health 会变空）
+      facts: [{ _openid: 'mock_openid', family_id: 'f1', subject_id: 'mem_001', predicate: '健康异常', object_value: '轻度脂肪肝', status: 'active', confidence: 1 }],
       policies: [{ _id: 'p1', family_id: 'f1', _openid: 'mock_openid', member_id: 'mem_001', insurance_category: '重疾险', sum_assured: 500000, status: 'active' }]
     }
     mockFailCollections = []

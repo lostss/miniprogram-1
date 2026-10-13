@@ -34,7 +34,11 @@ function makeWhereChain(data) {
     collection: () => ({
       where: () => chain,
       add: () => Promise.resolve({ _id: 'new' })
-    })
+    }),
+    // 2026-09-22：真实 cloud.database() **恒有** command（本项目多处用 db.command.neq 做
+    // "排除软删"过滤）。原桩缺这一项 → 被测模块一用到就 TypeError。
+    // 桩不该比真实 SDK 更弱（README「测试基础设施」已列此类手写桩的教训）。
+    command: { neq: (v) => ({ $ne: v }), eq: (v) => ({ $eq: v }) }
   }
 }
 
@@ -68,6 +72,45 @@ describe('cash-value-matcher', () => {
       // 模糊匹配也会查到 2 条，进入 candidates 分支
       expect(res.matched).toBe(false)
       expect(res.candidates.length).toBe(2)
+    })
+
+    test('同图直连（from_policy）优先命中，matchedBy=same_image', async () => {
+      const policies = [
+        { id: 'p1', policy_number: 'P001', product_name: '平安福', insured_name: '李四', insurance_category: '寿险' }
+      ]
+      const db = makeWhereChain(policies)
+      const res = await matchCashToPolicies(db, 'f1', 'oid', {
+        product_name: '平安福', insured_name: '李四',
+        from_policy: { policy_number: 'P001', product_name: '平安福', insured_name: '李四' }
+      })
+      expect(res.matched).toBe(true)
+      expect(res.policyId).toBe('p1')
+      expect(res.matchedBy).toBe('same_image')
+    })
+
+    test('同图提示命中多条 → 不武断绑定，回落通用匹配', async () => {
+      const policies = [
+        { id: 'p1', policy_number: 'P1', product_name: '平安福', insured_name: '李四', insurance_category: '寿险' },
+        { id: 'p2', policy_number: 'P2', product_name: '平安福', insured_name: '李四', insurance_category: '寿险' }
+      ]
+      const db = makeWhereChain(policies)
+      const res = await matchCashToPolicies(db, 'f1', 'oid', {
+        product_name: '平安福', insured_name: '李四',
+        from_policy: { policy_number: '', product_name: '平安福', insured_name: '李四' }
+      })
+      // 同图步骤 2 条 → 不绑；通用模糊匹配同样 2 条 → 进 candidates
+      expect(res.matched).toBe(false)
+      expect(res.candidates.length).toBe(2)
+      expect(res.matchedBy).toBeNull()
+    })
+
+    test('通用匹配命中时 matchedBy=auto（回归）', async () => {
+      const policies = [{ id: 'p1', policy_number: 'P001', product_name: 'X', insured_name: '张三' }]
+      const db = makeWhereChain(policies)
+      const res = await matchCashToPolicies(db, 'f1', 'oid', {
+        product_name: 'X', policy_number: 'P001', insured_name: '张三'
+      })
+      expect(res.matchedBy).toBe('auto')
     })
 
     test('产品名+被保人模糊匹配单条命中', async () => {

@@ -101,7 +101,12 @@ async function advanceStage(db, familyId, openid) {
     const fRes = await db.collection('families').where({ _id: familyId, _openid: openid }).limit(1).get().catch(() => ({ data: [] }))
     const f = (fRes.data && fRes.data[0]) || null
     if (!f) return
-    const polCount = await db.collection('policies').where({ family_id: familyId, _openid: openid }).count()
+    // 2026-09-22 全面审计 P1：保单计数必须排除软删（deletePolicy 只置 status:'deleted'）。
+    // 原 `where({family_id,_openid}).count()` 把已删保单也算进去 → 删光保单后 engagement_stage
+    // 仍按"有保单"推进（onboarding→profiling），阶段与真实数据不符。
+    const polCount = await db.collection('policies')
+      .where({ family_id: familyId, _openid: openid, status: db.command.neq('deleted') })
+      .count()
     const next = evaluateStage(f, polCount.total)
     if (next !== f.engagement_stage) {
       await safeUpdateWhere(db, 'families', { _id: familyId }, { engagement_stage: next }, openid)

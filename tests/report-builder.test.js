@@ -2,7 +2,24 @@
  * report-builder 单测 — 纯函数（buildGaps / assessDataCompleteness / buildChapters）
  * 不依赖 wx，可直接 node 运行
  */
-const { buildGaps, assessDataCompleteness, buildChapters, buildHero, buildCoverageMatrix, buildReportView } = require('../miniprogram/utils/report-builder')
+const { buildGaps, assessDataCompleteness, buildChapters, buildHero, buildCoverageMatrix, buildReportView, buildDeepAnalysis } = require('../miniprogram/utils/report-builder')
+
+// 2026-09-18 报告页审计：core_insights 的**存储契约仍是字符串数组**（report-fields.js 有字段契约测试），
+// 这里只锁"视图层包装成 {key,text}"这一层——原 WXML 用 wx:key="*this"（字符串自身），重复文本会碰撞
+describe('buildDeepAnalysis — core_insights 视图包装', () => {
+  test('输出 {key,text}，且重复文本也能得到唯一 key', () => {
+    const d = buildDeepAnalysis({ core_insights: ['重疾缺口50万', '重疾缺口50万'] })
+    expect(d.insights).toEqual([
+      { key: 'ins0', text: '重疾缺口50万' },
+      { key: 'ins1', text: '重疾缺口50万' }
+    ])
+    expect(new Set(d.insights.map(x => x.key)).size).toBe(2)
+  })
+
+  test('无 core_insights → 空数组（不产生 undefined）', () => {
+    expect(buildDeepAnalysis({ review: '有点评' }).insights).toEqual([])
+  })
+})
 
 describe('buildReportView — 报告聚合入口（候选 2 深模块）', () => {
   test('客户版视图（view=shared）：中性措辞 + 置信度章隐藏 + 仅保障期满节点 + 占收入比仅供参考', () => {
@@ -30,10 +47,12 @@ describe('buildReportView — 报告聚合入口（候选 2 深模块）', () =>
     const cs = view.chapters.find(x => x.key === 'coverage_summary')
     expect(cs.pre).toContain('保障待完善')
     expect(cs.pre).not.toContain('缺少')
-    // 缴费月历占收入比标注仅供参考
+    // 2026-09-12：客户版不再显示占收入比——家庭财务章对客户隐藏（:181），客户无从核对"家庭年收入"基数；
+    // 原实现引用不可见数据并附"仅供参考"，双重减分（数字算不出 + 结论自我注销）
     const cal = view.chapters.find(x => x.key === 'premium_calendar')
-    expect(cal.content).toContain('占家庭年收入')
-    expect(cal.content).toContain('仅供参考')
+    expect(cal.content).toContain('年总保费')
+    expect(cal.content).not.toContain('占家庭年收入')
+    expect(cal.content).not.toContain('仅供参考')
     // 关键节点仅保留保障期满（交费期满/现价回本对客户隐藏）
     const tl = view.chapters.find(x => x.key === 'premium_timeline')
     const tlBlock = tl.customBlocks.find(b => b.t === 'timeline')
@@ -330,6 +349,25 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     expect(nums).toEqual(['1', '2', '3', '4', '5', '6', '7'])
   })
 
+  // 2026-09-18 报告页审计：②章收入口径——未填写时曾直传 totalIncome=0 → 渲染"年收入 0万"，
+  // 与⑦缴费月历章"（家庭年收入未填写，暂不计算占比）"矛盾（同一 owner 视图两章说法不一）
+  test('家庭财务章：收入与成员收入均未填写 → income 传 null（防渲染"0万"）', () => {
+    const c = reportCustomer()
+    c.family_income = 0
+    c.financial_snapshot = {}
+    c.members = c.members.map(m => Object.assign({}, m, { income: 0 }))
+    const fin = buildChapters(c, report).find(x => x.key === 'family_finance').customBlocks.find(b => b.t === 'finance')
+    expect(fin.income).toBe(null)
+  })
+
+  test('家庭财务章：有收入 → income 为数值（不把"有值"误判成未填写）', () => {
+    const c = reportCustomer()
+    c.family_income = 20
+    c.members = c.members.map(m => Object.assign({}, m, { income: 0 }))
+    const fin = buildChapters(c, report).find(x => x.key === 'family_finance').customBlocks.find(b => b.t === 'finance')
+    expect(fin.income).toBe(20)
+  })
+
   test('家庭结构章：成员节点（角色分组排序）；财务独立成章', () => {
     const ch = buildChapters(reportCustomer(), report)
     const ft = ch[0].customBlocks.find(b => b.t === 'family_tree')
@@ -402,6 +440,28 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     const ch = buildChapters(reportCustomer(), report)
     expect(ch.find(x => x.key === 'risk_alerts')).toBeUndefined()
     expect(ch.find(x => x.key === 'appendix_policies')).toBeDefined()
+  })
+
+  // 2026-09-18 报告页审计：附录卡补保单号/投保人/受益人（保单号=保司查档第一键；
+  // 受益人此前全无展示，而 AI 会建议"指定受益人做资产隔离"→ 建议与现状脱节）
+  test('附录卡：meta3 拼出保单号/投保人/受益人', () => {
+    const c = reportCustomer()
+    c.policies = [Object.assign({}, c.policies[0], {
+      policy_number: 'P2024001', policyholder_name: '李阳勇', beneficiary_name: '王小明'
+    })]
+    const pc = buildChapters(c, report).find(x => x.key === 'appendix_policies').customBlocks.find(b => b.t === 'policy_cards')
+    expect(pc.groups[0].subgroups[0].policies[0].meta3).toBe('保单号 P2024001 · 投保人 李阳勇 · 受益人 王小明')
+  })
+
+  test('附录卡：三项皆缺 → meta3 为空串（不做「未知 · 未知 · 未知」噪音，WXML 整行不渲染）', () => {
+    const c = reportCustomer()
+    const p0 = Object.assign({}, c.policies[0])
+    delete p0.policy_number
+    delete p0.policyholder_name
+    delete p0.beneficiary_name
+    c.policies = [p0]
+    const pc = buildChapters(c, report).find(x => x.key === 'appendix_policies').customBlocks.find(b => b.t === 'policy_cards')
+    expect(pc.groups[0].subgroups[0].policies[0].meta3).toBe('')
   })
 
   test('附录保单明细：被保人→保司二级分组卡片（含展示字段）', () => {

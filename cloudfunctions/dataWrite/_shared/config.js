@@ -3,6 +3,8 @@
  */
 const cloud = require('wx-server-sdk')
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
+// 无依赖常量（可被懒加载模块安全 require，见 ai-purposes.js 头部说明）
+const { AI_PURPOSE } = require('./ai-purposes')
 
 module.exports = {
 
@@ -19,6 +21,13 @@ module.exports = {
     // 3000：多产品保单 JSON（products 数组）在 2000 下存在截断 → ai_format 失败风险
     OCR_MAX_TOKENS: 3000,
     OCR_TEMPERATURE: 0,
+    // OCR 文本上限（单一事实源，2026-09-22 全面审计 · AI 侧 P2）：
+    // ocrService/handlers.js 按它做入参校验（超长直接拒识），ocr-extractor 把它作为
+    // ai-gateway 的 ctx.maxInput 透传——否则网关按 SECURITY.MAX_INPUT=16000 静默截断，
+    // 长保单/多页截图的**尾部**（产品、特别约定、现价表）与末尾「注意」段根本没进模型，
+    // 表现为"字段缺失/result=fail"，而日志显示 OCR 与 AI 调用都成功。
+    // 两者必须是同一个数：改这里即同时改校验与闸门。
+    OCR_TEXT_MAX_LEN: 30000,
     // DeepSeek 直连（绕过 TokenHub 限流，并发 2500）
     // 2026-09-10：模型名改用官方推荐名 'deepseek-flash'（= DeepSeek-V4.1-Flash）；
     // 旧名 'deepseek-v4-flash' 官方仍兼容但已下线，实际也由 V4.1 服务
@@ -83,13 +92,25 @@ module.exports = {
   //   deepseek-v4-pro            : 输入未命中 4.5 / 缓存命中 0.15 / 输出 13.5
   //   高峰时段：周一至周五 09:00-12:00、14:00-18:00（北京时间）
   // hy3（TokenHub / hunyuan-exp）: $0.004/1K ≈ 4 美元/百万，官方未区分输入输出，沿用旧口径
+  //
+  // ⚠️ 货币不统一（2026-09-15 查实）：hy3 计价单位是**美元**、deepseek-* 是**人民币**。
+  //   calcTokenUsage 会把两者算成同一个 `cost` 数值（不做汇率换算），因此：
+  //   **禁止把不同模型的 cost 直接相加**——必须按 currency 分组再汇总，否则跨模型合计是错的。
+  //   （单条记录的 cost 本身正确，它只反映该模型的价；错的是"跨模型求和"这个动作。）
   PRICING: {
     'deepseek-flash': { in: 1, out: 4, inCached: 0.02, currency: 'CNY' },
     'deepseek-v4-flash': { in: 1, out: 4, inCached: 0.02, currency: 'CNY' },
     'deepseek-v4-pro': { in: 4.5, out: 13.5, inCached: 0.15, currency: 'CNY' },
     hy3: { in: 4, out: 4, inCached: 4, currency: 'USD' }
   },
-  DEFAULT_PRICING: { in: 1, out: 4, inCached: 0.02, currency: 'CNY' },
+  // 2026-09-22 全面审计（死代码清理）：原 `DEFAULT_PRICING: { in:1, out:4, inCached:0.02, currency:'CNY' }`
+  // 已删除——全仓零引用，且与 PRICING['deepseek-flash'] 逐值相同（真出现未知模型时应当显式
+  // 命中 PRICING 或走 COST_PER_1K 旧口径，而不是靠一个影子常量悄悄兜底）。
   // 兼容保留（旧口径：hy3-preview $0.004/1K tokens，混合计价）；新代码请用 PRICING
-  COST_PER_1K: 0.004
+  COST_PER_1K: 0.004,
+
+  // -- AI 调用用途（观测/成本归因的单一事实源）--
+  // 定义在 ai-purposes.js（**无依赖**，供懒加载模块安全 require——config 自身会 cloud.init()，
+  // 因此不能被"启动期不初始化 SDK"的模块顶层依赖）。此处 re-export，历史 `config.AI_PURPOSE` 用法不变。
+  AI_PURPOSE
 }

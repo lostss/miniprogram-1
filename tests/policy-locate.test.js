@@ -12,46 +12,19 @@
  */
 
 const { locatePolicy } = require('../cloudfunctions/dataWrite/policy-locate')
+const { makeMemoryDb } = require('./helpers/memory-db')
 
 // ---------------------------------------------------------------------------
-// Mock DB 构造器
+// Mock DB 构造器（2026-09-15 架构审查候选 4）
+// 原实现自带 matchWhere（且只支持 `$ne` 一个操作符，注释自述是"简化处理"）；adapter 的
+// matchOp 原生支持 eq/neq/in/nin/gt/gte/lt/lte/exists/all/or/and 与 db.RegExp，
+// 因此"生产用操作符、桩不支持"的漂移类问题不再可能。spy.queries 形状与旧 calls.queries 一致。
 // ---------------------------------------------------------------------------
 
 function makeMockDb(policies = []) {
   const calls = { queries: [] }
   const store = { policies: policies.map(x => ({ ...x })) }
-
-  function matchWhere(rows, w) {
-    return rows.filter(x => Object.keys(w).every(k => {
-      // 简化 neq('deleted') 处理：如果值是 { $ne: 'deleted' } 形式（mock db.command.neq）
-      // 实际 wx-server-sdk 的 db.command.neq 返回的对象有特定结构，这里用简单判断
-      if (w[k] && typeof w[k] === 'object' && w[k].$ne !== undefined) {
-        return x[k] !== w[k].$ne
-      }
-      return x[k] === w[k]
-    }))
-  }
-
-  const db = {
-    command: {
-      neq: (val) => ({ $ne: val })
-    },
-    collection: (name) => {
-      if (!store[name]) store[name] = []
-      const data = store[name]
-      return {
-        where: (w) => {
-          calls.queries.push({ name, where: w })
-          return {
-            get: () => Promise.resolve({ data: matchWhere(data, w) }),
-            limit: (n) => ({
-              get: () => Promise.resolve({ data: matchWhere(data, w).slice(0, n) })
-            })
-          }
-        }
-      }
-    }
-  }
+  const db = makeMemoryDb(store, { spy: calls })
   return { db, calls }
 }
 

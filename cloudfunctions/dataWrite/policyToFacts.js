@@ -67,6 +67,9 @@ function policyToFacts(policy, opts = {}) {
   lit('特殊条款', policy.special_agreement)
   lit('承保公司', policy.insurer)
   lit('保单号', policy.policy_number)
+  // 2026-09-18 报告页审计：受益人此前既不在 fact 管道、也不在 POLICY_ATTRS → AI 建议"指定受益人做
+  // 资产隔离"时看不到现状，报告附录也不展示（本次一并补上展示）。lit 对空值有守卫（见上 L53）。
+  lit('受益人', policy.beneficiary_name)
 
   // 投保人（不同于被保人时）
   if (policy.policyholder_name && memberName && policy.policyholder_name !== memberName) {

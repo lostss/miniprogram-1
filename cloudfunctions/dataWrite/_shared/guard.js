@@ -10,13 +10,24 @@ const { SECURITY } = require('./config')
 const { desensitize, sanitize: _sanitizeInput } = require('./pii-rules')
 // 注入检测规则拆至 injection-guard.js（纯规则无外部依赖，可同步前端；R3v2 #1）
 const { detectInjection, detectConfusables } = require('./injection-guard')
+// 自然月键的**单一事实源**在 ai-accounting —— 它同时是 `quota_period` 的写入方，口径应由写入方拥有。
+// 2026-09-26 复审纠偏：此前此处**又定义了一份** `_monthKey`，两处注释都只写"改一处必须同改" ✗
+// —— 而同源本可避免（两文件无循环依赖：ai-accounting 只 require config/logSeam）。
+// 这类重复的失效方式是**静默**的：一处改了 → 月键与 quota_period 不再同口径 →
+// 配额要么**永久锁死**（用户再也用不了报告/OCR）要么**永久放行**（配额形同虚设）。
+const { _monthKey } = require('./ai-accounting')
 const MAX_INPUT = SECURITY.MAX_INPUT
 const RATE_LIMIT_WINDOW_MS = SECURITY.RATE_LIMIT_WINDOW_MS
 const RATE_LIMIT_MAX = SECURITY.RATE_LIMIT_MAX
 
-// sanitize: 复用 pii-rules 的基础实现，传入后端 MAX_INPUT 配置
-function sanitize(text) {
-  return _sanitizeInput(text, MAX_INPUT)
+// sanitize: 复用 pii-rules 的基础实现，默认传入后端 MAX_INPUT 配置。
+// 2026-09-22 全面审计（AI 侧 P1 的真正根因）：原实现 `function sanitize(text)` **只接受一个参数**，
+// 把上游传来的长度上限**静默丢弃** → ai-gateway 想给 system 提示词（16330 字，warm 版本 16753 字）
+// 放宽上限也无效，仍被 MAX_INPUT=16000 截断：报告提示词的「输出前红线重申」被截掉、
+// warm（共情版）整块位于截断点之后 → 该功能 100% 失效且日志上看不出来。
+// 现透传 maxLen；不传时行为与原来完全一致（pii-rules.sanitize 自身默认 16000）。
+function sanitize(text, maxLen) {
+  return _sanitizeInput(text, maxLen === undefined ? MAX_INPUT : maxLen)
 }
 
 async function checkRateLimit(db, openid) {
@@ -29,7 +40,11 @@ async function checkRateLimit(db, openid) {
     const count = await db.collection('agent_logs').where({
       openid,
       timestamp: _.gte(windowStart),
-      action: _.nin(['ocr_extract', 'ocr_extract_batch', 'ocr_recognize', 'ocr_only_batch', 'ai_extract_batch', 'ai_extract_parallel', 'ocr_ai_extract'])
+      // 2026-09-28：排除表是"辅助/派生日志"，它们不该挤占用户的 60 次/60s 配额。
+      // `report_ai_call` 是 2026-09-28 起 reportAI 走网关的那条 AI 调用行 —— 一次报告生成
+      // 会同时产生它 + 业务行 `report_generate`（含 metrics），两条同名时一次生成被计 2 次
+      // （上限实际只剩 30/60s）。改名后业务行仍在计数内 → 一次生成 = 1 次计数，口径不变。
+      action: _.nin(['ocr_extract', 'ocr_extract_batch', 'ocr_recognize', 'ocr_only_batch', 'ai_extract_batch', 'ai_extract_parallel', 'ocr_ai_extract', 'report_ai_call'])
     }).count()
     if (count.total > RATE_LIMIT_MAX) return { allowed: false, reason: '请求过于频繁，请稍后重试' }
   } catch (e) { console.error('[guard] checkRateLimit 查询失败:', e.message) }
@@ -42,17 +57,30 @@ async function checkRateLimit(db, openid) {
 async function checkMonthlyQuota(db, openid) {
   if (!db || !openid || typeof db.collection !== 'function') return { allowed: true }
   try {
-    // M-2 修复：agents 表 openid 即逻辑唯一键，但注入 _openid 兜底防止历史数据缺 _openid 时跨用户读取
-    const r = await db.collection('agents').where({ openid, _openid: openid }).limit(1).get()
-    const agent = r && r.data && r.data[0]
-    if (!agent) return { allowed: true }
-    const limit = Number(agent.token_monthly_limit) || 0
-    if (limit <= 0) return { allowed: true }
-    const used = Number(agent.token_used_monthly) || 0
+    // 2026-09-22 全面审计 P1-3：定位键只用 openid（原为 `{openid, _openid}`）。
+    // 原写法对"历史文档缺 _openid"读不到档案 → 直接放行（配额形同虚设）；而 openid 是 agents
+    // 的逻辑唯一键、其值来自 wxContext 可信源，单独作 where 不产生越权面。
+    const r = await db.collection('agents').where({ openid }).limit(5).get()
+    // 2026-09-28 复审（dsh 审计项④）：并发首登会造出**两份** agents 文档（login 建档 + 计费补建），
+    // 而原实现 `.limit(1)` 取任意一份 → 取到补建那份（无 token_monthly_limit）即放行，配额形同虚设。
+    // 现取"最严"：只要**任一**文档限了额度就按其中最小限额判，用量取各文档最大值。
+    // （与 09-22 P1-2 同根因的第三次发作：配额失效的形态永远是"读到了不该读的那一份"。）
+    const list = (r && r.data) || []
+    if (!list.length) return { allowed: true }
+    const cur = _monthKey()
+    const limits = list.map(a => Number(a.token_monthly_limit) || 0).filter(n => n > 0)
+    if (!limits.length) return { allowed: true }
+    const limit = Math.min.apply(null, limits)
+    // 自然月重置（2026-09-22 全面审计 P1-2）：quota_period 由 ai-accounting.bumpAgentTokens 在累加时写入，
+    // 与本月不一致即视为本月用量 0 —— 原实现只读比较、全仓无重置路径，trial 用户用满 30000 token 后
+    // 恒返回"本月 AI 用量已达上限"却永不复原（只能人工改库）。存量无该字段的文档 ⇒ 放行一次，随后被写入本月。
+    const used = list.reduce((mx, a) => (String(a.quota_period || '') === cur ? Math.max(mx, Number(a.token_used_monthly) || 0) : mx), 0)
     if (used >= limit) return { allowed: false, reason: '本月 AI 用量已达上限' }
   } catch (e) { console.error('[guard] checkMonthlyQuota 查询失败:', e.message) }
   return { allowed: true }
 }
+
+// （原此处自有一份 `_monthKey`，2026-09-26 复审已收敛到 ai-accounting 单一事实源，见文件头 import 注释）
 
 // ---- 输出审计 ----
 

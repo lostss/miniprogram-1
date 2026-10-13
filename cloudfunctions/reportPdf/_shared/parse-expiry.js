@@ -63,11 +63,19 @@ function parseExpiry(insurancePeriod, effectiveDate, age) {
   }
 
   // 「12个月」「6个月」— 短期限：生效日起算 N 个月（精确到月）
+  // 2026-09-20（复核批次 A）：修 setMonth 的日期溢出。原实现直接 setMonth(getMonth()+nm)，
+  // JS 对"该月不存在的日期"会向后溢出：2026-01-31 + 1 个月 → **2026-03-03**（不是 02-28），
+  // 到期日因此凭空多出 3 天。改按保险惯例「对应日；该月无此日则取该月最后一天」：
+  // 先降到 1 号再加月（此时不可能溢出），最后把日期钳回 min(原日, 该月天数)。
   var monMatch = text.match(/^(\d+)\s*个月/)
   if (monMatch) {
     var nm = parseInt(monMatch[1], 10)
     var dm2 = new Date(eff)
+    var dom = dm2.getDate()
+    dm2.setDate(1)
     dm2.setMonth(dm2.getMonth() + nm)
+    var lastDom = new Date(dm2.getFullYear(), dm2.getMonth() + 1, 0).getDate()
+    dm2.setDate(Math.min(dom, lastDom))
     return { year: dm2.getFullYear(), date: dm2, label: text }
   }
 

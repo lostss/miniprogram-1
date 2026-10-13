@@ -22,6 +22,8 @@ var { buildCoverageMatrix } = require('./gap-engine')
 var { buildTimeline } = require('./timeline-builder')
 var { canonCat } = require('../thresholds')
 var { yuanToWan, fmtYuan } = require('../amount')
+// 现价取行唯一事实源（2026-09-27 起：保单年度也在此契约内，勿再自行写年差公式）
+var { policyYearAt, cashAtYear, coverScale } = require('../cash-value-math')
 var createBlock = require('../custom-blocks').create
 
 // 险种短名：卡片展示用（重疾险 → 重疾；寿险保留全称，'寿' 不可读）
@@ -34,16 +36,10 @@ function _shortCat(cat) {
   return s
 }
 
-// 保单状态展示文案（与后端 policy-status.js 保持同构）
-const POLICY_STATUS_LABELS = {
-  active: '有效',
-  lapsed: '失效',
-  surrendered: '退保',
-  claim_terminated: '理赔终止',
-  expired: '到期终止',
-  cancelled: '退保',
-  suspicious: '数据异常'
-}
+// 保单状态展示文案：单一事实源（跨树契约文件，勿手写镜像——原镜像缺 deleted/unknown）
+const { STATUS_LABELS: POLICY_STATUS_LABELS, isLifetimeTerm, isSinglePayTerm } = require('../policy-status')
+// 置信度阈值契约（2026-09-24 口径自查：原为内联 0.95，与 CONF_THRESHOLD(0.9) 语义不同、勿混用）
+const { OCR_RELIABLE_THRESHOLD } = require('../ocr-confidence')
 
 
 // 金额展示：薄包装 amount.js fmtYuan（契约 2 位精度，消除 1/2 位漂移）；
@@ -72,7 +68,7 @@ function _numW(v) {
 function _periodText(p) {
   if (p.insurance_period) return String(p.insurance_period)
   var ct = p.coverage_term
-  if (ct === 105 || ct === '105' || ct === 0 || ct === '0') return '终身'
+  if (isLifetimeTerm(ct)) return '终身'
   if (ct) return String(ct) + '年'
   return ''
 }
@@ -89,15 +85,24 @@ function _payTermText(p) {
   if (_isOneYear(p)) return '一次性'
   if (p.payment_period) return String(p.payment_period)
   var pt = p.premium_term
-  if (pt === 1 || pt === '1' || pt === 0 || pt === '0') return '趸交'
+  if (isSinglePayTerm(pt)) return '趸交'
   if (pt) return '缴' + String(pt) + '年'
   return ''
 }
 
-// 当前年份现金价值：表值 v(每万元保额·元) × 保额万数 = 现金价值(元)
-// 取现金价值表中 ≤ 当前保单年度(当前年-生效年+1) 的末行；无现价表/未生效/无保额 → null
+// 当前保单年度的现金价值：表值 v(每万元保额·元) × 保额万数 = 现金价值(元)
+// 取现金价值表中 ≤ 当前保单年度 的末行；无现价表/未生效/无保额 → null
 // 有现价表即储蓄型产品（OCR 仅储蓄型保单配现价表），天然完成储蓄型过滤，无需 category 判断
-function _currentCashValue(p, cashValues) {
+//
+// 2026-09-27 修（dsh 审计 ①：现价取行前后端相差 1 年）：原实现自行用「当前年 − 生效年 + 1」近似
+// 保单年度，且**不看周年日**（周年日未到时多算 1 年）；而后端 `report-coverage._paidYears` 用
+// 「当前年 − 生效年」（少算 1 年）→ 同一保单同一时刻报告页与 AI 上下文取到**不同行**：
+// 实测 `多倍保障青少年重大疾病保险(A1款)`（生效 2020-05-20，实际第 7 保单年度）
+// 报告页取 y=7 → 现价 7960，AI 上下文取 y=6 → 6240 ✗。
+// 现两处都走契约：`policyYearAt`（按生效日周年判定）+ `cashAtYear`（取 ≤ 年度 的最近一行；
+// 无合格行返回 null，由调用方不展示 —— 2026-09-27 已删掉"无则取首行"的回落，
+// 那会把**未来年度**的现价当成当前现价；见 cash-value-math.js 该函数的说明）。
+function _currentCashValue(p, cashValues, now) {
   if (!p || !Array.isArray(cashValues) || !cashValues.length) return null
   var pid = p.id || p._id || ''
   if (!pid) return null
@@ -106,21 +111,11 @@ function _currentCashValue(p, cashValues) {
     if (cashValues[i] && cashValues[i].policy_id === pid) { cv = cashValues[i]; break }
   }
   if (!cv || !Array.isArray(cv.cash_values) || !cv.cash_values.length) return null
-  var scale = Math.max(1, Math.round(yuanToWan(p.sum_assured || 0)))
-  if (scale <= 0) return null
-  var eff = String(p.contract_effective_date || p.effective_date || '').substring(0, 10)
-  if (!eff) return null
-  var effYear = new Date(eff).getFullYear()
-  if (isNaN(effYear)) return null
-  var policyYear = new Date().getFullYear() - effYear + 1
-  if (policyYear < 1) return null // 未生效
-  var row = null
-  for (var j = 0; j < cv.cash_values.length; j++) {
-    var r = cv.cash_values[j]
-    if (r && r.y <= policyYear && (!row || r.y > row.y)) row = r
-  }
+  var policyYear = policyYearAt(p.contract_effective_date || p.effective_date || '', now)
+  if (!policyYear) return null // 未生效 / 日期判不出 → 不猜
+  var row = cashAtYear(cv.cash_values, policyYear)
   if (!row) return null
-  return yuanToWan(row.v * scale) // 万元
+  return yuanToWan(row.v * coverScale(p.sum_assured)) // 万元
 }
 
 // 成员角色分组排序：长辈 → 父母 → 本人/配偶 → 子女
@@ -144,12 +139,12 @@ function buildConfidenceAlerts(policies) {
     // 告警携带保单引用（policy_id + 低置信字段），供 [核对] 定位编辑 Sheet
     if (p.need_review) { alerts.push({ name: name, issue: '保额需人工确认', policy_id: pid, field: 'sum_assured' }); continue }
     var conf = typeof p.confidence === 'number' ? p.confidence : 1
-    if (conf < 0.95) { alerts.push({ name: name, issue: '识别置信度较低', policy_id: pid }); continue }
+    if (conf < OCR_RELIABLE_THRESHOLD) { alerts.push({ name: name, issue: '识别置信度较低', policy_id: pid }); continue }
     var fc = p.field_confidence
     if (fc && typeof fc === 'object') {
       var lowField = null
       for (var k in fc) {
-        if (typeof fc[k] === 'number' && fc[k] < 0.95 && !/^name$/i.test(k)) { lowField = k; break }
+        if (typeof fc[k] === 'number' && fc[k] < OCR_RELIABLE_THRESHOLD && !/^name$/i.test(k)) { lowField = k; break }
       }
       if (lowField) alerts.push({ name: name, issue: '部分字段置信度较低', policy_id: pid, field: lowField })
     }
@@ -171,12 +166,9 @@ function buildChapters(family, report, gaps, opts) {
   var active = norm.active
   var debt = norm.debt
   var totalIncome = norm.totalIncome
-  var annualPremium = norm.annualPremium
   var annualPremiumW = norm.annualPremiumW
   var premiumRatio = norm.premiumRatio
-  var totalCoverage = norm.totalCoverage
   var policyCount = norm.policyCount
-  var expense = norm.expense
 
   var matrix = buildCoverageMatrix(members, active)
   var ch = []
@@ -191,9 +183,11 @@ function buildChapters(family, report, gaps, opts) {
   var sortedMembers = [].concat(members).sort(function(a, b) {
     return (_roleGroup(a.role) - _roleGroup(b.role)) || String(a.name).localeCompare(String(b.name), 'zh')
   })
-  var nodes = sortedMembers.map(function(m) {
+  var nodes = sortedMembers.map(function(m, i) {
     var role = m.role || ''
-    return { name: m.name, role: role, age: m.age || '', member_id: m.member_id || '', display: m.age ? (role + '(' + m.age + ')') : role }
+    // 2026-09-18 报告页审计：补稳定唯一 key —— 原 WXML 用 wx:key="name"，同名成员碰撞；
+    // 而 member_id 在缺 id 的成员上为 ''，单用也会碰撞 → 用「member_id|下标」组合保证唯一
+    return { key: (m.member_id || 'n') + '|' + i, name: m.name, role: role, age: m.age || '', member_id: m.member_id || '', display: m.age ? (role + '(' + m.age + ')') : role }
   })
   // 去代际分层：成员卡片平铺流动布局（排序仍按角色分组序+中文名）
   ch.push({
@@ -206,9 +200,12 @@ function buildChapters(family, report, gaps, opts) {
   ch.push({
     key: 'family_finance', title: '家庭财务', num: '2', edit: 'financials',
     customBlocks: [createBlock('finance', {
-      income: totalIncome,
-      debt: Math.round(debt * 100) / 100,
-      expense: Math.round(expense * 100) / 100
+      // 2026-09-18 报告页审计：totalIncome 在"家庭收入与成员收入均未填写"时回落 0（data-normalizer L23），
+      // 直传会渲染成"年收入 0万"，与⑦缴费月历章 L360 的"（家庭年收入未填写，暂不计算占比）"口径矛盾
+      // ——同一份 owner 视图里两章对同一事实说法不一。传 null 让渲染侧区分"未填写"与"真的是 0"。
+      // 注：debt 不这样处理——"总负债 0万"是准确表述（无负债），不存在未填写歧义。
+      income: totalIncome > 0 ? totalIncome : null,
+      debt: Math.round(debt * 100) / 100
     })]
   })
   }
@@ -234,11 +231,17 @@ function buildChapters(family, report, gaps, opts) {
   // ======== ④ 保障缺口（审计·顾问视角 2026-09-04：缺口诊断独立成章） ========
   // 此前 buildGaps 算出的金额/依据/优先级从未渲染（缺口只以汇总章顶部红字呈现），核心价值被埋没。
   // 现以 markdown 列表独立成章：成员分组小标题 + 缺口明细。
-  // 展示口径：客户版仅缺口金额（中性，不暴露"需求=负债+5×收入"公式）；owner 含需求-已有与优先级。
+  // 展示口径：客户版仅缺口金额（中性，不暴露"需求=总负债+5×收入"公式）；owner 含需求-已有与优先级。
   // 活报告模型（2026-09）：客户版 blocked（额度无法测算）也展示④章——仅渲染克制说明行（挂载点④）
   var showGapCh = actionable.length > 0 || blockedGaps.length > 0
   if (showGapCh) {
     var gapLines = []
+    // 2026-09-12 客户版补中性口径：金额此前没有任何说明，客户易把"缺口 30 万"读成"要再掏 30 万保费"。
+    // 只写"差额"口径，不写倍数/收入基数——家庭财务章对客户隐藏（:181），写公式等于暴露被刻意隐藏的数据。
+    if (shared && actionable.length > 0) {
+      gapLines.push('以下为「建议保额 − 已有保额」的差额。')
+      gapLines.push('')
+    }
     if (actionable.length > 0) {
       var actByMember = {}
       for (var gi = 0; gi < actionable.length; gi++) {
@@ -273,6 +276,8 @@ function buildChapters(family, report, gaps, opts) {
     }
     ch.push({
       key: 'gap_analysis', title: '保障缺口',
+      // 2026-09-12：缺口是全文金额最重的一章，此前单位只标在「保障汇总」章标题上
+      unit: '单位：万元',
       content: gapLines.join('\n')
     })
   }
@@ -349,16 +354,18 @@ function buildChapters(family, report, gaps, opts) {
   var peakMonth = months.filter(function(x) { return x.h === 2 }).map(function(x) { return x.m + '月' }).join('、')
   ch.push({
     key: 'premium_calendar', title: '缴费月历', num: '5',
-    // 2026-09-06：报告内容默认全部展开（保留手动收起能力）
-    collapsible: true, defaultCollapsed: false,
+    // V1.5（2026-09-12）：明细型章节默认折叠——首屏只保留结论/缺口，月历与附录按需展开（保留手动展开能力）
+    collapsible: true, defaultCollapsed: true,
     customBlocks: [createBlock('calendar', { items: months })],
     // 下方提示：无列表垂直排列（年保费 → 峰值月），markdown-render 以 <br> 换行
     // 客户版：占收入比标注"家庭年收入占比，仅供参考"（数据保留，缓解"推销感"顾虑）
     // 2026-09-09：家庭年收入缺失时不再输出"（占收入 0%）"——data-normalizer 在 totalIncome=0 时
     // premiumRatio 回落 0，原实现直接拼成 0%，与"收入未填写"事实矛盾；改为显式缺失说明
-    content: '年总保费 ' + annualPremiumW + '万' + (totalIncome > 0
-      ? '（占' + (shared ? '家庭年收入 ' + premiumRatio + '%，仅供参考' : '收入 ' + premiumRatio + '%') + '）'
-      : '（家庭年收入未填写，暂不计算占比）') + (peakMonth ? '<br>💡 ' + peakMonth + '缴费压力最大，请提前安排资金' : '')
+    // 2026-09-12 客户版去除占收入比：家庭财务章对客户隐藏（:181），客户无从核对"家庭年收入"基数，
+    // 引用不可见数据并附"仅供参考"是双重减分（数字算不出 + 结论自我注销）。owner 侧保留占比。
+    content: '年总保费 ' + annualPremiumW + '万' + (!shared
+      ? (totalIncome > 0 ? '（占收入 ' + premiumRatio + '%）' : '（家庭年收入未填写，暂不计算占比）')
+      : '') + (peakMonth ? '<br>💡 ' + peakMonth + '缴费压力最大，请提前安排资金' : '')
   })
 
   // ======== ⑦ 特别提醒（置信度告警） ========
@@ -411,6 +418,17 @@ function buildChapters(family, report, gaps, opts) {
       { v: premD !== '未知', text: premD + '/年' },
       { v: payD, text: payD }
     ])
+    // 2026-09-18 报告页审计：补保单号 / 投保人 / 受益人。
+    // 保单号是代理人向保司查档的第一键；受益人此前报告全无展示，而 AI 会在建议里讲
+    // 「指定受益人做资产隔离」——建议与现状脱节，代理人无法据此核对。
+    // ⚠️ 此处**不能用 _joinRow**：它把缺失项渲染成「未知」（见 L51-53），三项皆缺时会输出
+    // "未知 · 未知 · 未知" 的纯噪音。改为只拼接有值项，全缺时 meta3 为空串 → WXML 整行不渲染。
+    // （投保人通常是本人，故多数卡片只有「保单号」项。）
+    var meta3Parts = []
+    if (p.policy_number) meta3Parts.push('保单号 ' + p.policy_number)
+    if (p.policyholder_name) meta3Parts.push('投保人 ' + p.policyholder_name)
+    if (p.beneficiary_name) meta3Parts.push('受益人 ' + p.beneficiary_name)
+    var meta3 = meta3Parts.join(' · ')
     // 当前年份现金价值（代理人/客户均展示；仅储蓄型保单有现价表，其余为空串）
     var cashW = _currentCashValue(p, family.cashValues)
     var cashDisp = ''
@@ -424,6 +442,11 @@ function buildChapters(family, report, gaps, opts) {
         status: p.status || 'active',
         status_label: POLICY_STATUS_LABELS[p.status || 'active'] || (p.status || '有效'),
       // 2026-09-10：移除「保障期已过」标记（用户决策：一年期产品默认有效，除非手动改状态）。
+      // ⚠️ 2026-09-22 交叉引用：本条**不移除**后来新增的"载明期限已过"提醒（PDF `_expiryNote` /
+      // AI 上下文 `_renderExpiryAlerts`），两者词面相似但语义相反，勿据本条去删它们：
+      //   - 被移除的卡片标签：把保单**判成已失效**（与"有效"并列 → 用户以为保障没了）✗
+      //   - 现在的提醒：声明**载明期限已过、按保证续保默认仍有效**，请确认是否续保 ✓
+      //   依据是 2026-09-22 决策「一年期产品默认是续保的，但是可以在文中给出提醒」。
       // 产品规则不变（policy-status.js 的一年期豁免保留，已过期保单仍判 active 并计入保额），
       // 但卡片不再输出 expiry_passed——原标签与「有效」并列会误导用户以为保障已失效。
 
@@ -436,7 +459,8 @@ function buildChapters(family, report, gaps, opts) {
       payment_display: payD,
       cash_display: cashDisp,
       meta1: meta1,
-      meta2: meta2
+      meta2: meta2,
+      meta3: meta3
     })
   }
   Object.keys(byMember).sort(function(a, b) { return a.localeCompare(b, 'zh') }).forEach(function(n) {
@@ -467,8 +491,8 @@ function buildChapters(family, report, gaps, opts) {
   // 审计 L1：明细型低频查阅，默认折叠
   ch.push({
     key: 'appendix_policies', title: '附录：保单明细',
-    // 2026-09-06：报告内容默认全部展开（保留手动收起能力）
-    collapsible: true, defaultCollapsed: false,
+    // V1.5（2026-09-12）：明细型章节默认折叠（首屏只留结论与缺口），保留手动展开能力
+    collapsible: true, defaultCollapsed: true,
     customBlocks: [createBlock('policy_cards', { groups: groups })],
     // 有效保单数提升至标题右侧（unit 字段渲染于标题旁，原 note 在章底部）
     unit: '有效 ' + policyCount + ' 份 / 共 ' + displayPolicies.length + ' 份'
@@ -483,4 +507,4 @@ function buildChapters(family, report, gaps, opts) {
   return ch
 }
 
-module.exports = { buildChapters, buildConfidenceAlerts }
+module.exports = { buildChapters, buildConfidenceAlerts, _currentCashValue }

@@ -81,6 +81,47 @@ function _isCashValueComplete(cvArr) {
 }
 
 /**
+ * 页脚残表判据（2026-09-12，确定性复核）
+ *
+ * 存在的问题：AI 的"完整现价表"判定（年度自 1 起连续 ≥5 行）对"保单正页页脚恰好印出前几年度现价"失效——
+ * 页脚表也可能年度连续且 ≥5 行，于是被当成独立现价表入库。
+ *
+ * 判据来源：ocr-extractor._buildLayoutText 输出的每行形如 `y<坐标>|x:文本|…`（整图坐标、左上原点），
+ * 据此可算「现价表标题在页面中的纵向位置占比」，无需额外坐标管线。
+ *
+ * 阈值取 0.75 而非 0.5：PDF 连续截图（保单正页 + 完整现价表各占半页）时标题常落在中下部，
+ * 用 0.5 会误杀真表——恰是 2026-09-11 修复要救的场景。且仅「标题落入页脚区 **且** 表行数偏少」才判残留，
+ * 后半页的大表（≥ CASH_VALUE_FOOTER_MAX_ROWS 行）不受影响。
+ */
+const CASH_VALUE_FOOTER_TITLE_RATIO = 0.75
+const CASH_VALUE_FOOTER_MAX_ROWS = 12
+const CASH_TITLE_RE = /现金价值|退保金|利益演示|现价表/
+
+/** @returns {number|null} 标题纵向位置占比（0-1）；无坐标或缺标题行时返回 null（表示无从判断，不否决） */
+function _cashValueTitleRatio(ocrText) {
+  const lines = String(ocrText || '').split('\n')
+  let pageH = 0
+  let titleY = -1
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^y(\d+)\|/)
+    if (!m) continue
+    const y = Number(m[1])
+    if (y > pageH) pageH = y
+    if (titleY < 0 && CASH_TITLE_RE.test(lines[i])) titleY = y
+  }
+  if (pageH <= 0 || titleY < 0) return null
+  return titleY / pageH
+}
+
+/** 是否判为保单页脚残留片段（须同时满足：标题在页脚区 + 表行数偏少） */
+function _isCashValueFooterResidue(ocrText, rowCount) {
+  const ratio = _cashValueTitleRatio(ocrText)
+  if (ratio == null) return false
+  if (ratio <= CASH_VALUE_FOOTER_TITLE_RATIO) return false
+  return rowCount < CASH_VALUE_FOOTER_MAX_ROWS
+}
+
+/**
  * PolicyExtractor.extractOne — AI 原始响应 → Policy 对象（深模块，R2 候选 1）
  * 单图路径（aiPhase）唯一转换入口，杜绝字段漂移。
  * 内部：aiOverall 兜底 → calcConfidence → buildPolicyFromExtract → cashValueData
@@ -88,7 +129,7 @@ function _isCashValueComplete(cvArr) {
  * @param {array} ocrConfInfo - OCR 字符级置信度
  * @returns {{ success: boolean, policies?, cashValueData?, docType?, autoConfirmed?, overallConf?, error?, errorCode? }}
  */
-function extractOne(extractRes, ocrConfInfo) {
+function extractOne(extractRes, ocrConfInfo, ocrText) {
   if (!extractRes || extractRes.result !== 'success') {
     return { success: false, error: (extractRes && extractRes.message) || 'AI提取失败', errorCode: 'ai_extract_failed' }
   }
@@ -116,6 +157,7 @@ function extractOne(extractRes, ocrConfInfo) {
   // 现改为 cash_value 与 mixed 走同一标准：AI 判"完整现价表" + 代码完整性阈值（年度自 1 起
   // 连续、行数 ≥ CASH_VALUE_MIN_ROWS）双满足才收。残留片段仍会被该阈值拦下，原有防线未放松。
   let cashValueData = null
+  let cashValueRejected = null
   if ((rawDocType === 'cash_value' || rawDocType === 'mixed') && extractRes.cash_value_data) {
     const cvd = extractRes.cash_value_data
     const hi = cvd.header_info || {}
@@ -124,20 +166,33 @@ function extractOne(extractRes, ocrConfInfo) {
       if (cv.n) row.n = cv.n
       return row
     })
-    if (_isCashValueComplete(cvArr)) {
+    if (!_isCashValueComplete(cvArr)) {
+      cashValueRejected = 'incomplete'
+    } else if (_isCashValueFooterResidue(ocrText, cvArr.length)) {
+      // 2026-09-12 确定性复核：页脚残表（标题落入页面底部 + 表行数偏少）→ 否决 AI 的"完整"判定
+      cashValueRejected = 'footer_residue'
+    } else {
       cashValueData = {
         product_name: hi.product_name || (products.length > 0 ? products[0].product_name : '') || '',
         insured_name: hi.insured_name || contractBasic.insured_name || '',
         policy_number: hi.policy_number || contractBasic.policy_number || '',
         insurance_type: hi.insurance_type || '',
         cash_values: cvArr,
-        overall_confidence: typeof cvd.overall_confidence === 'number' ? cvd.overall_confidence : overallConf
+        overall_confidence: typeof cvd.overall_confidence === 'number' ? cvd.overall_confidence : overallConf,
+        // 2026-09-12 同图绑定：mixed 图（保单正页 + 现价表同屏）的现价表携带来源保单键，
+        // 写库时由 cash-value-matcher 优先直连该保单（同图是比"产品名模糊"更强的信号）。
+        // 仅作匹配提示，不落库（writeCashValue 显式白名单构造 cashDoc）。
+        from_policy: rawDocType === 'mixed' ? {
+          policy_number: contractBasic.policy_number || '',
+          product_name: (products[0] && products[0].product_name) || '',
+          insured_name: contractBasic.insured_name || ''
+        } : null
       }
     }
   }
   // mixed：同图以保单主体为主 → docType 降级为 policy（影响下游分组与展示，保持历史行为）
   const docType = rawDocType === 'mixed' ? 'policy' : rawDocType
-  return { success: true, policies: policies, cashValueData: cashValueData, docType: docType, autoConfirmed: autoConfirmed, overallConf: overallConf }
+  return { success: true, policies: policies, cashValueData: cashValueData, cashValueRejected: cashValueRejected, docType: docType, autoConfirmed: autoConfirmed, overallConf: overallConf }
 }
 
 /**
@@ -219,7 +274,7 @@ async function aiPhase({ ocrText, ocrConfInfo, ocrErrorCode, fileId, t0, t1, t2,
 
   // ---- Step 4: 置信度计算 + 保单构建（委托 PolicyExtractor.extractOne，R2 候选 1） ----
   const durations = { getTempUrl: t1 - t0, ocrApi: t2 - t1, aiExtract: t3 - t2, total: t3 - t0 }
-  const ex = extractOne(extractRes, ocrConfInfo)
+  const ex = extractOne(extractRes, ocrConfInfo, ocrText)
   const docType = ex.docType
   const newPolicies = ex.policies
   const cashValueData = ex.cashValueData
@@ -228,7 +283,7 @@ async function aiPhase({ ocrText, ocrConfInfo, ocrErrorCode, fileId, t0, t1, t2,
   opLog(db, {
     action: 'ocr_recognize', openid, familyId,
     result: { status: 'ok', summary: '识别' + newPolicies.length + '个产品，类型:' + docType },
-    meta: { total: newPolicies.length, docType, hasCashValue: !!cashValueData, autoConfirmed, durations, tokens: tokens || {} }
+    meta: { total: newPolicies.length, docType, hasCashValue: !!cashValueData, cashValueRejected: ex.cashValueRejected || null, autoConfirmed, durations, tokens: tokens || {} }
   }).catch(() => {})
 
   return { success: true, policiesCount: newPolicies.length, policies: newPolicies, document_type: docType, cashValueData, tokens: tokens || {} }
@@ -238,4 +293,4 @@ async function aiPhase({ ocrText, ocrConfInfo, ocrErrorCode, fileId, t0, t1, t2,
 // aiExtractBatch 单图路径统一走 aiPhase（DeepSeek 直连），批量拼接编排（_callBatchAI/aiExtractBatchPhase）已删除。
 // 备份文件已随 docs 归档清理（2026-09-04）；原实现见 git 历史。
 
-module.exports = { ocrPhase, aiPhase, matchPoliciesToMembers, buildPolicyFromExtract, extractOne, _toNum }
+module.exports = { ocrPhase, aiPhase, matchPoliciesToMembers, buildPolicyFromExtract, extractOne, _toNum, _isCashValueFooterResidue, _cashValueTitleRatio }

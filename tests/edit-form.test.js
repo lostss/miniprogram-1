@@ -109,3 +109,118 @@ describe('buildUpdateData policy — P1-F1 清空字段须真实发送（此前�
     expect(r.updatePolicy.data.status_effective_date).toBeUndefined()
   })
 })
+
+// ===========================================================================
+// 2026-09-19 流程审计 P2-2：到期保单可编辑 + cancelled 不被静默改写
+// ===========================================================================
+describe('P2-2 保单状态：validate 只对手选终止类要求失效日期', () => {
+  const { validate } = require('../miniprogram/utils/edit-form')
+
+  test('系统推断态「到期终止」不要求失效日期（不在手选 options 内，DB 通常无此日期）', () => {
+    // 原判定 `vals.status !== '有效'` 把 expired 也当"用户改了状态"→ 只改受益人的到期保单被卡死
+    expect(validate('policy', { product_name: '康宁', status: '到期终止' }).ok).toBe(true)
+  })
+
+  test('手选终止类（失效/退保/理赔终止）仍强制填写失效日期', () => {
+    for (const s of ['失效', '退保', '理赔终止']) {
+      expect(validate('policy', { product_name: '康宁', status: s }).ok).toBe(false)
+    }
+    expect(validate('policy', { product_name: '康宁', status: '退保', status_effective_date: '2026-01-01' }).ok).toBe(true)
+  })
+
+  test('有效：不要求失效日期（原行为保持）', () => {
+    expect(validate('policy', { product_name: '康宁', status: '有效' }).ok).toBe(true)
+  })
+})
+
+describe('P2-2 保单状态：仅在文案变化时下发 status（防 cancelled→surrendered 静默改写）', () => {
+  const { buildUpdateData } = require('../miniprogram/utils/edit-form')
+  const withPolicy = (p) => ({ policies: [p] })
+
+  test('文案未变（DB=cancelled，picker 显示「退保」）→ 不下发 status', () => {
+    // 根因：STATUS_LABELS 中 surrendered 与 cancelled **共用文案「退保」**，
+    // 反向派生表只能落回 Object.keys 首个（surrendered）→ 原实现每次保存都改写。
+    const r = buildUpdateData('policy', { product_name: '康宁', status: '退保' }, withPolicy({ id: 'p1', status: 'cancelled' }), 'p1')
+    expect(r.updatePolicy.data).not.toHaveProperty('status')
+  })
+
+  test('用户真改了状态（DB=active → 退保）→ 正常下发', () => {
+    const r = buildUpdateData('policy', { product_name: '康宁', status: '退保' }, withPolicy({ id: 'p1', status: 'active' }), 'p1')
+    expect(r.updatePolicy.data.status).toBe('surrendered')
+  })
+
+  test('未传 family（origPolicy 缺失）→ 视为变更并下发（保守，不吞用户操作）', () => {
+    const r = buildUpdateData('policy', { product_name: '康宁', status: '退保' }, null, 'p1')
+    expect(r.updatePolicy.data.status).toBe('surrendered')
+  })
+
+  test('DB=surrendered 且文本相同 → 不下发（幂等）', () => {
+    const r = buildUpdateData('policy', { product_name: '康宁', status: '退保' }, withPolicy({ id: 'p1', status: 'surrendered' }), 'p1')
+    expect(r.updatePolicy.data).not.toHaveProperty('status')
+  })
+})
+
+// ===========================================================================
+// 2026-09-19 流程审计 P2-1：成员 Sheet 补性别/职业/健康，且整组提交必须带上它们
+//   （否则又是"表单收得到、payload 丢掉"——前几轮同类缺陷的复发路径）
+// ===========================================================================
+describe('P2-1 成员字段：Sheet 可填 + payload 不丢', () => {
+  const { buildEditConfig, buildUpdateData } = require('../miniprogram/utils/edit-form')
+
+  test('成员 Sheet 含 gender（男/女 selector）/ occupation / health', () => {
+    const fs = buildEditConfig({ mode: 'member', family: { members: [] }, member: {} }).editFields
+    const byKey = {}
+    fs.forEach(f => { byKey[f.key] = f })
+    expect(byKey.gender.type).toBe('selector')
+    expect(byKey.gender.options).toEqual(['男', '女']) // 必须与后端 member-write 的 gender 校验同源
+    expect(byKey.occupation).toBeDefined()
+    expect(byKey.health).toBeDefined()
+  })
+
+  test('buildUpdateData(member)：三个新字段随整组提交（后端 _syncMembers 按白名单逐字段写，缺席即丢）', () => {
+    const family = { members: [{ member_id: 'm1', name: '张三', role: '本人', age: 35 }] }
+    const r = buildUpdateData('member', { name: '张三', age: '35', role: '本人', gender: '男', occupation: '工程师', health: '良好' }, family, 0)
+    expect(r.members[0].gender).toBe('男')
+    expect(r.members[0].occupation).toBe('工程师')
+    expect(r.members[0].health).toBe('良好')
+  })
+
+  test('buildUpdateData(member)：清空 → 空串（后端对 undefined 跳过，空串才是真清空）', () => {
+    const family = { members: [{ member_id: 'm1', name: '张三', role: '本人', age: 35, gender: '男', occupation: '工程师', health: '良好' }] }
+    const r = buildUpdateData('member', { name: '张三', age: '35', role: '本人', gender: '', occupation: '', health: '' }, family, 0)
+    expect(r.members[0].gender).toBe('')
+    expect(r.members[0].occupation).toBe('')
+    expect(r.members[0].health).toBe('')
+  })
+
+  test('buildUpdateData(member)：未提供的字段沿用原值（不被误清空）', () => {
+    const family = { members: [{ member_id: 'm1', name: '张三', role: '本人', age: 35, gender: '男', occupation: '工程师' }] }
+    const r = buildUpdateData('member', { name: '张三', age: '35', role: '本人' }, family, 0)
+    expect(r.members[0].gender).toBe('男')
+    expect(r.members[0].occupation).toBe('工程师')
+    expect(r.members[0].health).toBe('')
+  })
+
+  test('buildUpdateData(addMember)：新成员同样带上三字段', () => {
+    const r = buildUpdateData('addMember', { name: '赵六', role: '配偶', gender: '女', occupation: '教师', health: '健康' }, { members: [] })
+    expect(r.members[r.members.length - 1]).toMatchObject({ gender: '女', occupation: '教师', health: '健康' })
+  })
+})
+
+// ===========================================================================
+// 2026-09-19 流程审计 P2-7：整组覆盖必须带删除基线（否则误删并发新增的成员）
+// ===========================================================================
+describe('P2-7 删除基线：整组覆盖带上"客户端见过的 member_id"', () => {
+  const { buildUpdateData } = require('../miniprogram/utils/edit-form')
+  const family = { members: [{ member_id: 'm1', name: '张三', role: '本人' }, { member_id: 'm2', name: '李四', role: '配偶' }] }
+
+  test('member / addMember 两种模式都带 members_baseline', () => {
+    expect(buildUpdateData('member', { name: '张三', age: '35', role: '本人' }, family, 0).members_baseline).toEqual(['m1', 'm2'])
+    expect(buildUpdateData('addMember', { name: '王五', role: '子女' }, family).members_baseline).toEqual(['m1', 'm2'])
+  })
+
+  test('基线只含真实 member_id（骨架/未落库的临时 id 不入基线，避免误判"见过"）', () => {
+    const mixed = { members: [{ member_id: 'm1', name: '张三' }, { name: '未落库的' }] }
+    expect(buildUpdateData('member', { name: '张三', role: '本人' }, mixed, 0).members_baseline).toEqual(['m1'])
+  })
+})

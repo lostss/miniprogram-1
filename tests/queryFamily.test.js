@@ -4,40 +4,19 @@
  */
 var mockStore = { families: [], members: [], finances: [], policies: [], reports: [] }
 
+// DB mock 收敛到 tests/helpers/memory-db（2026-09-15 架构审查候选 4）。
+// 旧 where 是空实现（且只取 rows[0]）；adapter 真实过滤。
 jest.mock('wx-server-sdk', function() {
-  var mockDb = {
-    collection: jest.fn(function(name) {
-      var rows = mockStore[name] || []
-      return {
-        doc: jest.fn(function(id) { return {
-          get: jest.fn(function() { return Promise.resolve({ data: rows.find(function(r) { return r._id === id }) || null }) }),
-          update: jest.fn(function() { return Promise.resolve({ stats: { updated: 1 } }) })
-        }}),
-        where: jest.fn(function() { return {
-          get: jest.fn(function() { return Promise.resolve({ data: rows.length > 0 ? [rows[0]] : [] }) }),
-          field: jest.fn(function() { return {
-            limit: jest.fn(function() { return {
-              get: jest.fn(function() { return Promise.resolve({ data: rows.length > 0 ? [rows[0]] : [] }) })
-            }})
-          }}),
-          limit: jest.fn(function() { return {
-            get: jest.fn(function() { return Promise.resolve({ data: rows }) })
-          }})
-        }}),
-        add: jest.fn(function(data) { var newId = 'mock_' + Date.now(); rows.push({ _id: newId, ...data }); return Promise.resolve({ _id: newId }) }),
-        count: jest.fn(function() { return Promise.resolve({ total: rows.length }) })
-      }
-    }),
-    command: { push: function(v) { return { $push: v } }, serverDate: function() { return new Date('2026-01-01') }, neq: function(v) { return { $ne: v } }, in: function(v) { return { $in: v } } }
-  }
+  const { makeMemoryDb } = require('./helpers/memory-db')
   return {
     init: jest.fn(),
     DYNAMIC_CURRENT_ENV: 'env-mock',
-    database: jest.fn(function() { return mockDb }),
+    database: jest.fn(function() { return makeMemoryDb(mockStore) }),
     getWXContext: jest.fn(function() { return { OPENID: 'mock_openid', APPID: 'mock_appid' } }),
     callFunction: jest.fn(function() { return Promise.resolve({ result: { code: 200 } }) })
   }
 })
+const { makeMemoryDb } = require('./helpers/memory-db')
 
 var dataQuery = require('../cloudfunctions/dataQuery/index')
 

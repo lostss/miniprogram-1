@@ -26,6 +26,9 @@ const VALID_ROLES = ['本人', '配偶', '丈夫', '妻子', '父母', '子女',
 const ALLOWED_FIELDS = [
   // 基础信息
   'family_name',
+  // 2026-09-12 MVP 验证：成交标记。小程序无法自动获知成交，此字段是"这份报告有没有帮他把单谈下来"
+  // 的唯一真值来源——不落它，ROI/成交率这两个数字永远读不出来。取值：'' | 'won' | 'lost'
+  'deal_status',
   'family_structure',
   'members',
   'memo',

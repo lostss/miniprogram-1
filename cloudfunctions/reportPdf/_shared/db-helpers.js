@@ -38,19 +38,31 @@ async function safeQueryAll(db, collection, where, openid, opts = {}) {
   const pageSize = opts.pageSize || 100
   const maxPages = opts.maxPages || 20
   const all = []
+  // 2026-09-22 全面审计（数据读取侧 P2）：原实现把"某页查询失败"与"数据到此为止"混为一谈——
+  // catch 返回 {data:[]} → `rows.length < pageSize` 直接判定结束 → 调用方拿到**静默缺行**的数据，
+  // 且 truncated:false 谎报"完整"。改为记下失败页：truncated 置 true（语义即"结果不完整"）
+  // 并回传 failedPages，供调用方决定降级或报错。
+  const failedPages = []
   for (let p = 0; p < maxPages; p++) {
-    let q = db.collection(collection).where({ ...where, _openid: openid }).skip(p * pageSize).limit(pageSize)
-    if (opts.orderBy) q = q.orderBy(opts.orderBy[0], opts.orderBy[1])
+    // 审计 #15：skip 翻页必须带稳定排序，否则页间顺序变化会漏读/重复；默认按 _id 升序（单调）
+    const ob = opts.orderBy || ['_id', 'asc']
+    const q = db.collection(collection).where({ ...where, _openid: openid }).orderBy(ob[0], ob[1]).skip(p * pageSize).limit(pageSize)
+    let pageFailed = false
     const r = await q.get().catch(e => {
       console.error('[db-helpers] safeQueryAll ' + collection + ' 第' + (p + 1) + '页失败:', (e && e.message) || e)
+      failedPages.push(p + 1)
+      pageFailed = true
       return { data: [] }
     })
     const rows = r.data || []
     all.push(...rows)
-    if (rows.length < pageSize) return { data: all, truncated: false }
+    // 失败页的空数组是错误产物，不是数据边界 → 不能据此判定结束
+    if (pageFailed) break
+    if (rows.length < pageSize) return { data: all, truncated: false, failedPages: [] }
   }
+  if (failedPages.length) return { data: all, truncated: true, failedPages }
   console.warn('[db-helpers] safeQueryAll ' + collection + ' 达到 ' + maxPages + ' 页上限，结果可能不完整')
-  return { data: all, truncated: true }
+  return { data: all, truncated: true, failedPages: [] }
 }
 
 // 候选 4：families 单一读取缝，集中注入 _openid，替代 handlers 散落的
@@ -82,38 +94,11 @@ async function deleteFamily(db, familyId, openid) {
   } catch (e) { console.error('[db-helpers] deleteFamily 失败:', e.message); return { code: 500, msg: '删除失败' } }
 }
 
-// ---------- agents 读取接缝 ----------
-// agents 表无 family_id，_openid 即所有权字段；按 openid/phone 查询时直接注入 _openid 条件
-/**
- * 按 openid 查 agent（devLogin 用）
- * @returns {Promise<object|null>}
- */
-async function loadAgentByOpenid(db, openid) {
-  if (!openid) return null
-  // M-2 修复：openid 已是逻辑唯一键，此处显式注入 _openid 兜底防历史数据缺 _openid 跨用户读取
-  const res = await db.collection('agents')
-    .where({ _openid: openid, openid })
-    .limit(1)
-    .get()
-    .catch(() => ({ data: [] }))
-  return (res.data && res.data[0]) || null
-}
+// 2026-09-22 全面审计（死代码清理）：原 agents 读取接缝
+// `loadAgentByOpenid`（devLogin 用）/ `loadAgentByPhone`（phoneLogin 用）已删除——
+// 其唯一调用方随"方案 A（openid 静默登录）"一起下架（见 cloudfunctions/login/index.js 头部：
+// 「原 phoneLogin/devLogin 双路径随 devMode 概念一并移除」），全仓（含测试/文档）零引用。
+// 它们除是死代码外还各带一处 `.catch(() => ({ data: [] }))` —— 正是本项目已明令禁止的
+// 「读失败伪装成空数据」模式；保留等于留一个随时被复用的错误样板。
 
-/**
- * 按手机号查 agent（phoneLogin 用）
- * 注：phone 是登录凭证，不是所有权字段；_openid 仍注入作为防越权兜底
- * @returns {Promise<object|null>}
- */
-async function loadAgentByPhone(db, phone, openid) {
-  if (!phone) return null
-  const where = { phone }
-  if (openid) where._openid = openid
-  const res = await db.collection('agents')
-    .where(where)
-    .limit(1)
-    .get()
-    .catch(() => ({ data: [] }))
-  return (res.data && res.data[0]) || null
-}
-
-module.exports = { safeQuery, safeQueryAll, getFamily, updateFamily, deleteFamily, loadAgentByOpenid, loadAgentByPhone }
+module.exports = { safeQuery, safeQueryAll, getFamily, updateFamily, deleteFamily }

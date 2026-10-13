@@ -24,9 +24,9 @@ describe('calcCompletenessScore', () => {
     expect(calcCompletenessScore(f, [{ id: '1' }])).toBe(20)
   })
 
-  test('收入+15, 负债+15, 支出+10', () => {
+  test('收入+15, 负债+15（固定支出已从模型移除，不再计分）', () => {
     const f = { financial_snapshot: { income: 100000, debt: { amount: 50000 }, fixed_expense: 5000 } }
-    expect(calcCompletenessScore(f)).toBe(40)
+    expect(calcCompletenessScore(f)).toBe(30)
   })
 
   test('负债无amount不计分', () => {
@@ -34,13 +34,13 @@ describe('calcCompletenessScore', () => {
     expect(calcCompletenessScore(f)).toBe(15)
   })
 
-  test('满分100封顶', () => {
+  test('满分 90 封顶（固定支出权重已移除）', () => {
     const f = { members: [{ name: '张', role: '本人', gender: '男', age: '35' }, { name: '李', role: '配偶', gender: '女', age: '33' }], financial_snapshot: { income: 100000, debt: { amount: 50000 }, fixed_expense: 5000 } }
-    expect(calcCompletenessScore(f, [{ id: '1' }])).toBe(100)
+    expect(calcCompletenessScore(f, [{ id: '1' }])).toBe(90)
   })
 
-  test('超100也封顶', () => {
+  test('多项齐备也不溢出（上限仍为 90）', () => {
     const f = { members: [{ name: '张', role: '本人', gender: '男', age: '35' }, { name: '李', role: '配偶', gender: '女', age: '33' }, { name: '王', role: '子女', gender: '男', age: '5' }], financial_snapshot: { income: 100000, debt: { amount: 50000 }, fixed_expense: 5000 } }
-    expect(calcCompletenessScore(f, [{ id: '1' }, { id: '2' }])).toBe(100)
+    expect(calcCompletenessScore(f, [{ id: '1' }, { id: '2' }])).toBe(90)
   })
 })

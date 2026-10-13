@@ -20,8 +20,13 @@ async function upsertAgent(openid) {
     const now = new Date()
     const ws = writeSeam(db, openid)
     if (r.data && r.data.length > 0) {
-      // M-1 修复：登录 update 改走 writeSeam.silentUpdateDoc（已先校验 _openid 归属，符合接缝不变量）
-      await ws.silentUpdateDoc('agents', r.data[0]._id, { last_login_at: now, _openid: openid })
+      // 2026-09-22 全面审计 P1-3（登录链路，上线阻断级）：此处**必须**用 doc(_id).update 直接补写，
+      // 不能走 writeSeam.silentUpdateDoc —— 后者先 `where({_id, _openid: openid})` 校验归属，
+      // 而本分支存在的意义恰恰是「历史文档缺 _openid」（见上方注释）：校验必然命中 0 条 → 抛错
+      // → 整个 login 返回 500「登录失败」，该用户**永远无法进入小程序**，且永不自愈。
+      // 归属安全性不受影响：_id 来自上面 `where({ openid })` 的查询结果，openid 来自 wxContext
+      // （平台可信源，客户端不可伪造）→ 按 _id 更新不存在越权面。
+      await db.collection('agents').doc(r.data[0]._id).update({ data: { last_login_at: now, _openid: openid } })
       return { code: 200, msg: '登录成功', data: { openid, agent_id: r.data[0]._id, phone: r.data[0].phone || '', nickname: r.data[0].nickname, role: r.data[0].role, plan: r.data[0].plan } }
     }
     // 经 writeSeam.silentAdd：自动注入 _openid

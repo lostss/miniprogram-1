@@ -15,13 +15,28 @@
  */
 const { sanitize, detectInjection, checkRateLimit, checkMonthlyQuota, auditOutput } = require('./guard')
 const { desensitize } = require('./pii-rules')
-const { COST_PER_1K, PRICING } = require('./config')
+// 定价/配额/记账已收敛到 ai-accounting（架构审查候选 3）。
+// re-export calcTokenUsage / bumpAgentTokens 保持旧调用点（tool-orchestration 等）兼容。
+const { calcTokenUsage, bumpAgentTokens } = require('./ai-accounting')
 // 架构审计第 6 轮：日志写入统一走 logSeam（含 mutation 模式）
 const { logAI, updateLogStatus } = require('./logSeam')
 
-function _secureInput(messages) {
+// system 提示词的长度上限（2026-09-22 全面审计 · AI 侧 P1）
+// MAX_INPUT（16000）的语义是"**用户输入**闸门"（防超长输入烧 token / 拖垮函数），
+// 但 _secureInput 原先对**每一条** message 一律按 MAX_INPUT 截断，system 消息也未能幸免。
+// 实测代价：reportAI 的 system prompt = 16330 字（warm 语气 = 16753），被截到 16000 →
+//   ① 「## 输出前红线重申」第 2~8 条（数据原貌 / 禁病种 / 禁止重算缺口 / 收入口径 / 话术腔…）
+//      全部没送进模型，只剩第 1 条的前半句；
+//   ② warm（共情版）整块 423 字位于截断点之后 → **共情语气 100% 无效**，而 agent_logs
+//      照旧记 metrics.tone='warm'，从日志上完全看不出功能是空的。
+// 提示词是开发者自己写的常量，不是用户输入，故不设"输入闸门"；仍给一个足够大的硬上限，
+// 防的是"将来有人把用户内容拼进 system"这类回归把请求撑爆。
+const SYSTEM_PROMPT_MAX = 100000
+
+function _secureInput(messages, opts) {
+  const userMax = (opts && opts.maxInput) || undefined
   return messages.map(m => {
-    let content = sanitize(m.content || '')
+    let content = sanitize(m.content || '', m.role === 'system' ? SYSTEM_PROMPT_MAX : userMax)
     if (m.role === 'user') content = desensitize(content)
     return { ...m, content }
   })
@@ -76,7 +91,9 @@ async function _writeLog(ctx, logData) {
 
 /** 共享流水线核心：secureInput → injectCheck → rateLimit → 返回值 { blocked, reason, code, secured? } */
 async function _pipelineGuard(messages, ctx, skipInjection) {
-  const secured = _secureInput(messages)
+  // ctx.maxInput：按调用路径放宽 user 侧上限（如 OCR 的长保单文本，见 ocr-extractor 的 OCR_TEXT_MAX_LEN）。
+  // system 消息不受该上限约束（见 _secureInput）。
+  const secured = _secureInput(messages, ctx)
   if (!skipInjection) {
     const injection = _checkInjection(secured)
     if (injection.blocked) {
@@ -102,63 +119,31 @@ async function _pipelineGuard(messages, ctx, skipInjection) {
   return { blocked: false, secured }
 }
 
-/**
- * 用量与成本计算（2026-09-10 口径校准）
- * 原实现用单一 COST_PER_1K 混合计价且不区分模型——而该常量注释是 hy3 的美元价，
- * 用在 DeepSeek 直连（人民币、输入/输出单价差 4 倍）上会系统性高估。
- * 现按 model 查 config.PRICING（元/百万；hy3 为美元），拆输入未命中/缓存命中/输出三段；
- * 未命中模型时回落 COST_PER_1K 旧口径，避免存量看板断层。
- * @param {object} usage - AI 返回的 usage
- * @param {string} [model] - 实际调用的模型名（ctx.model）
- */
-function calcTokenUsage(usage, model) {
-  const input = usage.prompt_tokens || usage.promptTokens || usage.input_tokens || 0
-  const output = usage.completion_tokens || usage.completionTokens || usage.output_tokens || 0
-  const total = usage.total_tokens || usage.totalTokens || (input + output) || 0
-  const table = (typeof PRICING !== 'undefined' && PRICING) || null
-  const price = (table && model && table[model]) || null
-  let cost
-  if (price) {
-    // DeepSeek 返回 prompt_cache_hit_tokens；命中部分按缓存价计（仅 1/50 单价的差量很大，必须拆开）
-    const cachedIn = Math.min(input, usage.prompt_cache_hit_tokens || usage.promptCacheHitTokens || 0)
-    const missIn = Math.max(0, input - cachedIn)
-    cost = (missIn * price.in + cachedIn * (price.inCached == null ? price.in : price.inCached) + output * price.out) / 1e6
-  } else {
-    cost = (input + output) / 1000 * COST_PER_1K
-  }
-  return { input, output, total, cost: Math.round(cost * 1e6) / 1e6 }
-}
-
-/**
- * 用户月度 token 配额原子累加（agents.token_used_monthly/total，只加不减）。
- * 供 ai-gateway 内部与 conversationAI 流式收尾（record/postProcess）共用；DB 不可用/失败不抛错。
- */
-async function bumpAgentTokens(db, openid, total) {
-  if (!db || !openid || !(total > 0) || typeof db.collection !== 'function') return
-  try {
-    const _ = db.command
-    if (_ && typeof _.inc === 'function') {
-      await db.collection('agents').where({ openid, _openid: openid })
-        .update({ data: { token_used_monthly: _.inc(total), token_used_total: _.inc(total) } })
-        .catch(e => console.error('[ai-gateway] 配额累加失败:', e.message))
-    }
-  } catch (e) { console.error('[ai-gateway] 配额累加异常:', e.message) }
-}
+// calcTokenUsage / bumpAgentTokens 已移至 _shared/ai-accounting.js（架构审查候选 3：
+// 「算价 → 计配额」与直连通道手写副本合并为单一事实源），本文件在顶部 require 后
+// 于 module.exports 原样 re-export，旧调用点（tool-orchestration 等）无需改动。
 
 /**
  * 共享调用核心：guard → contentSafe(输入) → invokeAI → audit → contentSafe(输出) ∥ writeLog → secureOutput
  * invokeAI(secured) → { text, toolCalls?, usage? }
- * 返回 { text, toolCalls, usage, logId }
+ * 返回 { text, toolCalls, usage, logId, blocked? }
+ *   `blocked: { code, reason }`（2026-09-28 新增）—— 命中审查链任一闸门时给出**显式拒绝通道**，
+ *   调用方据此分流；**不得**再把拦截原因当模型输出解析（见下方注释）。
  */
 async function _runSecuredPipeline(messages, ctx, invokeAI) {
   const guard = await _pipelineGuard(messages, ctx, ctx.skipInjection)
-  if (guard.blocked) return { text: guard.reason, toolCalls: [], usage: {}, logId: null }
+  // 2026-09-28 全面审计 P1（已实测复现）：被 guard 拦下时必须区分"拒绝"与"模型输出"。
+  // 原实现只把原因塞进 `text`，而返回契约里没有任何标记 → 所有调用方都当模型文本处理：
+  // reportAI 拿去 parseAIJSON 必然失败 → 记 `report_parse_fail`、用户看到"报告生成失败，
+  // 30 秒后可重试"，真实原因（本月 AI 用量已达上限 / 请求过于频繁 / 输入校验未通过）被吞掉，
+  // 且指标把"配额拦截"混进"模型格式故障"（实测配额拦截被记为 report_parse_fail）。
+  if (guard.blocked) return { text: guard.reason, toolCalls: [], usage: {}, logId: null, blocked: { code: guard.code || 'BLOCKED', reason: guard.reason } }
 
   const userText = guard.secured.filter(m => m.role === 'user').map(m => m.content).join('\n')
   const inputSafe = await _checkContentSafe(ctx.cloud, userText, ctx.skipContentSafety)
   if (!inputSafe.pass) {
     await _writeLog(ctx, { status: 'blocked', error: { code: 'CONTENT_UNSAFE', message: inputSafe.reason, step: 'content_safety' } })
-    return { text: inputSafe.reason, toolCalls: [], usage: {}, logId: null }
+    return { text: inputSafe.reason, toolCalls: [], usage: {}, logId: null, blocked: { code: 'CONTENT_UNSAFE', reason: inputSafe.reason } }
   }
 
   let result
@@ -166,8 +151,23 @@ async function _runSecuredPipeline(messages, ctx, invokeAI) {
     result = await invokeAI(guard.secured)
   } catch (e) {
     // 日志审计 #2：AI 调用异常（网络/超时/空响应）也落 agent_logs——失败调用已消耗输入 token，
-    // 缺失会导致成本核算系统性低估、AI 异常率无日志支撑
-    await _writeLog(ctx, { status: 'fail', error: { code: 'AI_CALL_FAIL', message: (e && e.message) || 'AI调用异常', step: 'invoke' } })
+    // 缺失会导致成本核算系统性低估、AI 异常率无日志支撑。
+    // 2026-09-12 补 tokens/cost：ai-client 现会把已收到的 usage 挂到 err.usage（ai_empty/ai_format
+    // 其实已拿到 res.data.usage），原先失败只落 status='fail' 不记 token，等于把这部分消耗丢掉。
+    const failUsage = (e && e.usage) || {}
+    const failTokens = calcTokenUsage(failUsage, ctx.model)
+    await _writeLog(ctx, {
+      status: 'fail',
+      error: {
+        code: 'AI_CALL_FAIL',
+        reason: (e && e.code) ? String(e.code) : '',
+        message: (e && e.message) || 'AI调用异常',
+        step: 'invoke'
+      },
+      tokens: { input: failTokens.input, output: failTokens.output, total: failTokens.total },
+      cost: failTokens.cost,
+      currency: failTokens.currency
+    })
     throw e
   }
   // OCR/结构化提取场景：AI 返回 JSON 是业务数据，不应脱敏（保单号/身份证号需原样入库）
@@ -184,7 +184,7 @@ async function _runSecuredPipeline(messages, ctx, invokeAI) {
     audit = { pass: true, text: result.text || '', auditWarning: audit.reason, matchedRule: audit.matchedRule }
   }
   const usage = result.usage || {}
-  const { input, output, total, cost } = calcTokenUsage(usage, ctx.model)
+  const { input, output, total, cost, currency } = calcTokenUsage(usage, ctx.model)
 
   // P0：用户月度 token 配额原子累加（仅成功调用可计费；DB 不可用/失败不阻断主流程）
   await bumpAgentTokens(ctx.db, ctx.openid, total)
@@ -195,6 +195,7 @@ async function _runSecuredPipeline(messages, ctx, invokeAI) {
     status: 'success',
     tokens: { input, output, total },
     cost,
+    currency,
     // warn 模式命中：规则写进日志 metrics，保留合规可观测性（不再以牺牲功能可用性为代价）
     metrics: auditWarnOnly ? { outputAuditWarning: audit.auditWarning, matchedRule: audit.matchedRule } : {}
   })

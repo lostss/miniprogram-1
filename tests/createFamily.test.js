@@ -93,23 +93,27 @@ describe('createFamily (via dataWrite) 云函数', function() {
     })
   })
 
-  test('空成员列表返回 400', function() {
+  // 2026-09-12 契约变更：放开"无成员建档"——第一次见面、还没拿到保单时最需要先建客户档案，
+  // 成员可后续补（readiness 会引导）。原契约（至少一个成员）把最需要的时点挡在门外。
+  test('空成员列表 → 允许建档（member_count 0）', function() {
     return dataWrite.main({
       action: 'createFamily',
-      family_name: '测试家庭',
+      family_name: '待补全客户',
       members: []
     }).then(function(res) {
-      expect(res.code).toBe(400)
-      expect(res.msg).toContain('至少需要一个家庭成员')
+      expect(res.code).toBe(200)
+      expect(res.data.family_structure.member_count).toBe(0)
+      expect(res.data.members).toEqual([])
     })
   })
 
-  test('无 members 字段返回 400', function() {
+  test('无 members 字段 → 同样允许建档', function() {
     return dataWrite.main({
       action: 'createFamily',
-      family_name: '测试家庭'
+      family_name: '无成员客户'
     }).then(function(res) {
-      expect(res.code).toBe(400)
+      expect(res.code).toBe(200)
+      expect(res.data.family_structure.member_count).toBe(0)
     })
   })
 

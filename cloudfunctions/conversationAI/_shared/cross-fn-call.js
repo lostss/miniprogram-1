@@ -19,7 +19,6 @@
  * 依赖：cloud（wx-server-sdk 实例），从外部注入以便测试替换。
  */
 const { withRetry } = require('./retry')
-const DEFAULT_LABEL = 'cross-fn-call'
 
 /**
  * 调用同环境云函数，统一错误归一化、可选重试/节流。

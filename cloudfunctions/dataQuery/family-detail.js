@@ -10,6 +10,7 @@ const { loadFamilyView } = require('./_shared/familyView')
 const { loadActivePolicies } = require('./_shared/policy-read')
 const { loadCashValues, loadUnmatchedCashValues } = require('./_shared/cash-value-read')
 const { toReadReport } = require('./_shared/report-fields')
+const { applyFamilyCompat } = require('./_shared/family-compat')
 const { wrapError } = require('./_shared/errorHandler')
 
 // ---------- getFamily ----------
@@ -39,10 +40,10 @@ async function getFamilyDetail(db, openid, event) {
     family.report = toReadReport(family)
 
     // 向后兼容字段：报告页直接读 c.debt / c.family_income / c.name
-    const fs = family.financial_snapshot || {}
-    if (!family.debt) family.debt = fs.debt || { amount: 0, type: '' }
-    if (family.family_income == null) family.family_income = fs.income || 0
-    if (!family.name) family.name = family.family_name || ''
+    // 2026-09-19：实现抽到 _shared/family-compat.js（流程审计 P1-3 的机制修复）。
+    // 该段曾在本文件与 share.js 各写一份、测试 fixture 再仿造一份，其中一份缺 family_income
+    // → 前端按合成形状重推 tier 与后端不一致，且测试全绿。现三方共用同一实现。
+    applyFamilyCompat(family)
 
     return { code: 200, data: family }
   } catch (e) {

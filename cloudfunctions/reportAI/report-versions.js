@@ -80,9 +80,24 @@ async function archivePrevious(db, { familyId, openid, prevFamily, keepVersions,
       .limit(50)
       .get()
     if (stale.data && stale.data.length > 0) {
-      await Promise.all(stale.data.map(v =>
-        db.collection(REPORTS_COL).doc(v._id).remove().catch(() => 0)
+      // 2026-09-22 全面审计（报告链路 P2）：原为 `.remove().catch(() => 0)` —— 单条删除失败
+      // 既不计数、也不记日志、更不抛出，而下一轮的 `skip(keepVersions).limit(50)` 会**读到同一批**
+      // 删不掉的记录 → 永久空转：reports 集合随每次生成无限增长，报告页"历史版本"却只看最近 3 版。
+      // 这与本模块头部"归档失败不得静默"的既定不变量（以及 report-files.js「删失败必须留痕」）相反。
+      // 现统计失败条数并按既有动作 report_archive_fail 留痕；仍不抛出（归档不阻塞主流程）。
+      const results = await Promise.all(stale.data.map(v =>
+        db.collection(REPORTS_COL).doc(v._id).remove().then(() => true).catch(() => false)
       ))
+      const failedCount = results.filter(ok => !ok).length
+      if (failedCount > 0) {
+        console.error(`[report-versions] 旧版本清理失败 ${failedCount}/${stale.data.length} 条（下轮会重试同一批）`)
+        try {
+          await require('./_shared/logSeam').logAI(db, {
+            openid, familyId, action: 'report_archive_fail', status: 'fail',
+            error: { message: `旧版本清理失败 ${failedCount}/${stale.data.length} 条` }
+          })
+        } catch (_) { /* 日志失败不阻断 */ }
+      }
     }
   } catch (e) {
     console.error('[report-versions] 版本归档失败:', e.message)

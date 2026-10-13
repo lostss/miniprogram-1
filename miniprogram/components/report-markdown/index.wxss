@@ -1,6 +1,15 @@
 /* UI 审计 #③：--green-report 收敛为全局 --ok（app.wxss） */
 /* UI 审计 视觉 S5：局部 --missing-bg/--covered-bg 与全局 --red-dim/--ok-dim 语义重复，收敛为全局 token */
 .md-root { padding:var(--sp-5) var(--sp-5) var(--sp-7); word-break:break-word; overflow-wrap:break-word; --missing-bg:var(--red-dim); --covered-bg:var(--ok-dim); }
+
+/* V1.5 吸顶目录（2026-09-12）：滚动时吸附在报告内容顶部；横向可滑动，中低端机同样可用。
+   左右负 margin 抵消 .md-root padding，使吸顶条背景横向铺满。 */
+/* 2026-09-12：横向可滑但滚动条被下行 :8 隐藏，章节多时唯一线索是右侧被裁一半的 chip
+   （有时正好对齐，完全看不出还有内容）。加右侧渐隐遮罩：内容延伸到右缘时自然淡出。 */
+.toc { position:sticky; top:0; z-index:20; display:flex; gap:var(--sp-2); white-space:nowrap; overflow-x:auto; padding:var(--sp-3) var(--sp-5); margin:calc(-1 * var(--sp-5)) calc(-1 * var(--sp-5)) var(--sp-5); background:var(--bg-root); border-bottom:1rpx solid var(--border); -webkit-mask-image:linear-gradient(to right, #000 calc(100% - 48rpx), transparent); mask-image:linear-gradient(to right, #000 calc(100% - 48rpx), transparent); }
+.toc::-webkit-scrollbar { display:none; }
+.toc-item { flex-shrink:0; font-size:var(--fs-caption); color:var(--text-secondary); background:var(--bg-input); border-radius:var(--r-full); padding:var(--sp-2) var(--sp-4); }
+.toc-item:active { opacity:0.6; }
 /* 2026-09-06 宽屏行宽约束：与报告页正文区同宽居中（手机 <768px 不受影响） */
 @media (min-width: 768px) {
   .md-root { width: 720px; max-width: calc(100vw - 96px); margin-left: auto; margin-right: auto; box-sizing: border-box; }
@@ -86,11 +95,15 @@
 /* UI 审计 V-S6：overflow:hidden 裁剪窄屏/多成员溢出内容，改 overflow-x:auto */
 .pano-wrap { margin:var(--sp-4) 0; border-radius:var(--r-md); overflow-x:auto; border:1rpx solid var(--border); }
 .pano-hd { display:flex; background:var(--accent-dim); }
-.pano-hd-cell { flex:1; padding:var(--sp-4) var(--sp-2); font-size:var(--fs-caption); color:var(--accent-deep); font-weight:var(--fw-semi); text-align:center; letter-spacing:var(--ls-wide); }
+/* 2026-09-12 修复：数值列原为纯 flex:1（basis 0、无 min-width）→ 只会被压扁，永远撑不开
+   容器，.pano-wrap 的 overflow-x:auto 形同虚设（注释里的"改 overflow-x:auto"没落地）。
+   加 min-width:132rpx：空间充足时仍按 flex-grow 等分（3 险种不横滑），列多时撑开容器触发横滑。
+   ⚠️ 表头与数据行必须同宽，.pano-hd-cell 与 .pano-cell 需同步改。 */
+.pano-hd-cell { flex:1; min-width:148rpx; padding:var(--sp-4) var(--sp-2); font-size:var(--fs-caption); color:var(--accent-deep); font-weight:var(--fw-semi); text-align:center; letter-spacing:var(--ls-wide); }
 .pano-hd-first { flex:0 0 84rpx; }
 .pano-row { display:flex; }
 .pano-row:nth-child(even) { background:var(--bg-input); }
-.pano-cell { flex:1; padding:var(--sp-3) var(--sp-2); font-size:var(--fs-caption); text-align:center; display:flex; align-items:center; justify-content:center; }
+.pano-cell { flex:1; min-width:148rpx; padding:var(--sp-3) var(--sp-2); font-size:var(--fs-caption); text-align:center; display:flex; align-items:center; justify-content:center; }
 .pano-name { flex:0 0 84rpx; font-weight:var(--fw-semi); color:var(--text-primary); }
 .pano-name-total { color:var(--accent-deep); }
 .pano-status { min-height:56rpx; border-radius:var(--r-sm); margin:var(--sp-1); font-weight:var(--fw-semi); }

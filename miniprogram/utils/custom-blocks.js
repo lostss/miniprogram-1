@@ -16,7 +16,7 @@
  *  - timeline:     { items: [{y, label, type, date, policies: [{name, note}]}] }  年份为第一层节点，policies 内单产品同年多节点 note 以/分隔
  *  - calendar:     { items: [{m, v, h}] }   h: 1=有缴费 2=峰值月
  *  - family_tree:  { nodes: [{name, role, display, member_id}] }
- *  - finance:      { income, debt, expense }
+ *  - finance:      { income, debt }
  *  - risk_alerts:  { items: [{name, issue}] }
  *  - policy_cards: { groups: [{name(被保人), subgroups: [{name(保司), policies: [...]}]}] }  二级分组；组内按保单号排序（同号主险+附加险相邻）
  *
@@ -42,8 +42,8 @@ const BLOCK_REGISTRY = {
     defaults: { nodes: [] }
   },
   finance: {
-    required: ['income', 'debt', 'expense'],
-    defaults: { income: 0, debt: 0, expense: 0 }
+    required: ['income', 'debt'],
+    defaults: { income: 0, debt: 0 }
   },
   risk_alerts: {
     required: ['items'],

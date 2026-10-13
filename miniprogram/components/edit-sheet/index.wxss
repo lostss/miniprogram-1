@@ -27,7 +27,7 @@
 /* 编辑按钮：与保存按钮同规格（accent 深字） */
 .edit-btn { flex:1; height:88rpx; background:var(--accent); color:var(--btn-text-on-accent); font-size:var(--fs-lg); font-weight:var(--fw-semi); border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:none; margin:0; }
 .edit-btn::after { border:none }
-.form-label { font-size:var(--fs-caption); color:var(--text-tertiary); flex-shrink:0; width:160rpx; letter-spacing:var(--ls-wide); }
+.form-label { font-size:var(--fs-caption); color:var(--text-tertiary); flex-shrink:0; width:180rpx; letter-spacing:var(--ls-wide); }
 .form-label .req { color:var(--red); margin-left:var(--sp-1); font-weight:var(--fw-semi); }
 .form-input { flex:1; min-width:0; height:88rpx; background:var(--bg-input); border:2rpx solid transparent; border-radius:var(--r-md); padding:0 var(--sp-5); font-size:var(--fs-body); box-sizing:border-box; font-variant-numeric:tabular-nums; transition:border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
 .form-input:focus { border-color:var(--accent); background:var(--bg-card); }

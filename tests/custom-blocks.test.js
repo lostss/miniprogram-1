@@ -35,6 +35,31 @@ describe('classifyBatchResults — 识别结果分流分组（收编 _procRefres
     expect(typeof cls.error[0].error).toBe('string')
   })
 
+  test('同图绑定标识：mixed 现价表按 from_policy 在对应保单卡打「含现价表」', function () {
+    const cls = flow.classifyBatchResults(
+      [
+        { product_name: '康宁', insurance_category: '重疾', auto_confirmed: true, policy_number: 'P1' },
+        { product_name: 'e生保', insurance_category: '医疗', auto_confirmed: true, policy_number: 'P2' }
+      ],
+      [{ product_name: '康宁', from_policy: { policy_number: 'P1', product_name: '康宁', insured_name: '' } }],
+      [], {})
+    const kang = cls.success.find(c => c.product_name === '康宁')
+    const esb = cls.success.find(c => c.product_name === 'e生保')
+    expect(kang.hasCash).toBe(true)
+    expect(esb.hasCash).toBe(false)
+    // 现价表自身仍独立成卡，且标记来源为同图
+    const cash = cls.success.find(c => c.kind === 'cash')
+    expect(cash.sameImage).toBe(true)
+  })
+
+  test('无 from_policy 的现价表 → 不打同图标（保持原行为）', function () {
+    const cls = flow.classifyBatchResults(
+      [{ product_name: '康宁', insurance_category: '重疾', auto_confirmed: true, policy_number: 'P1' }],
+      [{ product_name: '康宁现价表' }], [], {})
+    expect(cls.success.find(c => c.product_name === '康宁').hasCash).toBe(false)
+    expect(cls.success.find(c => c.kind === 'cash').sameImage).toBe(false)
+  })
+
   test('空输入 → 空三组', function () {
     const cls = flow.classifyBatchResults([], [], [], {})
     expect(cls.success).toEqual([])
@@ -48,12 +73,12 @@ describe('custom-blocks 注册表', function () {
     expect(cb.SUPPORTED_TYPES.sort()).toEqual(['calendar', 'family_tree', 'finance', 'panorama', 'policy_cards', 'risk_alerts', 'timeline'])
   })
 
-  test('finance 默认字段补齐', function () {
+  test('finance 默认字段补齐（income/debt；expense 已从模型移除）', function () {
     const b = cb.create('finance', {})
     expect(b.t).toBe('finance')
     expect(b.income).toBe(0)
     expect(b.debt).toBe(0)
-    expect(b.expense).toBe(0)
+    expect(b.expense).toBeUndefined()
   })
 
   test('family_tree 默认 nodes 补齐', function () {
@@ -102,7 +127,7 @@ describe('custom-blocks 注册表', function () {
 
   test('validate 检测必填字段缺失', function () {
     expect(cb.validate({ t: 'finance', income: 1 }).valid).toBe(false)
-    expect(cb.validate({ t: 'finance', income: 1, debt: 0, expense: 0 }).valid).toBe(true)
+    expect(cb.validate({ t: 'finance', income: 1, debt: 0 }).valid).toBe(true)
   })
 
   test('validate 未知类型返回 invalid', function () {

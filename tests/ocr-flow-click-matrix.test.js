@@ -170,7 +170,8 @@ describe('ocr-flow 点击矩阵：编辑 sheet', function () {
     const inst = makeInstance(cfg)
     inst._procPolicies = [{ product_name: '康宁', sum_assured: '50万' }]
     inst.setData({ 'ocrSheet.visible': true, 'ocrSheet.policyIndex': 0 })
-    inst.onEditSheetSave({ detail: { sum_assured: '800000' } })
+    // 契约变更（审计 #3）：sheet 以「万」回传，写库前转元 → 传 80 万 应落 800000 元
+    inst.onEditSheetSave({ detail: { sum_assured: '80' } })
     expect(inst.data.ocrSheet.visible).toBe(false)
     expect(inst.data.ocrSheet.mode).toBe('view')
     expect(inst._procPolicies[0].sum_assured).toBe('800000')
@@ -183,7 +184,7 @@ describe('ocr-flow 点击矩阵：编辑 sheet', function () {
     inst._procPolicies = []
     inst.setData({ 'ocrSheet.visible': true, 'ocrSheet.policyIndex': -1 })
     // 必填校验在 edit-sheet 组件内完成（product_name 非空才触发 save）；此处验证空值字段不入录
-    inst.onEditSheetSave({ detail: { product_name: '康宁', sum_assured: '800000', effective_date: '' } })
+    inst.onEditSheetSave({ detail: { product_name: '康宁', sum_assured: '80', effective_date: '' } })
     expect(inst._procPolicies.length).toBe(1)
     expect(inst._procPolicies[0].product_name).toBe('康宁')
     expect(inst._procPolicies[0].sum_assured).toBe('800000')

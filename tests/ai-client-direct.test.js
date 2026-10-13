@@ -65,4 +65,19 @@ describe('callChatWithToolsDirect（DeepSeek 直连 function calling）', functi
     axios.post.mockResolvedValue({ status: 200, data: { choices: [] } })
     await expect(aiClient.callChatWithToolsDirect(MSGS, TOOLS, {})).rejects.toMatchObject({ code: 'ai_format' })
   })
+
+  test('429：err.usage 透传已收到的 usage（失败也记账，成本低估修复 2026-09-12）', async function () {
+    axios.post.mockResolvedValue({ status: 429, data: { usage: { prompt_tokens: 50, completion_tokens: 0, total_tokens: 50 } } })
+    await expect(aiClient.callChatWithToolsDirect(MSGS, TOOLS, {}))
+      .rejects.toMatchObject({ code: '429', usage: { prompt_tokens: 50, total_tokens: 50 } })
+  })
+
+  test('callChatDirect ai_empty：抛错并带 err.usage（原实现这些 token 直接丢弃）', async function () {
+    axios.post.mockResolvedValue({
+      status: 200,
+      data: { choices: [{ message: { content: '' } }], usage: { prompt_tokens: 800, completion_tokens: 0, total_tokens: 800 } }
+    })
+    await expect(aiClient.callChatDirect(MSGS, {}))
+      .rejects.toMatchObject({ code: 'ai_empty', usage: { prompt_tokens: 800, total_tokens: 800 } })
+  })
 })

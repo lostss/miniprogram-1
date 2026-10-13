@@ -10,6 +10,8 @@ const { _toFullwidth: _fullWidthPunct } = require('../../utils/md-inline')
 const { cleanMarkers } = require('../../utils/markers')
 // 历史分页加载 + TTL 缓存；fmtTime/fmtCountdown 为公共格式化（C2 2026-08-30 审计）
 const { createHistoryStore, fmtTime, fmtCountdown } = require('../../utils/history-store')
+// 写工具集合：跨树契约（流程审计 P2-5——原为手写镜像，漏了 delete* 导致确认删除后报告不刷新）
+const { isWriteTool } = require('../../utils/write-tools')
 
 /**
  * AI 对话面板 — FAB 吸底（单通道 v10）
@@ -43,6 +45,9 @@ Component({
   lifetimes: {
     created() {
       this._historyStore = createHistoryStore()
+      // 请求代数（2026-09-17 审计 P1-F2/F3）：消息列表被**整体替换**时递增，
+      // 用于作废在途请求的 `lastIdx` 索引 patch（见 _isStaleRequest）
+      this._reqGen = 0
     },
     attached() {
       this._timers = []
@@ -94,6 +99,8 @@ Component({
       if (this._disposed || !r) return 0
       if (r.error) return -1
       if (r.replace) {
+        // 列表被整体替换 → 旧 lastIdx 已失效，作废在途请求的 patch（P1-F2/F3）
+        this._reqGen++
         this.setData({ messages: r.replace })
         this._scrollAfterRender()
       } else if (r.prepend) {
@@ -148,18 +155,57 @@ Component({
      * P1-1（2026-08-30 审计）：不再传 history——后端以 messages 集合为单真相源（getFamilyHistory），
      * 前端截断历史会误导维护者且浪费带宽
      */
+    /**
+     * 请求是否已"过期"：组件销毁 / 家庭已切换 / 消息列表已被整体替换。
+     *
+     * - **familyId 比对**（2026-09-17 审计 P1-2）：`'familyId'` observer 切家庭时只清空 `messages`、
+     *   **不销毁组件**（`_disposed` 仍为 false），而本组件对 messages 的写入全部按 `lastIdx`
+     *   **索引**定位 → conversationAI 是 60s 长请求，期间切家庭则旧响应落进【新家庭】的消息列表
+     *   （A 家庭的财务/健康信息显示在 B 家庭）。
+     * - **gen 比对**（2026-09-17 审计 P1-F2/F3）：同家庭下"收起→重展开"会经 `_loadHistory`
+     *   整体 replace messages（`onCollapse` 还会 reset historyStore），此时旧的 `lastIdx` 同样失效，
+     *   仅比对 familyId 拦不住 → 必须再用请求代数兜住。
+     */
+    _isStaleRequest(reqFamilyId, reqGen) {
+      if (this._disposed) return true
+      if (this.data.familyId !== reqFamilyId) return true
+      return reqGen != null && reqGen !== this._reqGen
+    },
+
+    /**
+     * 过期响应不能"直接丢"就完事（2026-09-18 补）。
+     * 服务端已落库，但用户当前视图（缓存命中重放的旧快照 / 收起→重展开后重载的列表）可能
+     * **既缺本轮提问、又缺回复** —— 静默丢弃会让用户以为自己发的话消失了。
+     * 故补一次历史重载让视图追平服务端；收起态或已切家庭则无需处理（各自路径会重新 load）。
+     */
+    _resyncHistory(reqFamilyId) {
+      if (this._disposed || this.data.collapsed) return
+      if (this.data.familyId !== reqFamilyId) return
+      this._historyStore.reset()
+      this._loadHistory().then(() => this._scrollAfterRender())
+    },
+
     async _postChat({ userText, lastIdx }) {
       if (this._postProcessing) return
       this._postProcessing = true
+      // 冻结发起时的家庭 id 与请求代数，响应回来时比对（见 _isStaleRequest）
+      const reqFamilyId = this.data.familyId
+      const reqGen = this._reqGen
       this.setData({ thinking: true, bProcessing: true })
       try {
         const r = await api('conversationAI', {
           mode: 'chat',
-          familyId: this.data.familyId,
+          familyId: reqFamilyId,
           userText,
           sessionId: this._sessionId
+          // 2026-09-20（流程审计 P1-B4 (c) 收口 · **决定不做**）：这里的 60s 与云函数
+          // conversationAI 的时限（cloudbaserc.json）**刻意保持同值**，勿"顺手对齐"成 55s/65s：
+          //   改小 → 前端比函数先放弃，用户重试时函数仍在跑 → 同一轮对话双计费；
+          //   改大 → 函数已被平台杀掉，前端白等且拿不到真实错误码。
+          // 真正的解法是给函数侧留收尾预算（需 agent_logs 耗时分布，当前 CLI 拿不到），
+          // 故维持同值。详见 tool-orchestration.js `_callPhase1` 的同类注释。
         }, { timeout: 60000, retries: 0 })
-        if (this._disposed) return
+        if (this._isStaleRequest(reqFamilyId, reqGen)) { this._resyncHistory(reqFamilyId); return }
         if (r.ok && r.data) {
           const d = r.data
           const patch = {}
@@ -190,9 +236,10 @@ Component({
           this.setData(patch)
           // 工具执行结果 → 报告刷新联动
           if (d.toolResults && d.toolResults.length > 0) {
-            const hasWrite = d.toolResults.some(tr =>
-              ['upsertMember', 'updateFinances', 'addPolicy', 'addFact', 'updatePolicy'].includes(tr.tool) && tr.success
-            )
+            // 2026-09-19 修（流程审计 P2-5）：改消费跨树契约 utils/write-tools。
+            // 原手写白名单漏了 deletePolicy/deleteMember/deleteFact → 用户确认删除后小秘回"已删除"，
+            // 报告却仍显示那张保单（直到手动下拉）。新增写工具由契约统一覆盖，不再漏。
+            const hasWrite = d.toolResults.some(tr => isWriteTool(tr.tool) && tr.success)
             const hasReportRefresh = d.toolResults.some(tr =>
               tr.tool === 'triggerAnalysis' && tr.success
             )
@@ -216,7 +263,8 @@ Component({
         }
       } catch (e) {
         console.error('[chat-panel] 对话失败:', e)
-        if (this._disposed) return
+        // 家庭已切换：本轮失败提示与下方 _saveMsg 补写都不得落到新家庭
+        if (this._isStaleRequest(reqFamilyId, reqGen)) { this._resyncHistory(reqFamilyId); return }
         const info = errorHandler.getErrorInfo(e)
         this.setData({
           ['messages[' + lastIdx + '].content']: info.tip + '（可点击重试）',
@@ -232,6 +280,10 @@ Component({
       } finally {
         this._postProcessing = false
         if (!this._disposed) this.setData({ thinking: false, bProcessing: false })
+        // 2026-09-18 审计 P1-F4：本次往返已让服务端历史前进 → 本地快照作废。
+        // 否则 onCollapse 只 reset 内存态、不动 storage，3 分钟内重展开命中旧快照并整体 replace →
+        // 刚发的消息从界面消失（SWR 后台刷新只写 storage，不回填 UI，本会话不自愈）。
+        this._historyStore.invalidate(reqFamilyId)
       }
     },
 
@@ -369,8 +421,19 @@ Component({
 
     // 下拉刷新更多历史消息
     async onPullRefresh() {
+      // 2026-09-17 审计 P1-F1：AI 请求在途时翻页会 prepend K 条 → messages 索引整体位移，
+      // 旧响应按 `lastIdx` patch 会落到某条**历史消息**上（内容被覆盖、确认卡/撤销挂错消息）。
+      // 这里选择"阻止"而非"作废请求"——作废会让 AI 回复白丢，而阻止只推迟翻页。
+      if (this.data.thinking || this._postProcessing) {
+        this.setData({ refreshingMore: false })
+        wx.showToast({ title: '小秘正在回复，稍后再翻页', icon: 'none', duration: 1500 })
+        return
+      }
       this.setData({ refreshingMore: true })
       const count = await this._loadHistory('more')
+      // 2026-09-22 全面审计（前端 P3）：本 await 之前每条异步路径都查 _disposed，只有这处漏了
+      // → 下拉历史期间收起面板/离开页面会对已销毁组件 setData（告警 + 污染错误上报）
+      if (this._disposed) return
       this.setData({ refreshingMore: false })
       if (count === -1) wx.showToast({ title: '加载失败，请稍后重试', icon: 'none', duration: 1500 })
       else if (count === 0) wx.showToast({ title: '没有更多了', icon: 'none', duration: 1000 })

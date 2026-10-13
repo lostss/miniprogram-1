@@ -10,6 +10,7 @@
 const { safeQuery, safeQueryAll } = require('./_shared/db-helpers')
 const { loadActivePolicies } = require('./_shared/policy-read')
 const { wrapError } = require('./_shared/errorHandler')
+const { axisOf } = require('./_shared/fact-vocab')
 
 // ---------- queryPolicies ----------
 // conversationAI 内部用：查家庭保单
@@ -43,7 +44,10 @@ async function queryMembers(db, openid, event) {
 // conversationAI 内部用：查家庭事实三元组（投影含 subject_id/subject_type，防关联丢失）
 async function queryFacts(db, openid, event) {
   // K-S1 修复：AI 工具 schema 参数名为 memberId（conversationAI/tools.js），兼容 subjectId 旧调用
-  const { familyId, predicate, subjectId, memberId } = event
+  // 2026-09-14：新增 includePolicyAttrs（默认 false）——保单节点属性（subject_type='policy'：险种/保额/
+  // 生效日…约 10 条/保单）是「保单实体的字段」，已由 queryPolicies 与报告「保障汇总/附录保单明细」承载；
+  // 混进事实流会把人员信息（收入/职业/约束/线索）挤出前端档案卡片的截断窗口。需要时显式传 true。
+  const { familyId, predicate, subjectId, memberId, includePolicyAttrs } = event
   if (!familyId) return { code: 400, msg: '缺少参数 familyId' }
   try {
     const where = { family_id: familyId, _openid: openid, status: 'active' }
@@ -53,12 +57,15 @@ async function queryFacts(db, openid, event) {
     // 2026-09-10：改走 safeQueryAll 自动分页——固定 limit(300) 只是把平台截断点后移，
     // facts 随版本历史持续增长（该家庭已 227 条），迟早越界且无告警
     const res = await safeQueryAll(db, 'facts', where, openid, { maxPages: 10 })
-    const facts = (res.data || []).map(f => ({
+    const rows = includePolicyAttrs === true ? (res.data || []) : (res.data || []).filter(f => f.subject_type !== 'policy')
+    const facts = rows.map(f => ({
       _id: f._id,
       subject_id: f.subject_id || '',
       subject_type: f.subject_type || '',
       subject_name: f.subject_name || '',
       predicate: f.predicate || '',
+      axis: f.axis || '',
+      kind: f.kind || 'fact',
       object_value: f.object_value || '',
       object_id: f.object_id || '',
       object_type: f.object_type || '',
@@ -81,13 +88,17 @@ async function queryMemberProfile(db, openid, event) {
   if (!memberId && !memberName) return { code: 400, msg: '缺少 memberId 或 memberName' }
   try {
     // 定位成员
+    // 2026-09-22 全面审计 P2：两处定位都必须排除软删成员，否则已删成员仍能被
+    // queryMemberProfile 读出（属性 + 保障清单），与同文件 queryMembers（下方 L36 的 filter）
+    // 和 getMembers 的口径不一致
+    const _notDeleted = db.command.neq('deleted')
     let member = null
     if (memberId) {
-      const r = await db.collection('members').where({ family_id: familyId, _openid: openid, member_id: memberId }).limit(1).get()
+      const r = await db.collection('members').where({ family_id: familyId, _openid: openid, member_id: memberId, status: _notDeleted }).limit(1).get()
       if (r.data && r.data.length) member = r.data[0]
     }
     if (!member && memberName) {
-      const r = await db.collection('members').where({ family_id: familyId, _openid: openid, name: memberName }).limit(1).get()
+      const r = await db.collection('members').where({ family_id: familyId, _openid: openid, name: memberName, status: _notDeleted }).limit(1).get()
       if (r.data && r.data.length) member = r.data[0]
     }
     if (!member) return { code: 404, msg: '未找到成员：' + (memberName || memberId) }
@@ -103,8 +114,17 @@ async function queryMemberProfile(db, openid, event) {
       db.collection('policies').where({ family_id: familyId, _openid: openid, member_id: mid, status: db.command.neq('deleted') }).limit(20).get()
     ])
 
-    // 按维度分组 facts
+    // 按归一化属性槽（axis）分组 facts
+    // 2026-09-14：原按 predicate 字面量白名单分组，谓词自由化后（"年薪" ≠ "个人年收入"）会漏；
+    // axisOf 把同义说法归到同一槽。非标信息（axis 为空）统一落 other_facts 并带 kind，避免把约束/线索当普通事实读。
     const facts = factRes.data || []
+    const _ax = f => f.axis || axisOf(f.predicate)
+    const _pick = axList => facts.filter(f => axList.indexOf(_ax(f)) !== -1)
+    const _mapf = arr => arr.map(f => ({ predicate: f.predicate, axis: f.axis || '', kind: f.kind || 'fact', value: f.object_value, confidence: f.confidence, source: f.source || '' }))
+    const HEALTH_AXES = ['健康异常']
+    const ECON_AXES = ['职业', '个人年收入', '收入来源', '抚养赡养人数', '社保情况']
+    const GOAL_AXES = ['未来计划', '教育规划', '退休规划', '传承意图', '资产隔离需求', '婚嫁规划', '退休预期年龄', '子女教育节点', '婚嫁预期时点']
+    const _groupedAxes = new Set(HEALTH_AXES.concat(ECON_AXES, GOAL_AXES))
     const profile = {
       member: {
         member_id: mid,
@@ -118,11 +138,11 @@ async function queryMemberProfile(db, openid, event) {
         income: member.income || 0
       },
       // 健康人况类
-      health: facts.filter(f => ['健康异常', '病史时间线', '吸烟习惯', '饮酒习惯', 'BMI指数'].includes(f.predicate)).map(f => ({ predicate: f.predicate, value: f.object_value, confidence: f.confidence })),
+      health: _mapf(_pick(HEALTH_AXES)),
       // 经济依赖类
-      economic: facts.filter(f => ['职业', '个人年收入', '收入来源', '抚养赡养人数', '社保情况'].includes(f.predicate)).map(f => ({ predicate: f.predicate, value: f.object_value, confidence: f.confidence })),
+      economic: _mapf(_pick(ECON_AXES)),
       // 财富目标类（传承/规划/隔离）
-      goals: facts.filter(f => ['未来计划', '教育规划', '退休规划', '传承意图', '资产隔离需求', '婚嫁规划', '退休预期年龄', '子女教育节点', '婚嫁预期时点'].includes(f.predicate)).map(f => ({ predicate: f.predicate, value: f.object_value, confidence: f.confidence })),
+      goals: _mapf(_pick(GOAL_AXES)),
       // 保障清单（policies 集合）
       policies: (policyRes.data || []).map(p => ({
         policy_id: p.id || p._id || '',
@@ -134,8 +154,8 @@ async function queryMemberProfile(db, openid, event) {
         effective_date: p.effective_date || '',
         status: p.status || 'active'
       })),
-      // 其他已记录事实（兜底展示，不含上面已分组的）
-      other_facts: facts.filter(f => !['健康异常', '病史时间线', '吸烟习惯', '饮酒习惯', 'BMI指数', '职业', '个人年收入', '收入来源', '抚养赡养人数', '社保情况', '未来计划', '教育规划', '退休规划', '传承意图', '资产隔离需求', '婚嫁规划', '退休预期年龄', '子女教育节点', '婚嫁预期时点'].includes(f.predicate)).map(f => ({ predicate: f.predicate, value: f.object_value, confidence: f.confidence }))
+      // 其他已记录事实（含非标信息：约束/关系/线索一并带出，不丢；kind 由消费方按需区分）
+      other_facts: _mapf(facts.filter(f => !_groupedAxes.has(_ax(f))))
     }
     return { code: 200, data: { profile } }
   } catch (e) {

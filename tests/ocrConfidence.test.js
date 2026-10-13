@@ -111,3 +111,42 @@ describe('calcConfidence', () => {
     expect(r.autoConfirmed).toBe(false)
   })
 })
+
+// ===========================================================================
+// 2026-09-24 口径自查：置信度阈值必须走契约（原为多处内联 0.95 / 0.9）
+//   隐患**已经发作过一次** —— miniprogram/utils/ocr-flow.js L212 注释原文：
+//   「P2-12 修复：统一走 assessPolicy（ocr-confidence 单一真相源），原内联 0.95 双条件与确认卡分组判定漂移」
+//   本次把 5 处内联值换成**同值**的契约常量（0.95 → OCR_RELIABLE_THRESHOLD、
+//   0.9 → CONF_THRESHOLD，**行为完全不变**，只是不再各写一份），并加本护栏挡住新增消费方。
+//   ⚠️ 特别注意：components/ocr-flow 里的 **0.8** 是 UI 三档底色的私有分界，不属于契约，故意不计入。
+// ===========================================================================
+describe('置信度阈值的单一事实源', () => {
+  const { CONF_THRESHOLD, OCR_RELIABLE_THRESHOLD } = require('../miniprogram/utils/ocr-confidence')
+
+  test('两个阈值各就各位（0.9 = 复核判定；0.95 = OCR 可靠性，语义不同勿混用）', () => {
+    expect(CONF_THRESHOLD).toBe(0.9)
+    expect(OCR_RELIABLE_THRESHOLD).toBe(0.95)
+    expect(CONF_THRESHOLD).not.toBe(OCR_RELIABLE_THRESHOLD)
+  })
+
+  test('消费方不再内联阈值字面量（新增即红）', () => {
+    const fs2 = require('fs')
+    const path2 = require('path')
+    const SITES = [
+      'miniprogram/utils/ocr-flow.js',
+      'miniprogram/utils/report/chapter-builder.js',
+      'miniprogram/utils/edit-form.js',
+      'miniprogram/components/ocr-flow/index.js'
+    ]
+    SITES.forEach(rel => {
+      const src = fs2.readFileSync(path2.join(__dirname, '..', rel), 'utf8')
+      src.split('\n').forEach((line, i) => {
+        const t = line.trim()
+        if (!t || t.indexOf('//') === 0 || t.indexOf('*') === 0) return
+        expect({ file: rel, line: i + 1, text: t }).not.toMatchObject({
+          text: expect.stringMatching(/(<|>=|<=|>)\s*0\.(9|95)\b/)
+        })
+      })
+    })
+  })
+})

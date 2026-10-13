@@ -50,7 +50,9 @@
 .proc-ignore-btn { display:inline-flex; align-items:center; justify-content:center; font-size:var(--fs-caption); color:var(--text-tertiary); padding:var(--sp-1-5) var(--sp-3); border-radius:var(--r-full) }
 /* UI 审计 #②：#③：accent 背景改深色文字达标；badge-ok 收敛为全局 --ok 系 */
 /* UI 审计：重试按钮降权——异常卡内次级操作，accent 实底(主按钮级) 改浅金底 accent-dim */
-.proc-retry-btn { display:inline-flex; align-items:center; justify-content:center; font-size:var(--fs-caption); color:var(--accent-deep); background:var(--accent-dim); padding:var(--sp-1-5) var(--sp-4); border-radius:var(--r-full) }
+.proc-retry-btn { position:relative; display:inline-flex; align-items:center; justify-content:center; font-size:var(--fs-caption); color:var(--accent-deep); background:var(--accent-dim); padding:var(--sp-1-5) var(--sp-4); border-radius:var(--r-full) }
+/* 2026-09-12 触控热区：padding-only 实际高约 36-40rpx，不足 88rpx 基准 */
+.proc-retry-btn::after { content:''; position:absolute; left:0; right:0; top:50%; height:88rpx; transform:translateY(-50%); }
 .proc-retry-btn:active { opacity:0.6 }
 .proc-retry-btn.is-busy { opacity:0.6 }
 .ocr-badge { font-size:var(--fs-tiny); padding:var(--sp-1) var(--sp-2); border-radius:var(--r-full) }
@@ -93,10 +95,11 @@
 .ocr-saving-wrap { width:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; }
 .ocr-saved-head { position:relative; width:100%; display:flex; align-items:center; justify-content:center; margin-bottom:var(--sp-2) }
 /* 保存成功头部右上角关闭按钮（此前无定义：<image> 默认尺寸放大成巨大 × 且挤压标题换行竖排） */
-.ocr-sheet-close { position:absolute; right:0; top:0; width:48rpx; height:48rpx; display:flex; align-items:center; justify-content:center; border-radius:50% }
+.ocr-sheet-close { position:absolute; right:0; top:0; width:88rpx; height:88rpx; display:flex; align-items:center; justify-content:center; border-radius:50% }
 .ocr-sheet-close-icon { width:28rpx; height:28rpx }
 .ocr-saved-progress { height:4rpx; background:var(--accent-dim); border-radius:2rpx; margin-top:var(--sp-4); overflow:hidden; width:100% }
-.ocr-saved-progress::after { content:''; display:block; height:100%; width:100%; background:var(--accent); animation:savedCountdown 2s linear forwards }
+/* 审计 #P3：动画时长与 _showSaved 的 3000ms timer 对齐（原 2s 与倒计时不一致） */
+.ocr-saved-progress::after { content:''; display:block; height:100%; width:100%; background:var(--accent); animation:savedCountdown 3s linear forwards }
 @keyframes savedCountdown { from { width:100% } to { width:0% } }
 
 /* ========== 角色卡 ========== */

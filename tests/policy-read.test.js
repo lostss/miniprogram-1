@@ -11,37 +11,20 @@
  */
 
 const { loadActivePolicies } = require('../cloudfunctions/_shared/policy-read')
+const { makeMemoryDb } = require('./helpers/memory-db')
 
 // ---------------------------------------------------------------------------
-// Mock DB 构造器
+// Mock DB 构造器（2026-09-15 架构审查候选 4：改用手写原语的唯一实现 memory-db）
+// 原实现自带 matchWhere/collection 链，与其余 30 份手写 mock 重复；adapter 的 where 是
+// 真实过滤（支持 eq/neq/in/gt/regexp 等操作符与 orderBy/skip/doc/add/update），
+// 后续用例可直接用操作符，不必再扩桩。spy.queries 形状与旧 calls.queries 一致。
 // ---------------------------------------------------------------------------
 
 function makeMockDb(policies = []) {
   const calls = { queries: [] }
   // 深拷贝初始数据，避免测试间状态共享
   const store = { policies: policies.map(x => ({ ...x })) }
-
-  function matchWhere(rows, w) {
-    return rows.filter(x => Object.keys(w).every(k => x[k] === w[k]))
-  }
-
-  const db = {
-    collection: (name) => {
-      if (!store[name]) store[name] = []
-      const data = store[name]
-      return {
-        where: (w) => {
-          calls.queries.push({ name, where: w })
-          return {
-            get: () => Promise.resolve({ data: matchWhere(data, w) }),
-            limit: (n) => ({
-              get: () => Promise.resolve({ data: matchWhere(data, w).slice(0, n) })
-            })
-          }
-        }
-      }
-    }
-  }
+  const db = makeMemoryDb(store, { spy: calls })
   return { db, calls }
 }
 

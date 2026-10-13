@@ -8,6 +8,8 @@
  * 接口契约：
  *   TOOL_DEFINITIONS — function calling schema 数组，传 callChatWithTools
  */
+const { AXES, KINDS } = require('./_shared/fact-vocab')
+
 const TOOL_DEFINITIONS = [
   {
     type: 'function',
@@ -43,13 +45,12 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'updateFinances',
-      description: '更新家庭财务信息。用户提到收入/负债/支出时调用，仅传需改的字段',
+      description: '更新家庭财务信息。用户提到收入/总负债/年保费预算时调用，仅传需改的字段',
       parameters: {
         type: 'object',
         properties: {
           annual_income: { type: 'number', description: '年收入（元）' },
           total_debt: { type: 'number', description: '总负债（元）' },
-          fixed_annual_expense: { type: 'number', description: '年固定支出（元）' },
           debt_type: { type: 'string', description: '负债类型，如房贷/车贷' }
         }
       }
@@ -104,30 +105,21 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'addFact',
-      description: '记录事实三元组（subject 成员/保单 → predicate → object）。只记录代理人陈述的原始事实，缺口判断/购买建议不记录。predicate 从 enum 中选择，L1 核心维度优先；无法归入时用"有特征"（人况/标签类）或"备注"（时间线事件/补充说明）。',
+      description: '记录一条家庭事实。predicate 用简洁的自然语言（如"个人年收入""公司团险""房贷余额""夫妻共保"），不要为了套用词表而丢信息——非标信息照原话记录。同时填 kind（信息性质）与 axis（标准属性槽，能对上才填）。只记录代理人陈述的原始事实，缺口判断/购买建议不记录。',
       parameters: {
         type: 'object',
         properties: {
           subjectName: { type: 'string', description: '主体名称（成员姓名）' },
-          predicate: {
+          predicate: { type: 'string', description: '事实名称，用简洁自然语言（如"个人年收入""公司团险""房贷余额""夫妻共保"）' },
+          axis: {
             type: 'string',
-            description: '谓词（必须从 enum 中选择，L1 核心维度优先；无法归入时用"有特征"或"备注"）。L1 分类：关系/保障/人况/经济依赖/风险敞口/现有保障/家庭资产/财富目标/关键时点/投保偏好/法律身份',
-            enum: [
-              '配偶', '子女', '父母',
-              '拥有保障', '公司提供保障', '投保',
-              '职业', '个人年收入', '健康异常', '病史时间线', '年龄', '性别', '教育程度',
-              '婚姻状态', '职业状态', '吸烟习惯', '饮酒习惯', 'BMI指数',
-              '收入来源', '抚养赡养人数', '社保情况',
-              '负债', '负债期限', '房贷余额', '固定支出', '教育支出预期', '赡养支出预期',
-              '保额', '年缴保费', '险种', '生效日', '承保公司', '保单号', '保障期间',
-              '公司团险', '免赔额', '等待期', '缴费期', '缴费方式', '特殊条款',
-              '持有资产', '房产价值', '金融资产', '企业经营权', '资产持有比例', '婚前财产',
-              '未来计划', '教育规划', '退休规划', '传承意图', '资产隔离需求', '婚嫁规划',
-              '退休预期年龄', '贷款到期日', '子女教育节点', '婚嫁预期时点',
-              '有偏好', '年保费预算', '偏好保险公司', '缴费偏好', '风险偏好',
-              '是否企业主', '企业类型', '婚姻财产制',
-              '有特征', '备注'
-            ]
+            description: '归一化的标准属性槽（可选）：该事实能归入下列标准属性时填写，否则省略（省略不等于丢弃，事实照常记录）。',
+            enum: AXES
+          },
+          kind: {
+            type: 'string',
+            description: '信息性质：fact=可确认的事实值（默认）；constraint=约束/时效，分析时必须考虑（如"团险离职即失效"）；relation=实体关系（如"夫妻共保"）；lead=待核实线索，尚未确认（如"公司可能有年金计划"）',
+            enum: KINDS
           },
           objectValue: { type: 'string', description: '客体值' },
           objectName: { type: 'string', description: '客体是成员时的姓名（如配偶关系）' },

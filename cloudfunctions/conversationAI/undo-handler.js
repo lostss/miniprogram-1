@@ -33,7 +33,6 @@ function _summarizeArgs(toolName, args) {
     const parts = []
     if (args.annual_income != null) parts.push('年收入 ' + Number(args.annual_income).toLocaleString() + ' 元')
     if (args.total_debt != null) parts.push('总负债 ' + Number(args.total_debt).toLocaleString() + ' 元')
-    if (args.fixed_annual_expense != null) parts.push('年固定支出 ' + Number(args.fixed_annual_expense).toLocaleString() + ' 元')
     return parts.join('、')
   }
   if (toolName === 'upsertMember') {

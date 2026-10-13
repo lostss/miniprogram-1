@@ -52,10 +52,13 @@
         <scroll-view class="md-table" scroll-x enhanced show-scrollbar="{{ false }}">
           <view class="table-container" style="display: grid; grid-template-columns: repeat({{ item.headers.length }}, minmax(180rpx, auto));">
             <view wx:for="{{ item.headers }}" wx:for-item="header" wx:key="*this" class="table-header-cell">{{ header }}</view>
-            <block wx:for="{{ item.parsedRows }}" wx:for-item="row" wx:key="rowIdx">
-              <view wx:for="{{ row }}" wx:for-item="cell" wx:key="colIdx" class="table-body-cell">
+            <!-- 2026-09-22 全面审计（前端 P3）：wx:key="rowIdx"/"colIdx" 原先没有对应的
+                 wx:for-index 声明（下方 grid 分支有），key 恒解析为 undefined → 重复 key 告警、
+                 重渲染时行/单元格身份丢失。此处显式声明索引变量。 -->
+            <block wx:for="{{ item.parsedRows }}" wx:for-item="row" wx:for-index="rowIdx" wx:key="rowIdx">
+              <view wx:for="{{ row }}" wx:for-item="cell" wx:for-index="colIdx" wx:key="colIdx" class="table-body-cell">
                 <block wx:if="{{ cell.hasInlineStyles }}">
-                  <block wx:for="{{ cell.content }}" wx:for-item="part" wx:key="colIdx">
+                  <block wx:for="{{ cell.content }}" wx:for-item="part" wx:for-index="partIdx" wx:key="partIdx">
                     <text wx:if="{{ part.type === 'strong' }}" class="md-strong">{{ part.content }}</text>
                     <text wx:elif="{{ part.type === 'link' }}" class="md-link" data-href="{{ part.href }}" bindtap="onLinkTap">{{ part.text }}</text>
                     <text wx:else>{{ part.content }}</text>
@@ -76,7 +79,7 @@
               <view class="grid-card-key">{{ header }}</view>
               <view class="grid-card-value">
                 <block wx:if="{{ row[colIdx].hasInlineStyles }}">
-                  <block wx:for="{{ row[colIdx].content }}" wx:for-item="part" wx:key="colIdx">
+                  <block wx:for="{{ row[colIdx].content }}" wx:for-item="part" wx:for-index="partIdx" wx:key="partIdx">
                     <text wx:if="{{ part.type === 'strong' }}" class="md-strong">{{ part.content }}</text>
                     <text wx:elif="{{ part.type === 'link' }}" class="md-link" data-href="{{ part.href }}" bindtap="onLinkTap">{{ part.text }}</text>
                     <text wx:else>{{ part.content }}</text>

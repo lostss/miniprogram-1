@@ -66,14 +66,14 @@ function basisText(cat, exist, debt, income, rel, incomeEstimated) {
   if (cat === '重疾险') return '参考50万（治疗费+收入损失），现有' + exist + '万'
   if (cat === '医疗险') return '建议百万医疗，现有' + (exist > 0 ? exist + '万' : '无')
   if (cat === '寿险') {
-    if (rel === 'blocked') return '寿险需求=负债+5×年收入，年收入缺失无法计算'
-    if (rel === 'estimated') return '寿险需求≈5×年收入' + income + '万（负债缺失暂按0），现有' + exist + '万' + est
-    return '寿险需求=负债' + debt + '万+5×年收入' + income + '万=' + Math.round(debt + 5 * income) + '万' + est + '，现有' + exist + '万'
+    if (rel === 'blocked') return '寿险需求=总负债+5×年收入，年收入缺失无法计算'
+    if (rel === 'estimated') return '寿险需求≈5×年收入' + income + '万（总负债缺失暂按0），现有' + exist + '万' + est
+    return '寿险需求=总负债' + debt + '万+5×年收入' + income + '万=' + Math.round(debt + 5 * income) + '万' + est + '，现有' + exist + '万'
   }
   if (cat === '意外险') {
-    if (rel === 'blocked') return '意外险需求=5×年收入或负债取高，年收入缺失无法计算'
-    if (rel === 'estimated') return '意外险需求≈5×年收入' + income + '万（负债缺失暂按0），现有' + exist + '万' + est
-    return '意外险需求=max(5×年收入' + income + '万, 负债' + debt + '万)=' + Math.round(Math.max(5 * income, debt)) + '万' + est + '，现有' + exist + '万'
+    if (rel === 'blocked') return '意外险需求=5×年收入或总负债取高，年收入缺失无法计算'
+    if (rel === 'estimated') return '意外险需求≈5×年收入' + income + '万（总负债缺失暂按0），现有' + exist + '万' + est
+    return '意外险需求=max(5×年收入' + income + '万, 总负债' + debt + '万)=' + Math.round(Math.max(5 * income, debt)) + '万' + est + '，现有' + exist + '万'
   }
   return '参考' + referenceFor(cat, debt, income) + '万，现有' + exist + '万'
 }
@@ -81,7 +81,7 @@ function basisText(cat, exist, debt, income, rel, incomeEstimated) {
 function completeHint(cat, hasIncome, hasDebt) {
   if (cat === '重疾险' || cat === '医疗险') return ''
   if (!hasIncome) return '补全年收入 → 解锁' + cat + '缺口计算'
-  if (!hasDebt) return '补全负债 → ' + cat + '需求计入负债更精确'
+  if (!hasDebt) return '补全总负债 → ' + cat + '需求计入总负债更精确'
   return ''
 }
 

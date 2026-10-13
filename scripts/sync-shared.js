@@ -61,7 +61,13 @@ const TARGET_FUNCTIONS = fs.readdirSync(CF_DIR, { withFileTypes: true })
 // 「所有 元↔万 换算必须经本文件」，任一侧改动都会静默漂移。纳入契约后由 sync 保证一致。
 // 2026-09-11 加入 gap-core.js：保障缺口算法单一事实源。此前前端 gap-engine 与后端
 // report-context.buildGapSnapshot 各实现一遍（后端还是简化复刻）→ 口径分裂 2 次（P1-A / P1-2）。
-const CONTRACT_FILES = ['thresholds.js', 'amount.js', 'gap-core.js', 'pii-rules.js', 'parse-expiry.js', 'ocr-confidence.js', 'injection-guard.js', 'readiness.js', 'calc-age.js']
+// 2026-09-12 加入 policy-status.js：保单状态 9 态文案的单一事实源。此前前端 chapter-builder / edit-form
+// 各留一份手写镜像（后者缺 deleted/unknown），后端 policy-table 更是只有 6 态并 `|| '有效'` 回落。
+// 2026-09-15 加入 markers.js：旧协议标记清理的单一事实源。此前后端 prompts.stripToolCardMarkers 与
+// 前端 utils/markers.cleanMarkers 各持一份正则、人工同步，且已漂移（前端缺 {TOOL_INTENT:} 规则）。
+// 2026-09-19 加入 write-tools.js：对话"写工具集合"的单一事实源。前端 chat-panel 曾自持手写镜像，
+// 漏了 deletePolicy/deleteMember/deleteFact → 确认删除后不通知报告刷新（流程审计 P2-5）。
+const CONTRACT_FILES = ['thresholds.js', 'amount.js', 'gap-core.js', 'policy-status.js', 'pii-rules.js', 'parse-expiry.js', 'ocr-confidence.js', 'injection-guard.js', 'readiness.js', 'calc-age.js', 'fact-vocab.js', 'cash-value-math.js', 'markers.js', 'write-tools.js']
 
 // 扫描一个 .js 文件中、解析到 _shared/ 下的 require 目标（返回相对 _shared 的路径，'/' 分隔）
 // fileAbs 可能是：

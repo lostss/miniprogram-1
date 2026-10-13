@@ -11,7 +11,7 @@ const { wrapError } = require('./_shared/errorHandler')
 
 // ---------- queryMessages ----------
 async function queryMessages(db, openid, event) {
-  const { familyId, before, mode } = event
+  const { familyId, before } = event
   if (!familyId) return { code: 400, msg: '缺少参数 familyId' }
   const limit = Math.min(Number(event.limit) || 20, 50)
   try {

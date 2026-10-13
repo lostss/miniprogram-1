@@ -5,7 +5,7 @@
  * _parseAIJSON 已抽到 _shared/parse-ai-json.js，与 reportAI 共用同一事实源。
  * 此处保留 re-export 以向后兼容 ocr-core 等内部消费方。
  */
-const { OCR, AI, AI_TIMEOUT } = require('./config')
+const { OCR, AI, AI_PURPOSE } = require('./config')
 const { parseAIJSON: _parseAIJSON } = require('./parse-ai-json')
 const { withRetry } = require('./retry')
 const { logOperation } = require('./logSeam')
@@ -145,10 +145,17 @@ async function aiExtract(ocrText, ocrConfInfo, deps) {
         const res = await safeCallChat(
           messages,
           callChat,
-          // 2026-09-10：model 归因修正——USE_DIRECT 时实际调用 DeepSeek 直连（AI.DIRECT_MODEL），
-          // 原固定写 OCR_MODEL('hy3') 导致日志/成本按 TokenHub 计价（口径与真实模型不符）
-          { cloud, db, openid, familyId, sessionId, traceId, model: AI.USE_DIRECT ? AI.DIRECT_MODEL : AI.OCR_MODEL, action: 'ocr_extract', skipInjection: true, skipOutputAudit: true, skipContentSafety: true },
-          { maxTokens: AI.OCR_MAX_TOKENS, temperature: AI.OCR_TEMPERATURE, responseFormat: { type: 'json_object' }, timeoutMs: AI_TIMEOUT.OCR }
+          // 2026-09-12 归因修正：OCR 走 callChat（hy3 / hunyuan-exp SDK 通道），实际模型是 CHAT_MODEL，
+          // 与 AI.OCR_MODEL 同为 'hy3'。2026-09-10 那版写成 `USE_DIRECT ? DIRECT_MODEL : OCR_MODEL`，
+          // 而 AI.USE_DIRECT 恒为 true → 日志/成本把 hy3 记成 deepseek-flash（¥1/¥4 每百万），
+          // 实际单价高一个量级 → agent_logs.cost 系统性低估。model 必须与真实调用的通道一致。
+          // skipInjection：本路径的 user 消息是**我们自己的 OCR 产物**（非用户指令），
+          //   OCR 阶段已在写入侧做过注入检测；对识别文本再做指令检测只会把正常保单文字判成注入。
+          // maxInput：2026-09-22 审计 P2 —— 必须按 OCR 文本上限放宽网关闸门，
+          //   否则 SECURITY.MAX_INPUT=16000 会把长保单的尾部（产品/特别约定/现价表）与
+          //   末尾「注意」段静默截掉，而日志看一切正常。上限与 ocrService 的入参校验同源。
+          { cloud, db, openid, familyId, sessionId, traceId, model: AI.OCR_MODEL, action: 'ocr_extract', skipInjection: true, skipOutputAudit: true, skipContentSafety: true, maxInput: AI.OCR_TEXT_MAX_LEN + 2000 },
+          { maxTokens: AI.OCR_MAX_TOKENS, temperature: AI.OCR_TEMPERATURE, responseFormat: { type: 'json_object' }, timeoutMs: AI_TIMEOUT.OCR, purpose: AI_PURPOSE.OCR_EXTRACT }
         )
         const parsed = _parseAIJSON(res.text)
         if (!parsed) {

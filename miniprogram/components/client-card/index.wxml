@@ -5,7 +5,11 @@
   <view class="card-body">
     <view class="card-row">
       <text class="card-name">{{client.name}}</text>
-      <text class="card-label">{{client.family_label || ''}}</text>
+      <!-- 2026-09-12 MVP 验证：成交标记（报告页手动登记）透出到列表，让"哪些客户已成单"一眼可读 -->
+      <text class="card-deal" wx:if="{{client.deal_status === 'won'}}">已成交</text>
+      <!-- 2026-09-12 移除 family_label 渲染：该字段前后端均不存在（dataQuery 投影字段清单里没有它，
+           dataWrite 白名单里也没有），属恒空死字段。代理人的"记忆标签"需求由可自定义的家庭名承载
+           （客户列表「+」新建时可填"李姐-转介绍"） -->
     </view>
     <text class="card-time">{{_fmtTime}}</text>
   </view>

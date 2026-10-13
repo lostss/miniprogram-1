@@ -22,14 +22,32 @@ var { buildChapters, buildGaps, buildCoverageMatrix, buildTimeline, normalizeFam
 function buildReportView(family, report, opts) {
   report = report || {}
   opts = opts || {}
+  const shared = !!(opts.view === 'shared')
   const gaps = buildGaps(family)
-  const chapters = buildChapters(family, report, gaps, opts)
+  const deep = buildDeepAnalysis(report)
+  let chapters = buildChapters(family, report, gaps, opts)
   const hints = makeHints(report, family)
   // Hero 结论先行：规则版覆盖检查（警示列表 + 总结 + 优先建议），AI conclusion 仅供分享标题
   const heroView = buildHero(family, gaps, opts)
   const hero = Object.assign(heroView, { conclusion: String(report.conclusion || '') })
+  // V1.5 行动出口收敛（2026-09-12）：owner 版行动建议此前有 4 个出口
+  // （hero.topAdvice / next_steps 章 / deep.plan / deep.suggestions）→ 收敛为任一时刻只有一个：
+  //   已有 AI 分析 → deep.suggestions（行动清单）；无 AI 分析 → next_steps 章（含缺口金额与优先级排序）
+  // 客户版（shared）本就没有 next_steps 章，topAdvice 是其唯一行动指向，保持不变
+  if (!shared) {
+    hero.topAdvice = ''
+    if (deep) chapters = chapters.filter(c => c.key !== 'next_steps')
+  }
   const norm = normalizeFamilyData(family)
   // 保障人数：有至少一份有效保单的去重成员数（按 member_id 优先、insured_name 兜底；无归属保单不计入）
+  //
+  // 【2026-09-22 口径确认（D2'）】本指标 = **被保人计数**，不是"在册家庭成员数"。两者边界不同，且是有意为之：
+  //   - 已软删成员：其保单的 member_id 按 data-model-v2 L101 **保留**，但已删成员不在 members 列表里
+  //     → 本处 key 退化为 insured_name → **仍计入人数**（人可能已不在档案，但那份保险客观存在）
+  //   - 缺口矩阵（`report/gap-engine`）：按 members 行渲染 → 已删成员**无对应行**
+  //   这不是矛盾：一个回答"有多少被保人"，一个回答"在册成员的保障维度"。
+  //   不改成"只在册成员"的原因：名字写错 / 保的是非成员时，会把**真实存在的保障**漏掉。
+  //   详见 docs/data-model-v2.md「删除规则」补记。
   const coveredIds = new Set()
   for (const p of norm.active) {
     const key = p.member_id || p.insured_name || ''
@@ -42,7 +60,10 @@ function buildReportView(family, report, opts) {
     short: norm.shortTermCoverage > 0 ? String(Math.round(norm.shortTermCoverage * 10) / 10) : '',
     count: coveredIds.size
   }
-  return { chapters: chapters, hero: hero, summaryCards: summaryCards, gaps: gaps, hints: hints, deep: buildDeepAnalysis(report) }
+  // 2026-09-22 全面审计（前端 P2）：原此处再次调用 buildDeepAnalysis(report) —— 与上方 L27 的
+  // 入参完全相同（纯函数、无副作用），等于每次刷新报告都白算一遍（含 core_insights 包装与
+  // 3 次 String.replace）。直接复用已算好的 deep。
+  return { chapters: chapters, hero: hero, summaryCards: summaryCards, gaps: gaps, hints: hints, deep: deep }
 }
 
 /**
@@ -56,7 +77,11 @@ function buildDeepAnalysis(report) {
   const has = !!(report.portrait || report.review || report.analysis || report.plan || report.suggestions || (report.core_insights && report.core_insights.length))
   if (!has) return null
   return {
-    insights: Array.isArray(report.core_insights) ? report.core_insights : [],
+    // 2026-09-18 报告页审计：展示层包成 {key,text} —— 原 WXML 用 wx:key="*this"（字符串自身），
+    // 两条相同洞察文本会产生重复 key。注意 core_insights 的**存储契约仍是字符串数组**
+    // （cloudfunctions/_shared/report-fields.js 有字段契约测试），此处只做视图层包装，不动上游。
+    insights: (Array.isArray(report.core_insights) ? report.core_insights : [])
+      .map(function(t, i) { return { key: 'ins' + i, text: t } }),
     // 审计 C2（2026-09-02）：AI 家庭画像补入 deep 首段（保障点评前），补齐画像→点评→根因→方案→行动闭环
     portrait: report.portrait || '',
     review: report.review || '',

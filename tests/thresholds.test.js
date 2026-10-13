@@ -11,10 +11,9 @@ const {
   THRESHOLDS,
   DEFAULT_THRESHOLD,
   CANON_CAT,
-  canonCat,
-  formatThresholdPrompt,
-  formatThresholdAppendix
+  canonCat
 } = require('../cloudfunctions/_shared/thresholds')
+// 2026-09-12：formatThresholdPrompt / formatThresholdAppendix 已删除（全仓零生产调用）
 
 describe('thresholds', () => {
   describe('canonCat', () => {
@@ -110,51 +109,4 @@ describe('thresholds', () => {
     })
   })
 
-  describe('formatThresholdPrompt', () => {
-    test('输出包含 4 个角标 ¹²³⁴', () => {
-      const text = formatThresholdPrompt()
-      expect(text).toContain('¹')
-      expect(text).toContain('²')
-      expect(text).toContain('³')
-      expect(text).toContain('⁴')
-    })
-
-    test('包含重疾/寿险/意外险/医疗险四个险种', () => {
-      const text = formatThresholdPrompt()
-      expect(text).toContain('重疾险')
-      expect(text).toContain('寿险')
-      expect(text).toContain('意外险')
-      expect(text).toContain('医疗险')
-    })
-
-    test('寿险/意外险带 basis 公式描述（函数型 reference）', () => {
-      const text = formatThresholdPrompt()
-      expect(text).toContain('负债')
-      expect(text).toContain('5倍')
-    })
-
-    test('重疾险/医疗险带"参考保额N万"（数字型 reference）', () => {
-      const text = formatThresholdPrompt()
-      expect(text).toContain('参考保额50万')
-      expect(text).toContain('参考保额100万')
-    })
-  })
-
-  describe('formatThresholdAppendix', () => {
-    test('输出包含 4 条编号说明', () => {
-      const text = formatThresholdAppendix()
-      expect(text).toContain('1. 重疾险')
-      expect(text).toContain('2. 寿险保额')
-      expect(text).toContain('3. 意外险保额')
-      expect(text).toContain('4. 医疗险')
-    })
-
-    test('与 formatThresholdPrompt 的口径一致（同 basis）', () => {
-      const prompt = formatThresholdPrompt()
-      const appendix = formatThresholdAppendix()
-      // 寿险 basis 在两处都应出现
-      expect(prompt).toContain(THRESHOLDS['寿险'].basis)
-      expect(appendix).toContain(THRESHOLDS['寿险'].basis)
-    })
-  })
 })

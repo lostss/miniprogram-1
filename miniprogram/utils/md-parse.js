@@ -91,7 +91,11 @@ function parseMarkdown(text) {
     }
 
     // 表格
-    if (line.includes('|') && i + 1 < lines.length && lines[i + 1].includes('---')) {
+    // 2026-09-28 全面审计 P2：分隔行必须**自身是**表格分隔行（只含 |、-、:、空格），原判据是
+    // `includes('---')` → 「选择 A|B」+「---」这种"正文里带竖线、下一行是分割线"的组合会被
+    // 误判成表格，渲染出一张空表卡片（已实测）。同时正文里的 `---` 也因此丢掉 hr 语义。
+    const isSepRow = (l) => /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(l) && l.indexOf('|') !== -1
+    if (line.includes('|') && i + 1 < lines.length && isSepRow(lines[i + 1])) {
       // 组件审计 P1-1：保留空单元格——split('|') 只产生首尾空元素（表格语法 | 开头/结尾），
       // 去掉首尾即可，中间空单元格必须保留（filter 会删空值导致列错位，违反"保留空单元格"约定）
       const headers = splitRow(line).map(h => h.trim());
@@ -224,7 +228,13 @@ function parseMarkdown(text) {
     if (line.trim()) {
       const paraLines = [line];
       i++;
-      while (i < lines.length && lines[i].trim() && !lines[i].startsWith('#') && !lines[i].startsWith('```') && !lines[i].startsWith('>') && !lines[i].includes('|')) {
+      // 2026-09-28 全面审计 P2：段落续行原本只让位于 # / ``` / > / |，**不让位于列表与分割线** →
+      //   「这是说明：\n1. 第一项」被整段吞成一个 paragraph，列表标记被 md-inline 转成全角句点
+      //   （实测渲染成「1。第一项」）；「以上结论。\n---」把 hr 当正文渲染出字面量 `---`。
+      //   现把列表项与 hr 也作为段落终止符（空行仍终止）。
+      const isBlockStart = (l) => l.startsWith('#') || l.startsWith('```') || l.startsWith('>') || l.includes('|') ||
+        /^\d+\.\s/.test(l) || /^[-*+]\s/.test(l) || /^([-*_])\1{2,}\s*$/.test(l)
+      while (i < lines.length && lines[i].trim() && !isBlockStart(lines[i])) {
         paraLines.push(lines[i]);
         i++;
       }

@@ -25,13 +25,13 @@
 | 家庭结构 | 成员数、年龄、角色 | 确定谁最需要保障 |
 | 生命周期 | 单身/新婚/育儿/中年/空巢/退休 | 确定保障阶段重点 |
 | 已有保障 | OCR 保单识别 + 手动补充 | 计算缺口 |
-| 经济状况 | 年收入、负债、固定支出、保费预算 | 确定合理保额和保费承受力 |
+| 经济状况 | 年收入、总负债、保费预算 | 确定合理保额和保费承受力 |
 
 ## 分析引擎
 
 **基础版（已实现）**：纯规则引擎驱动。`gap-engine` 计算保障缺口/覆盖矩阵，`timeline-builder` 构建缴费时间轴，`buildReportView` 统一聚合 7 章（含家庭财务独立章），无 AI 参与。
 
-**深度分析（2026-09-06 活报告模型：自动介入为主 + 手动补算保留）**：数据变更（writeSeam 置 `insight_stale`）后前端汇聚点以 `source:'auto'` 自动触发（30s CAS 节流，不设频率上限）；report 页「立即生成分析」按钮 → `api('generateReport')`（60s 超时）→ reportAI AI 生成画像/点评/规划/建议，写 `families.last_*` 并由前端渲染。缺口矩阵由系统预计算注入 AI（`report-context.buildGapSnapshot`）。PDF 导出待设计。
+**深度分析（2026-09-06 活报告模型：自动介入为主 + 手动补算保留）**：数据变更（writeSeam 置 `insight_stale`）后前端汇聚点以 `source:'auto'` 自动触发（30s CAS 节流，不设频率上限）；report 页「立即生成分析」按钮 → `api('generateReport')`（60s 超时）→ reportAI AI 生成画像/点评/规划/建议，写 `families.last_*` 并由前端渲染。缺口矩阵由系统预计算注入 AI（`report-context.buildGapSnapshot`）。PDF 导出已实现（`reportPdf` 云函数，2026-09-28 更正，原写"待设计"）。
 
 ## 信息采集模式
 
@@ -54,12 +54,13 @@
 
 ## 报告结构（基础版 · 7 章单页长图）
 
-由 `buildReportView` 统一聚合（规则引擎，无 AI），手机端已实现，PDF 导出待设计：
+由 `buildReportView` 统一聚合（规则引擎，无 AI），手机端已实现，**PDF 已实现**（云函数 `reportPdf`，
+60s 时限；2026-09-28 更正：原文写"PDF 导出待设计"，实际早已上线并被 README 部署记录多次引用）：
 
 | # | 章节 | key | 内容 |
 |---|------|-----|------|
 | 1 | 家庭结构 | `family_structure` | 成员树（角色分组），可编辑 |
-| 2 | 家庭财务 | `family_finance` | 收入/负债/支出（R2 从家庭结构拆出独立章），可编辑 |
+| 2 | 家庭财务 | `family_finance` | 收入/总负债（R2 从家庭结构拆出独立章），可编辑 |
 | 3 | 保障汇总 | `coverage_summary` | 成员×险种保障矩阵 + 缺失提示 + 缺口警示 |
 | 4 | 缴费月历 | `premium_calendar` | 12 格月度保费 + 峰值高亮 + 年总保费/占收入比 |
 | 5 | 缴费年历和关键节点 | `premium_timeline` | 续保/到期/缴费期满时间轴 |
@@ -115,10 +116,18 @@
   - `dataWrite`：写入聚合（家庭/成员/事实/保单/消息，`ingestPolicies` 批量入库 step 化）
   - `reportAI`：深度分析报告生成（2026-09-06 活报告模型恢复自动触发，30s CAS 节流；手动按钮为立即补算入口）
   - `conversationAI`：对话单通道（`mode:'chat'`，后端原生 function calling + 14 工具路由；确认卡二次调用走 CONFIRM 拦截）
-  - `ocrService`：OCR 全链路（ocrOnly / aiExtractBatch / aiExtractParallel / matchPolicies）
+  - `ocrService`：OCR 全链路（`ocrOnly` / `aiExtractParallel` / `ocrExtract`；以 `handlers.js` 路由表为准。
+    ⚠️ 2026-09-28 更正：原文列的 `aiExtractBatch` 已于 2026-08-30 收敛删除、`matchPolicies` handler 已下线，
+    而前端唯一 OCR 入口 `ocrExtract` 反而没列）
   - `login`：openid 静默登录（微信唯一身份即账号）；`cleanup`：定时清理
 - **数据库**：CloudBase NoSQL（文档型；核心 6 集合 families / members / finances / policies / products / facts，另有 policy_cash_values / messages / reports / agent_logs / operation_logs 等）
 - **AI**：模型以 `_shared/config.js` 的 `AI` 段为**单一事实源**（勿在此硬编码模型名，曾因此漂移）——结构化任务（reportAI 报告、批量 OCR、失败重试）走 DeepSeek 直连（`AI.USE_DIRECT` + `AI.DIRECT_MODEL`，绕过 TokenHub 限流）；云函数侧 AI 全链经 `ai-gateway.js` → `safeCallChat`（审查链：sanitize → PII 脱敏 → 注入检测 → 内容安全 → 限流 60/60s → 输出审计 → agent_logs）
+
+**覆盖判定的权威源（2026-09-15 收敛）**：「某险种有没有保障」只有**一个**权威——`policies` 集合，
+经 `gap-core.evaluateCoverage`（缺口矩阵）与 `familyPortrait.buildPortrait(members, facts, { policies })`（画像覆盖矩阵）同源消费。
+facts 里的保障边**只**用于补充"对话提及但保单库无记录"的孤儿保障（标 ∪ 待确认），不再单独充当覆盖判定源。
+（收敛前画像从 facts 派生判定，facts 缺 policy 记录即误报"无保障"，与缺口矩阵在同一次 AI 调用里互相矛盾——
+reportAI prompts 曾必须写警告解释"两种 ⚠️ 含义不同"；同源后该警告已删。）
 
 原则：**轻量化，单一服务，零分布式复杂度**。
 
@@ -145,10 +154,12 @@
 | `members` | 成员主数据（展示+推理输入） | 低频覆盖 | 2-20/家庭 |
 | `finances` | 财务主数据（推理输入） | 低频覆盖 | 1/家庭 |
 | `policies` | 保单事实表（推理输入） | 高频追加 | 5-30/家庭 |
-| `products` | 产品条款主数据（liability+benefits，一次解析跨家庭复用） | 低频追加 | 10-100（在售+停售） |
+| `products` | 产品条款主数据（liability+benefits，一次解析跨家庭复用）——**有数据、无代码读写路径** | 低频追加 | 10-100（在售+停售） |
 | `facts` | 三元组关系+推理结论 | 高频追加 | 20-80/家庭 |
 
-> **去冗余（Plan A）**：`members` / `finances` 为独立集合，成员与财务的**唯一真相源**；`families.members` 内嵌字段已废弃。`families.financial_snapshot` **仍活跃**：由 `memberRepo.getFinance` 聚合 finances 集合（元键 annual_income/total_debt/fixed_annual_expense ÷10000 转万；旧万键 income/debt/fixed_expense fallback），供表单回显与报告上下文使用。关联键统一为 `members.member_id`（形如 `mem_xxx`）：`policies.member_id` 与 `facts.subject_id` 均指向它。读写经 `_shared/memberRepo.js`（`loadFamilyView` / `getMembers` / `upsertMember` / `getFinance` 等）。
+> **集合现状（2026-09-12 实测 cloud1 环境，共 22 个集合）**：业务在用 `families` / `members` / `finances` / `policies` / `facts`，辅助 `policy_cash_values` / `messages` / `reports` / `agents`。`products` 有 8 条产品数据但全仓无 `db.collection('products')` 调用——条款仅经开发者侧管道建档，**应用侧尚无消费端**；`insights` 已废弃（0 文档，仅 `deleteFamily` 级联与 `cleanup` 白名单引用）。另有 `auth_tokens` / `ocr_debug_logs` / `sys_department(-preview)` / `sys_user(-preview)` / `relation_data_depart(-preview)` 等非业务集合残留。
+
+> **去冗余（Plan A）**：`members` / `finances` 为独立集合，成员与财务的**唯一真相源**；`families.members` 内嵌字段已废弃。`families.financial_snapshot` **仍活跃**：由 `memberRepo.getFinance` 聚合 finances 集合（元键 annual_income/total_debt ÷10000 转万；旧万键 income/debt fallback），供表单回显与报告上下文使用。关联键统一为 `members.member_id`（形如 `mem_xxx`）：`policies.member_id` 与 `facts.subject_id` 均指向它。读写经 `_shared/memberRepo.js`（`loadFamilyView` / `getMembers` / `upsertMember` / `getFinance` 等）。
 
 ### families — 家庭容器
 | 字段 | 类型 | 说明 |
@@ -194,22 +205,28 @@
 | `special_agreement` | string | OCR（入库前脱敏） |
 | `source` | 'ocr'\|'manual'\|'dialog' | |
 
-### Fact（三元组，独立 `facts` 集合文档）
+### Fact（事实，独立 `facts` 集合文档）
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `subject_type` | string | member/family/policy |
 | `subject_id` | string | 指向 `members.member_id` 或 family/policy `_id` |
-| `predicate` | string | 配偶/子女/父母/购买了/角色/缺少/有缺口/建议/有偏好/有特征/... |
+| `predicate` | string | **开放文本**（AI 原话，如"个人年收入""公司团险在职有效"）——不再受词表限制 |
+| `kind` | string | fact/constraint/relation/lead —— 决定"这条信息怎么被消费" |
+| `axis` | string | 归一化属性槽（可空）—— 命中才参与同槽消解与确定性计算 |
 | `object_type` | string | member/policy/literal |
 | `object_id` | string | 对象为 member 时指向 `member_id` |
 | `object_value` | string | 字面值或冗余名称 |
-| `confidence` / `source` / `status` | 0-1 / ai\|agent\|system / active\|superseded | |
+| `confidence` / `source` / `status` | 0-1 / ocr\|ai\|user_form\|agent_confirmed / active\|superseded | |
 | `reasoning` | string | 推理追溯 |
 
-> 结构化数据（收入/负债/职业/健康/年龄）不走 facts，直接存 `finances`/`members`；facts 仅存关系与推理结论。
+> **谓词开放（2026-09-14 重构）**：闭合的是 `kind` 与 `axis`（字典单一事实源 `_shared/fact-vocab.js`）。
+> `axis` 未命中**不丢信息**——事实照常落库，并按 `kind` 进入 AI 上下文（见 `familyPortrait` 的 kind 分组渲染）。
+> 结构化数据（收入/负债/职业/健康/年龄）仍直接存 `finances`/`members`；facts 侧由 `axis` 归一。
 
-### Note（非结构化笔记）
-笔记以 fact 形式存储（`facts` 集合，`category:'note'`，含 `content`/`category`/`source`/`created_at`），非独立集合。
+### 非标信息的载体（原「Note」）
+**没有独立 note 集合，也没有 `category:'note'` 字段**（该描述已过时）。
+非标信息（"团险离职即失效""夫妻共保份额待确认"）以 `kind=constraint/relation/lead` 的 fact 落地：
+原话照存、由 AI 在分析时判读；确定性计算只吃 `axis` 命中且端点确定（`object_id`）的部分。
 
 ## 使用场景
 

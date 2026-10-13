@@ -4,46 +4,20 @@
  * 确认卡片二次调用(confirmed:true)才覆盖；非对话调用与普通差异(<2岁)直接写入。
  */
 const { upsertMember } = require('../cloudfunctions/_shared/memberRepo')
+const { makeMemoryDb } = require('./helpers/memory-db')
 
+// 2026-09-15 架构审查候选 4：改用手写原语的唯一实现 memory-db。
+// 旧桩在匹配前 `delete f._openid`——因为 seed 不带 _openid，桩必须放水才匹配得上，
+// 这使"查询是否真的按 _openid 隔离"完全无法被验证（越权读类问题一律静默通过）。
+// adapter 按真实语义匹配 _openid，故 seed 补上该字段（生产记录必有，见 read 侧三件套不变量）。
 function makeDb(seed = []) {
   const store = { members: seed.map((m, i) => ({ ...m, _id: m._id || 'id_' + i })) }
-  return {
-    collection(name) {
-      const coll = store[name] || (store[name] = [])
-      return {
-        where(filter) {
-          const f = { ...filter }
-          delete f._openid
-          const rows = coll.filter(r => Object.entries(f).every(([k, v]) => r[k] === v))
-          return {
-            orderBy() { return this },
-            limit(n) { return { get: async () => ({ data: rows.slice(0, n) }) } },
-            get: async () => ({ data: rows })
-          }
-        },
-        doc(id) {
-          return {
-            update: async ({ data }) => {
-              const r = coll.find(x => x._id === id)
-              if (r) Object.assign(r, data)
-              return { stats: { updated: r ? 1 : 0 } }
-            },
-            remove: async () => ({ stats: { removed: 1 } })
-          }
-        },
-        add: async ({ data }) => {
-          const doc = { ...data, _id: 'new_' + Math.random().toString(36).slice(2) }
-          coll.push(doc)
-          return { _id: doc._id }
-        }
-      }
-    }
-  }
+  return makeMemoryDb(store)
 }
 
 const FAM = 'fam1'
 const OID = 'o1'
-const EXISTING = [{ member_id: 'mem_1', family_id: FAM, name: '李阳勇', role: '本人', age: 50, birth_date: '1976-01-01' }]
+const EXISTING = [{ member_id: 'mem_1', family_id: FAM, _openid: 'o1', name: '李阳勇', role: '本人', age: 50, birth_date: '1976-01-01' }]
 
 test('对话路径：年龄相差≥2岁 → 返回 409 needsConfirm 且不直接覆盖', async () => {
   const db = makeDb(JSON.parse(JSON.stringify(EXISTING)))
@@ -90,7 +64,7 @@ test('确认卡片二次调用(confirmed:true)：跳过矛盾检测强制覆盖'
 })
 
 test('出生日期年份相差≥2 → 矛盾', async () => {
-  const db = makeDb([{ member_id: 'mem_2', family_id: FAM, name: '谢敏', role: '配偶', birth_date: '1990-05-20' }])
+  const db = makeDb([{ member_id: 'mem_2', family_id: FAM, _openid: 'o1', name: '谢敏', role: '配偶', birth_date: '1990-05-20' }])
   const r = await upsertMember(db, FAM, OID, { memberName: '谢敏', data: { birth_date: '1980-05-20' }, confirmOnConflict: true })
   expect(r.code).toBe(409)
   expect(r.data.conflict.field).toBe('birth_date')

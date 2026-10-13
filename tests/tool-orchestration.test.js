@@ -10,7 +10,7 @@
  *   - addFact → 免确认直接 dispatch + 回流
  *   - 无 toolCalls → cleanText = phase1.text（不再退化为 auditText）
  */
-jest.mock('wx-server-sdk', () => ({ database: () => ({}) }), { virtual: true })
+jest.mock('wx-server-sdk', () => ({ init: jest.fn(), database: () => ({}), DYNAMIC_CURRENT_ENV: 'env-mock' }), { virtual: true })
 
 // mock ai-client / ai-gateway，让 orchestrate 的 AI 调用可控
 const mockCallChatWithTools = jest.fn()
@@ -23,9 +23,28 @@ jest.mock('../cloudfunctions/conversationAI/_shared/ai-client', () => ({
   callChatWithToolsDirect: (...args) => mockCallChatWithToolsDirect(...args),
   callChat: (...args) => mockCallChat(...args)
 }))
+// 2026-09-12：直连通道显式补记账（_recordDirectUsage）需要这两个导出
+const mockCalcTokenUsage = jest.fn((usage) => ({
+  input: (usage && usage.prompt_tokens) || 0,
+  output: (usage && usage.completion_tokens) || 0,
+  total: (usage && usage.total_tokens) || 0,
+  cost: 0
+}))
+const mockBumpAgentTokens = jest.fn().mockResolvedValue(undefined)
 jest.mock('../cloudfunctions/conversationAI/_shared/ai-gateway', () => ({
   safeCallChatWithTools: (...args) => mockSafeCallChatWithTools(...args),
-  safeCallChat: (...args) => mockSafeCallChat(...args)
+  safeCallChat: (...args) => mockSafeCallChat(...args),
+  calcTokenUsage: (...args) => mockCalcTokenUsage(...args),
+  bumpAgentTokens: (...args) => mockBumpAgentTokens(...args)
+}))
+// 2026-09-15（候选 3）：直连记账收敛到 `_shared/ai-accounting.recordAIUsage`——
+// 「算价 → 按状态计配额 → 写 agent_logs」的唯一实现。本文件只断言**委托参数正确**；
+// 记账器自身行为由 tests/ai-accounting.test.js 覆盖（含 currency 落库、失败不计配额仍留痕）。
+const mockRecordAIUsage = jest.fn().mockResolvedValue('log_direct')
+jest.mock('../cloudfunctions/conversationAI/_shared/ai-accounting', () => ({
+  recordAIUsage: (...args) => mockRecordAIUsage(...args),
+  calcTokenUsage: (...args) => mockCalcTokenUsage(...args),
+  bumpAgentTokens: (...args) => mockBumpAgentTokens(...args)
 }))
 // ② 默认执行+撤销：mock undo-store 与快照层，让 A 类工具执行可控
 const mockCreateUndo = jest.fn().mockResolvedValue('ud_test')
@@ -288,6 +307,36 @@ describe('orchestrate - A 类默认执行+撤销 / B 类确认卡（② 2026-08-
     expect(args.stateCache.invalidate).toHaveBeenCalledWith('state:fam_001:op_test')
   })
 
+  test('快照失败 → 不落 undo（防撤销把存量数据当"新建"整删）', async () => {
+    // 2026-09-17 审计 P1-B2：`before=null` 在恢复侧被解释为"撤销新建"——restoreFinance /
+    // restoreMember 的 null 分支会 silentRemoveDoc 当前文档。而"快照失败"本意是"没拿到基线"，
+    // 与"这条记录是新建的"语义撞车 → 用户点撤销会把**存量**财务文档整删（数据丢失级）。
+    // 修复：快照失败即放弃可撤销性（撤销按钮不出现），而不是落一条会误删的 undo 记录。
+    const memberRepo = require('../cloudfunctions/conversationAI/_shared/memberRepo')
+    memberRepo.snapshotFinance.mockRejectedValueOnce(new Error('safeQuery 失败'))
+    mockCreateUndo.mockClear()
+    mockSafeCallChatWithTools.mockResolvedValue(financeToolCall())
+    mockSafeCallChat.mockResolvedValue({ text: '已更新家庭年收入为 25 万。' })
+    const dispatch = jest.fn().mockResolvedValue({ code: 200, data: { action: 'updated' } })
+    // 2026-09-22 全面审计 P1-3：参数校验改用**完整** toolDefs（本文件里即该 fixture），
+    // 未命中的工具不再"无 def 即放行"。fixture 必须写全本用例会用到的字段，
+    // 否则校验会先把 total_debt 判成未知字段（用例本意是验快照失败，不是验校验）。
+    const toolDefs = [{
+      function: {
+        name: 'updateFinances',
+        parameters: { type: 'object', properties: { annual_income: { type: 'number' }, total_debt: { type: 'number' } } }
+      }
+    }]
+
+    const r = await orchestrate(makeBaseArgs({ dispatch, toolDefs }))
+
+    // 写入本身照常成功，只是不提供撤销入口
+    expect(dispatch).toHaveBeenCalled()
+    expect(r.toolResults[0]).toMatchObject({ toolName: 'updateFinances', success: true })
+    expect(r.toolResults[0].undo).toBeUndefined()
+    expect(mockCreateUndo).not.toHaveBeenCalled()
+  })
+
   test('upsertMember（A 类）→ 默认执行：dispatch + undo', async () => {
     mockSafeCallChatWithTools.mockResolvedValue({
       text: 'OK',
@@ -303,6 +352,24 @@ describe('orchestrate - A 类默认执行+撤销 / B 类确认卡（② 2026-08-
     expect(dispatch).toHaveBeenCalledWith('upsertMember', expect.objectContaining({ memberName: '张三', familyId: 'fam_001' }), 'op_test')
     expect(r.pending_confirms).toEqual([])
     expect(r.toolResults[0].undo).toMatchObject({ opId: 'ud_test' })
+  })
+
+  // 2026-09-22 全面审计 P1-3（安全，契约锁定）：删除类工具的确认门只看 args.confirmed，
+  // 而模型输出原先被原样透传 → 模型（可被 system prompt 里的第三方文本诱导）只要输出
+  // deletePolicy{policyId, confirmed:true} 就能**跳过人工确认**直接软删。
+  // 现于解析工具调用处无条件剥离 confirmed，该字段只能由服务端确认路径注入。
+  test('模型自带的 confirmed 被剥离 → 删除类工具不能自确认', async () => {
+    mockSafeCallChatWithTools.mockResolvedValue({
+      text: '好的',
+      toolCalls: [{ type: 'function', id: 'tc_del', function: { name: 'deletePolicy', arguments: '{"policyId":"pol_1","confirmed":true}' } }]
+    })
+    mockSafeCallChat.mockResolvedValue({ text: '请确认' })
+    const dispatch = jest.fn().mockResolvedValue({ code: 409, needsConfirm: true })
+    await orchestrate(makeBaseArgs({ dispatch }))
+    expect(dispatch).toHaveBeenCalled()
+    const passed = dispatch.mock.calls[0][1]
+    expect(passed.confirmed).toBeUndefined()
+    expect(passed.policyId).toBe('pol_1')
   })
 
   test('addPolicy / updatePolicy / createFamily（B 类）→ 仍走确认卡', async () => {
@@ -489,6 +556,10 @@ describe('orchestrate - 写声称但无 toolCalls（P2-D 假更新防御）', ()
     const r = await orchestrate(args)
     // phase1 直连 1 次 + 强指令重试直连 1 次
     expect(mockCallChatWithToolsDirect).toHaveBeenCalledTimes(2)
+    // 2026-09-12 观测修复回归：phase1 主通道必须显式传 openid（实测此前该路 operation_logs 记录
+    // openid 为空 → 归因与配额全漏），并带业务 purpose（原不传只能反映客户端函数名）
+    expect(mockCallChatWithToolsDirect.mock.calls[0][2]).toMatchObject({ openid: 'op_test', purpose: 'conversation_phase1', maxTokens: 1200 })
+    expect(mockCallChatWithToolsDirect.mock.calls[1][2]).toMatchObject({ openid: 'op_test', purpose: 'conversation_retry_direct' })
     // 第 2 次（重试）system 消息含强制提示
     const retrySystem = mockCallChatWithToolsDirect.mock.calls[1][0][0].content
     expect(retrySystem).toContain('必须调用对应工具')
@@ -497,6 +568,54 @@ describe('orchestrate - 写声称但无 toolCalls（P2-D 假更新防御）', ()
     expect(r.pending_confirms).toEqual([])
     expect(r.toolResults).toHaveLength(1)
     expect(r.toolResults[0].undo).toMatchObject({ opId: 'ud_test' })
+  })
+
+  test('phase1 直连成功 → 记账委托 ai-accounting（候选 3：口径不再各处手写）', async () => {
+    // 2026-09-12：直连不经 ai-gateway（gateway 的 sanitize 会截断 system prompt），
+    // 原先既不写 agent_logs 也不计 agents.token_used_monthly —— 对话最高频，漏账最大。
+    // 2026-09-15（候选 3）：该序列收敛为 `ai-accounting.recordAIUsage` 单点调用，
+    // 本用例断言的边界 = 「是否把正确的 openid/model/usage 交给了统一记账器」；
+    // 记账器行为（配额累加、cost+currency 落库、失败不计配额但留痕）见 ai-accounting.test.js。
+    mockCallChatWithToolsDirect.mockResolvedValueOnce({
+      text: '安排中',
+      toolCalls: [{ type: 'function', id: 'tc_r', function: { name: 'updateFinances', arguments: '{"annual_income":350000}' } }],
+      usage: { prompt_tokens: 4000, completion_tokens: 50, total_tokens: 4050 }
+    })
+    mockSafeCallChat.mockResolvedValue({ text: '已更新家庭年收入为 35 万。' })
+    const dispatch = jest.fn().mockResolvedValue({ code: 200, data: { action: 'updated' } })
+    await orchestrate(makeBaseArgs({ userText: '修改家庭收入为35万', dispatch }))
+
+    expect(mockRecordAIUsage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      openid: 'op_test',
+      familyId: 'fam_001',
+      action: 'conversation_tools',
+      model: 'deepseek-flash',
+      usage: expect.objectContaining({ total_tokens: 4050 })
+    }))
+    // clearAllMocks 不清实现，这里显式还原，避免泄漏到后续用例
+    mockCallChatWithToolsDirect.mockReset()
+    mockSafeCallChat.mockReset()
+    mockRecordAIUsage.mockReset()
+  })
+
+  test('phase1 直连失败 → 仍委托记账（失败留痕，不静默丢已消耗 token）', async () => {
+    // ai-client 会把已收到的 usage 挂到 err.usage；失败记账必须带上它，
+    // 否则失败调用的输入消耗被系统性丢弃（成本低估 + 异常率无日志支撑）。
+    const err = new Error('直连超时')
+    err.usage = { prompt_tokens: 800 }
+    mockCallChatWithToolsDirect.mockRejectedValueOnce(err)
+    mockSafeCallChat.mockResolvedValue({ text: '已更新家庭年收入为 35 万。' })
+    const dispatch = jest.fn().mockResolvedValue({ code: 200, data: { action: 'updated' } })
+
+    await orchestrate(makeBaseArgs({ userText: '修改家庭收入为35万', dispatch }))
+
+    const failCall = mockRecordAIUsage.mock.calls.find(c => (c[1] || {}).status === 'fail')
+    expect(failCall).toBeTruthy()
+    expect(failCall[1].usage).toMatchObject({ prompt_tokens: 800 })
+
+    mockCallChatWithToolsDirect.mockReset()
+    mockSafeCallChat.mockReset()
+    mockRecordAIUsage.mockReset()
   })
 
   test('声称已修改 + 直连与 hy3 重试均无工具调用 → 诚实失败提示，不生成确认卡', async () => {

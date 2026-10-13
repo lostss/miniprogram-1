@@ -3,32 +3,17 @@
  */
 var mockStore = { families: [], messages: [], facts: [], insights: [], policies: [], reports: [], operation_logs: [] }
 
+// DB mock 收敛到 tests/helpers/memory-db（2026-09-15 架构审查候选 4）。
+// 旧实现 where 为空实现（恒返回全表）；adapter 真实过滤（neq/push 等操作符同样支持）。
 jest.mock('wx-server-sdk', function() {
-  var mockDb = {
-    collection: jest.fn(function(name) {
-      var rows = mockStore[name] || []
-      var q = function() { return {
-        where: jest.fn(function() { return q() }),
-        field: jest.fn(function() { return q() }),
-        limit: jest.fn(function() { return q() }),
-        get: jest.fn(function() { return Promise.resolve({ data: rows }) }),
-        update: jest.fn(function() { return Promise.resolve({ stats: { updated: 1 } }) }),
-        remove: jest.fn(function() { rows.splice(0, rows.length); return Promise.resolve({ stats: { removed: rows.length } }) }),
-        doc: jest.fn(function(id) { return {
-          update: jest.fn(function() { return Promise.resolve({ stats: { updated: 1 } }) }),
-          remove: jest.fn(function() { var i = rows.findIndex(function(r){return r._id===id}); if(i!==-1) rows.splice(i,1); return Promise.resolve({ stats: { removed: 1 } }) })
-        }})
-      }}
-      return q()
-    }),
-    command: { neq: function(v) { return { $ne: v } }, push: function(v) { return { $push: v } } }
-  }
+  const { makeMemoryDb } = require('./helpers/memory-db')
   return {
     init: jest.fn(), DYNAMIC_CURRENT_ENV: 'env-mock',
-    database: jest.fn(function() { return mockDb }),
+    database: jest.fn(function() { return makeMemoryDb(mockStore) }),
     getWXContext: jest.fn(function() { return { OPENID: 'mock_openid' } })
   }
 })
+const { makeMemoryDb } = require('./helpers/memory-db')
 
 var dataWrite = require('../cloudfunctions/dataWrite/index')
 

@@ -1,4 +1,8 @@
 <view class="md-root">
+  <!-- V1.5 吸顶目录（2026-09-12）：长报告一键跳转，降低滑动疲劳；章节 id 复用现有 id="ch-{{key}}" -->
+  <view class="toc" wx:if="{{toc.length > 1}}">
+    <view class="toc-item" wx:for="{{toc}}" wx:key="key" data-k="{{item.key}}" catchtap="onTocTap">{{item.num ? item.num + ' ' : ''}}{{item.title}}</view>
+  </view>
   <view class="md-card" wx:for="{{cards}}" wx:key="key" id="ch-{{item.key}}" style="{{item.style}}">
     <view wx:if="{{item.collapsible}}" class="fold-hd" catchtap="toggleChapter" data-k="{{item.key}}">
       <text class="fold-title">{{item.num ? item.num + ' ' : ''}}{{item.title}}{{item.unit ? '（' + item.unit + '）' : ''}}</text>
@@ -10,7 +14,9 @@
       <text class="h1n-unit" wx:if="{{item.unit}}">{{item.unit}}</text>
       <text class="h1n-edit pressable" wx:if="{{item.edit && !readonly}}" catchtap="onChapterEdit" data-mode="{{item.edit}}" aria-label="编辑本章">[编辑]</text>
     </view>
-      <view wx:if="{{item.customBlocks}}" wx:for="{{item.customBlocks}}" wx:for-index="bi" wx:for-item="block" wx:key="bi">
+      <!-- 2026-09-18 布局审计：删去冗余 wx:if——wx:for 遍历空数组/undefined 本就不产生任何节点，
+           该条件因此恒等价于「数组非空」，却与 wx:for 挤在同一节点。删掉即消除同节点组合，渲染结果不变。 -->
+      <view wx:for="{{item.customBlocks}}" wx:for-index="bi" wx:for-item="block" wx:key="bi">
         <view wx:if="{{block.section}}" class="h2">{{block.section}}</view>
         <view wx:if="{{block.t==='panorama'}}" class="pano-wrap">
           <view class="pano-hd"><text class="pano-hd-cell pano-hd-first">{{block.heads[0]}}</text><text class="pano-hd-cell" wx:for="{{block.cats}}" wx:for-item="h" wx:key="index">{{h}}</text></view>
@@ -46,7 +52,7 @@
         <!-- 家庭结构：成员卡片平铺流动布局（去代际分层） -->
         <view wx:if="{{block.t==='family_tree'}}" class="ft-wrap">
           <view class="ft-nodes">
-            <view class="ft-node {{node.role}} {{readonly ? '' : 'pressable'}}" wx:for="{{block.nodes}}" wx:for-item="node" wx:key="name" data-mode="member" data-mid="{{node.member_id}}" catchtap="onChapterEdit" aria-label="编辑成员">
+            <view class="ft-node {{node.role}} {{readonly ? '' : 'pressable'}}" wx:for="{{block.nodes}}" wx:for-item="node" wx:key="key" data-mode="member" data-mid="{{node.member_id}}" catchtap="onChapterEdit" aria-label="编辑成员">
               <view class="ft-info">
                 <text class="ft-name">{{node.name}}</text>
                 <text class="ft-role">{{node.display}}</text>
@@ -57,9 +63,10 @@
         <!-- 家庭财务：独立 block 卡（R2 从 family_tree 拆分） -->
         <view wx:if="{{block.t==='finance'}}" class="fin-wrap">
           <view class="fin-grid">
-            <view class="num-cell"><text class="num-lbl">年收入</text><text class="num-val">{{block.income}}万</text></view>
-            <view class="num-cell"><text class="num-lbl">年负债</text><text class="num-val">{{block.debt}}万</text></view>
-            <view class="num-cell"><text class="num-lbl">年支出</text><text class="num-val">{{block.expense}}万</text></view>
+            <!-- 2026-09-18 报告页审计：income 为 null = 家庭/成员收入均未填写（chapter-builder 传 null），
+                 不再渲染成"0万"（与⑦缴费月历章"家庭年收入未填写"口径对齐）。debt 不这样处理——"0万"准确 -->
+            <view class="num-cell"><text class="num-lbl">年收入</text><text class="num-val">{{block.income ? block.income + '万' : '未填写'}}</text></view>
+            <view class="num-cell"><text class="num-lbl">总负债</text><text class="num-val">{{block.debt}}万</text></view>
           </view>
         </view>
         <!-- 特别提醒：置信度告警（免责声明已移至页面底部 .report-disclaimer） -->
@@ -80,17 +87,19 @@
             <view class="pc-group-name">{{g.name}}</view>
             <view class="pc-subgroup" wx:for="{{g.subgroups}}" wx:for-item="sg" wx:key="name">
               <view class="pc-subgroup-name">{{sg.name}}</view>
-              <view class="pc-card {{p.status && p.status !== 'active' ? 'pc-card--inactive ' : ''}}{{readonly ? '' : 'pressable'}}" wx:for="{{sg.policies}}" wx:for-item="p" wx:key="policy_id" data-id="{{p.policy_id}}" catchtap="onPolicyTap" aria-label="查看{{p.product_name}}保单明细">
+              <view class="pc-card {{p.status && p.status !== 'active' ? 'pc-card--inactive ' : ''}}{{readonly ? '' : 'pressable'}}" wx:for="{{sg.policies}}" wx:for-item="p" wx:key="policy_id" data-id="{{p.policy_id}}" catchtap="onPolicyTap" aria-label="{{readonly ? '' : '查看' + p.product_name + '保单明细'}}">
                 <view class="pc-card-top">
                   <view class="pc-name-wrap">
                     <text class="pc-name">{{p.product_name}}<text wx:if="{{p.category}}" class="pc-cat">（{{p.category}}）</text></text>
                   </view>
-                    <text class="pc-status pc-status--{{p.status}} pressable" data-id="{{p.policy_id}}" catchtap="onStatusTap" aria-label="快速更改{{p.product_name}}状态">{{p.status_label}}</text>
+                    <text class="pc-status pc-status--{{p.status}} {{readonly ? '' : 'pressable'}}" data-id="{{p.policy_id}}" catchtap="onStatusTap" aria-label="{{readonly ? '' : '快速更改' + p.product_name + '状态'}}">{{p.status_label}}</text>
 
                 </view>
                 <!-- 三行简写：产品 / 保障信息 / 缴费信息，纯数据无字段名；缺失项在数据侧以「未知」占位 -->
                 <view class="pc-meta-row">{{p.meta1}}</view>
                 <view class="pc-meta-row">{{p.meta2}}</view>
+                <!-- 2026-09-18 报告页审计：保单号/投保人/受益人（数据侧只拼有值项；全缺为空串故整行不渲染） -->
+                <view class="pc-meta-row" wx:if="{{p.meta3}}">{{p.meta3}}</view>
                 <!-- 当前年份现金价值（储蓄型保单；代理人/客户均展示） -->
                 <view class="pc-meta-row" wx:if="{{p.cash_display}}">{{p.cash_display}}</view>
               </view>

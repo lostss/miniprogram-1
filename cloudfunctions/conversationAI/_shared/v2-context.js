@@ -14,6 +14,18 @@ const { calcAge } = require('./calc-age')
 const { safeQuery, safeQueryAll, getFamily } = require('./db-helpers')
 const { buildPortrait, renderPortraitMarkdown } = require('./familyPortrait')
 const { yuanToWan } = require('./amount')
+// 2026-09-15：画像的覆盖判定改用 policies 集合（与缺口矩阵同源，见 familyPortrait.buildPortrait）
+const { loadActivePolicies } = require('./policy-read')
+
+// 保单读取包装（2026-09-15）：上下文构建以可用性优先（不因保单读取失败中断对话/报告），
+// 但**必须留痕**并回退旧路径。不要写成 `.catch(() => [])`——空数组会被 buildPortrait 判成
+// "该家庭确实无保单"，全维度误报"无保障"；这正是 policy-read.js 注释里记载的事故模式。
+function _loadPoliciesOrNull(db, familyId, openid) {
+  return loadActivePolicies(db, familyId, openid).catch(e => {
+    console.error('[v2-context] 保单读取失败，画像回退 facts 派生（覆盖判定可能不准）:', (e && e.message) || e)
+    return null
+  })
+}
 
 function _memberTable(members) {
   if (!members || members.length === 0) return ''
@@ -47,14 +59,13 @@ function _memberTable(members) {
 }
 
 function _financeTable(finances, snap) {
-  let income = '-', debt = '-', expense = '-', debtType = '-'
+  let income = '-', debt = '-', debtType = '-'
   if (finances && finances.length > 0) {
     const f = finances[0]
-    // 数值审计 #2：finances 统一存元（annual_income/total_debt/fixed_annual_expense），此处 ÷10000 转万显示；
-    // 兼容旧数据（income/debt/fixed_expense 万键直读）
+    // 数值审计 #2：finances 统一存元（annual_income/total_debt），此处 ÷10000 转万显示；
+    // 兼容旧数据（income/debt 万键直读）
     income = f.annual_income != null ? _wan(f.annual_income) : (f.income != null ? f.income : income)
     debt = f.total_debt != null ? _wan(f.total_debt) : (f.debt != null ? f.debt : debt)
-    expense = f.fixed_annual_expense != null ? _wan(f.fixed_annual_expense) : (f.fixed_expense != null ? f.fixed_expense : expense)
     debtType = f.debt_type || debtType
   }
   // 2026-09-10 P1-3 口径统一：写侧唯一真相源为 finances 集合（元口径，见 reportAI/report-context._financeSnap 注释），
@@ -68,11 +79,10 @@ function _financeTable(finances, snap) {
       if (debt === '-' && d.amount != null) debt = d.amount
       if (debtType === '-' && d.type) debtType = d.type
     }
-    if (expense === '-' && snap.fixed_expense != null) expense = snap.fixed_expense
   }
-  if (income === '-' && debt === '-' && expense === '-' && debtType === '-') return ''
-  const rows = ['| 年收入(万) | 总负债(万) | 固定支出(万) | 负债类型 |', '|--------|--------|----------|----------|']
-  rows.push('|' + [income, debt, expense, debtType].join('|') + '|')
+  if (income === '-' && debt === '-' && debtType === '-') return ''
+  const rows = ['| 年收入(万) | 总负债(万) | 负债类型 |', '|--------|--------|----------|']
+  rows.push('|' + [income, debt, debtType].join('|') + '|')
   return rows.join('\n')
 }
 
@@ -91,6 +101,10 @@ function _deriveFamilyMeta(family) {
     family_id: family._id,
     family_name: family.family_name || '',
     last_analysis_at: family.last_analysis_at || null,
+    // 2026-09-22（数据质量批次 3）：透出脏标记。writeSeam 每次写入都会置 insight_stale=true，
+    // 而 report-context 的"上一版参考"段需要它才能告诉模型"上一版之后数据又变了"。
+    // 原先只在写侧使用，上下文看不到 → prompt 里"若与上一版矛盾则说明变化"这条无从执行。
+    insight_stale: !!family.insight_stale,
     last_summary: family.last_summary || '',
     last_conclusion: family.last_conclusion || '',
     financial_snapshot: family.financial_snapshot || null,
@@ -126,6 +140,21 @@ function _deriveBirthMap(members) {
  *   datasets: { facts?: array, cashValues?: array, members?: array, finances?: array }
  * }}
  */
+/**
+ * safeQueryAll 的"完整数据"包装（2026-09-28 复审，dsh 审计项⑤）
+ *
+ * 原写法 `.then(r => r.data || [])` 把 `truncated` / `failedPages` 直接丢掉 —— 分页查询失败
+ * （某页报错被 catch 成空页）或超页上限时，上层仍把结果当作完整数据喂 AI。
+ * 这里把"不完整"记进 dq.sources，供调用方 ① 在上下文里声明 ② 落日志 metrics。
+ * 只用于 report 场景（该场景的产物是给客户看的结论，最不能把"读到的部分"说成完整）。
+ */
+function _queryAll(db, coll, where, openid, label, dq) {
+  return safeQueryAll(db, coll, where, openid).then(r => {
+    if (r && (r.truncated || (r.failedPages && r.failedPages.length))) dq.sources.push(label)
+    return (r && r.data) || []
+  })
+}
+
 async function buildFamilyContext(db, familyId, openid, scene) {
   // 基础层：所有场景加载
   const [family, members, finances] = await Promise.all([
@@ -137,6 +166,8 @@ async function buildFamilyContext(db, familyId, openid, scene) {
   const birthMap = _deriveBirthMap(members)
   // datasets 按场景填充：默认空，仅场景需要时暴露原始数据集
   const datasets = {}
+  // 数据完整性收集器（2026-09-28）：见 report 场景 `_queryAll` 处注释
+  const dataQuality = { sources: [] }
 
   if (scene === 'list') {
     // 首页：仅展示成员名+角色
@@ -161,10 +192,11 @@ async function buildFamilyContext(db, familyId, openid, scene) {
 
   if (scene === 'conversation') {
     // Phase 2：读统一画像（精简版）；画像已聚合全部 active facts，无需重复回流原始三元组
-    const [facts] = await Promise.all([
-      safeQueryAll(db, 'facts', { family_id: familyId, status: 'active' }, openid).then(r => r.data || [])
+    const [facts, activePolicies] = await Promise.all([
+      safeQueryAll(db, 'facts', { family_id: familyId, status: 'active' }, openid).then(r => r.data || []),
+      _loadPoliciesOrNull(db, familyId, openid)
     ])
-    const portrait = buildPortrait(members, facts)
+    const portrait = buildPortrait(members, facts, { policies: activePolicies })
     const pm = renderPortraitMarkdown(portrait, { compact: true })
     if (pm) parts.push(pm)
     // 采集钩子原料（2026-09-02）：compact 画像会省略 '-' 字段，模型难区分"缺失"与"省略"，
@@ -179,10 +211,19 @@ async function buildFamilyContext(db, familyId, openid, scene) {
   if (scene === 'report') {
     // Phase 2：统一画像取代「保单列表 + 全部事实」两张表
     // 成员表已由画像覆盖（画像已合并 members 表字段，B3 以 facts 为准），不再单独渲染原始成员表
-    const [facts, cashValues] = await Promise.all([
-      safeQueryAll(db, 'facts', { family_id: familyId, status: 'active' }, openid).then(r => r.data || []),
-      safeQueryAll(db, 'policy_cash_values', { family_id: familyId, matched: true }, openid).then(r => r.data || [])
+    const [facts, cashValues, activePolicies] = await Promise.all([
+      _queryAll(db, 'facts', { family_id: familyId, status: 'active' }, openid, 'facts', dataQuality),
+      _queryAll(db, 'policy_cash_values', { family_id: familyId, matched: true }, openid, 'cashValues', dataQuality),
+      _loadPoliciesOrNull(db, familyId, openid)
     ])
+    // 2026-09-28 复审（dsh 审计项⑤）：`safeQueryAll` 的 truncated/failedPages 此前**无人消费**
+    // （悬空契约：分页失败/超页时上层仍把结果当"完整数据"喂 AI，报告会基于缺失数据下结论且不留痕）。
+    // 现两处消费：① 上下文里显式声明，禁止把"读到的部分"说成完整；② datasets 暴露给 reportAI 落 metrics。
+    datasets.dataQuality = dataQuality
+    if (dataQuality.sources.length) {
+      parts.push('## ⚠️ 数据完整性（系统检测，非用户输入）\n分页读取以下数据时失败或超出页上限，内容可能不完整：' +
+        dataQuality.sources.join('、') + '。凡涉及总数/总额/成员数的结论，必须限定为"以现有数据为限"。')
+    }
     // report 场景业务逻辑（_buildStructuredCoverage）需要 facts/cashValues 原始数据集
     datasets.facts = facts
     datasets.cashValues = cashValues
@@ -190,7 +231,7 @@ async function buildFamilyContext(db, familyId, openid, scene) {
     datasets.members = members
     // readiness 门禁（2026-08）：暴露 finances 原始文档（对齐 tool 场景），供深度分析前置检查判"有无"（financial_snapshot 不在 families 集合，唯一真相源在 finances）
     datasets.finances = finances
-    const portrait = buildPortrait(members, facts)
+    const portrait = buildPortrait(members, facts, { policies: activePolicies })
     const pm = renderPortraitMarkdown(portrait, { compact: false })
     if (pm) parts.push(pm)
     if (cashValues && cashValues.length > 0) {
@@ -209,10 +250,11 @@ async function buildFamilyContext(db, familyId, openid, scene) {
   if (scene === 'tool') {
     // conversationAI 工具上下文专用：画像 + 原始成员表（冲突检测用）+ 财务表 + 报告结论摘要
     // 复用 v2-context 内部已查询的 members/finances，避免 conversationAI 重复查询
-    const [facts] = await Promise.all([
-      safeQueryAll(db, 'facts', { family_id: familyId, status: 'active' }, openid).then(r => r.data || [])
+    const [facts, activePolicies] = await Promise.all([
+      safeQueryAll(db, 'facts', { family_id: familyId, status: 'active' }, openid).then(r => r.data || []),
+      _loadPoliciesOrNull(db, familyId, openid)
     ])
-    const portrait = buildPortrait(members, facts)
+    const portrait = buildPortrait(members, facts, { policies: activePolicies })
     const pm = renderPortraitMarkdown(portrait, { compact: true })
     if (pm) parts.push(pm)
     // 工具上下文需要"未合并的成员表"用于冲突检测（与画像视图互补）
@@ -258,9 +300,7 @@ function _missingInfo(portrait, finances, snap) {
   const hasIncome = fin.annual_income != null || fin.income != null || fsnap.income != null
   if (!hasIncome) out.push('家庭年收入未填写')
   const hasDebt = fin.total_debt != null || fin.debt != null || (fsnap.debt && fsnap.debt.amount != null)
-  if (!hasDebt) out.push('家庭负债未填写')
-  const hasExpense = fin.fixed_annual_expense != null || fin.fixed_expense != null || fsnap.fixed_expense != null
-  if (!hasExpense) out.push('家庭固定支出未填写')
+  if (!hasDebt) out.push('家庭总负债未填写')
   return out
 }
 

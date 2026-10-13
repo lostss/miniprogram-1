@@ -28,8 +28,14 @@ async function writeMessage(db, openid, event) {
 // ---------- writeOpLog ----------
 // 架构审计第 6 轮：委托 logSeam.logOperation，统一 operation_logs schema（含 target 字段）
 async function writeOpLog(db, openid, event) {
-  const { familyId, action: logAction, result, meta, target } = event
-  if (!logAction) return { code: 400, msg: '缺少参数 action' }
+  // 2026-09-12 修复（埋点前置缺陷）：apiClient 把本 action 映射为路由 {action:'writeOpLog'}，
+  // 真正的事件名在 logAction。原实现取 event.action → 所有前端上报（frontend_error / api_business_error /
+  // 以及新增的产品埋点）在库里全部落成 action:'writeOpLog'，**事件类型丢失、无法按事件聚合**。
+  // 兼容旧调用：event.action 非路由名时仍可作为事件名回退。
+  const rawAction = event.logAction || (event.action && event.action !== 'writeOpLog' ? event.action : '')
+  const logAction = rawAction
+  const { familyId, result, meta, target } = event
+  if (!logAction) return { code: 400, msg: '缺少参数 logAction' }
   try {
     await logOperation(db, {
       openid,

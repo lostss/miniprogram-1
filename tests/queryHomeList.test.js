@@ -6,31 +6,18 @@ var mockStore = { families: [], members: [] }
 var mockFailCollections = [] // 2026-09-11 全面审计 P1-1：按集合名注入查询失败
 
 jest.mock('wx-server-sdk', function() {
-  var mockDb = {
-    collection: jest.fn(function(name) {
-      var rows = mockStore[name] || []
-      var makeQuery = function() { return {
-        where: jest.fn(function() { return makeQuery() }),
-        field: jest.fn(function() { return makeQuery() }),
-        orderBy: jest.fn(function() { return makeQuery() }),
-        limit: jest.fn(function() { return makeQuery() }),
-        get: jest.fn(function() {
-          if (mockFailCollections.indexOf(name) >= 0) {
-            return Promise.reject(new Error(name + ' query failed'))
-          }
-          return Promise.resolve({ data: rows })
-        })
-      }}
-      return makeQuery()
-    }),
-    command: { neq: function(v) { return { $ne: v } }, gte: function(v) { return { $gte: v } }, lt: function(v) { return { $lt: v } }, in: function(v) { return { $in: v } } }
-  }
+  const { makeMemoryDb } = require('./helpers/memory-db')
   return {
     init: jest.fn(), DYNAMIC_CURRENT_ENV: 'env-mock',
-    database: jest.fn(function() { return mockDb }),
+    // DB mock 收敛到 tests/helpers/memory-db；failCollections 用**函数形式**读取——
+    // 测试会重新赋值 mockFailCollections 变量，传数组本身会在重新赋值后失联。
+    database: jest.fn(function() {
+      return makeMemoryDb(mockStore, { failCollections: function() { return mockFailCollections } })
+    }),
     getWXContext: jest.fn(function() { return { OPENID: 'mock_openid', APPID: 'mock_appid' } })
   }
 })
+const { makeMemoryDb } = require('./helpers/memory-db')
 
 var dataQuery = require('../cloudfunctions/dataQuery/index')
 

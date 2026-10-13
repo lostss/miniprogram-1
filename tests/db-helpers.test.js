@@ -3,26 +3,32 @@
  *
  * 背景：CloudBase 服务端单次 get 上限 100 条，超出被静默截断。
  * safeQueryAll 通过 skip 分页取全量，是"报告缺保障"事故（v2-context 只读到 100/118 条）的通用修法。
+ * 2026-09-12：skip 翻页补稳定排序（orderBy 默认 _id asc），否则页间顺序变化会漏读/重复。
  */
 const { safeQueryAll } = require('../cloudfunctions/conversationAI/_shared/db-helpers')
 
-// 按页返回数据的 db 桩：记录每次调用参数，便于断言分页与 _openid 注入
+// 按页返回数据的 db 桩：记录每次调用参数（含 orderBy），便于断言分页与 _openid 注入
 function makeDb(pages) {
   const calls = []
   let i = 0
   const db = {
     _calls: calls,
     collection: (name) => ({
-      where: (w) => ({
-        skip: (n) => ({
-          limit: (l) => ({
-            get: () => {
-              calls.push({ name, where: w, skip: n, limit: l })
-              return Promise.resolve({ data: pages[i++] || [] })
-            }
+      where: (w) => {
+        let order = null
+        const chain = {
+          orderBy: (f, d) => { order = [f, d]; return chain },
+          skip: (n) => ({
+            limit: (l) => ({
+              get: () => {
+                calls.push({ name, where: w, skip: n, limit: l, order })
+                return Promise.resolve({ data: pages[i++] || [] })
+              }
+            })
           })
-        })
-      })
+        }
+        return chain
+      }
     })
   }
   return db
@@ -37,6 +43,7 @@ describe('safeQueryAll — 分页取全量', () => {
     expect(db._calls).toHaveLength(1)
     expect(db._calls[0].where._openid).toBe('o1') // _openid 强制注入
     expect(db._calls[0].limit).toBe(100)
+    expect(db._calls[0].order).toEqual(['_id', 'asc']) // 审计 #15：分页必须有稳定排序
   })
 
   test('满页 + 不满页：自动翻页并合并结果', async () => {
@@ -63,7 +70,9 @@ describe('safeQueryAll — 分页取全量', () => {
     const db = {
       collection: () => ({
         where: () => ({
-          skip: () => ({ limit: () => ({ get: () => Promise.reject(new Error('db down')) }) })
+          orderBy: () => ({
+            skip: () => ({ limit: () => ({ get: () => Promise.reject(new Error('db down')) }) })
+          })
         })
       })
     }

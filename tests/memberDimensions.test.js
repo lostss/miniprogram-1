@@ -16,12 +16,12 @@ describe('维度映射', () => {
     expect(MEMBER_DIMENSIONS).toContain('marital_status')
   })
 
-  test('家庭维度4个', () => {
-    expect(FAMILY_DIMENSIONS).toHaveLength(4)
+  test('家庭维度3个（固定支出已从模型移除）', () => {
+    expect(FAMILY_DIMENSIONS).toHaveLength(3)
     expect(FAMILY_DIMENSIONS).toContain('income')
     expect(FAMILY_DIMENSIONS).toContain('annual_premium_budget')
     expect(FAMILY_DIMENSIONS).toContain('debt')
-    expect(FAMILY_DIMENSIONS).toContain('fixed_expense')
+    expect(FAMILY_DIMENSIONS).not.toContain('fixed_expense')
   })
 
   test('中英映射一一对应', () => {

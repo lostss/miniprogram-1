@@ -49,6 +49,10 @@ function _classifyError(err) {
     return err.code
   }
 
+  // 本地计时器超时（callCloud 自造错误，无 errMsg/errno）——2026-09-22 全面审计 P2-1：
+  // 原实现落到 UNKNOWN，把"操作超时，请重试"错报成"操作失败，请重试"
+  if (err.__timeout === true) return 'TIMEOUT'
+
   // 网络错误
   if (err.errMsg) {
     const msg = String(err.errMsg).toLowerCase()
@@ -84,7 +88,8 @@ function getErrorInfo(err) {
  * 统一错误处理入口
  * @param {Error|Object} err 错误对象
  * @param {Object} options 选项
- * @param {boolean} options.silent 是否静默（不弹提示）
+ * @param {boolean} options.silent 是否静默（**不弹提示**；不影响云端上报）
+ * @param {boolean} options.noReport 是否连云端上报也跳过（默认 false）
  * @param {string} options.context 错误上下文（用于日志）
  */
 function handle(err, options) {
@@ -96,7 +101,12 @@ function handle(err, options) {
   console.error(logMsg)
 
   // 云端上报：非网络错误全量；网络/超时（用户端最高频运行时问题）采样 1% + 10s 限频降噪
-  if (!opts.silent) {
+  // 2026-09-28 全面审计 P2：上报与"弹不弹提示"必须解耦。
+  // 原实现整段包在 `if (!opts.silent)` 里，而 silent 的语义（见上方 JSDoc 与 ocr-flow 调用点注释）
+  // 只是"不弹提示"——ocr-flow 明确写着「写失败进 failed 相（已有重试/放弃出口）+ **静默上报云端**」，
+  // 于是"保单未能落库/部分保单未落库/角色补写失败"这些最有价值的失败信号**一条都没上传**。
+  // 现：silent 只管提示；要连上报一起跳过，显式传 noReport。
+  if (!opts.noReport) {
     const isNet = info.code === 'NETWORK' || info.code === 'TIMEOUT'
     const now = Date.now()
     if (!isNet || (Math.random() < 0.01 && now - _lastNetReport > 10000)) {

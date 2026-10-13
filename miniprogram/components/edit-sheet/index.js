@@ -75,6 +75,10 @@ Component({
           patch['fields[' + idx + '].error'] = errors[idx]
         })
         this.setData(patch)
+        // 审计 P3：15 字段长表单首个错误可能在可视区外，纯 inline 标红 → 用户以为"保存没反应"
+        const first = Object.keys(errors)[0]
+        const label = (fields[first] && fields[first].label) || '表单'
+        wx.showToast({ title: label + '：' + errors[first], icon: 'none', duration: 2000 })
         return false
       }
       return true

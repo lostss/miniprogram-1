@@ -31,39 +31,13 @@ function buildGaps(family) {
 }
 
 /**
- * 将 gaps[] 转为缺口矩阵
+ * 2026-09-22 全面审计（死代码清理）：`buildGapMatrix(gaps, members)` 已删除。
+ * 依据：① 全仓零调用方（grep `buildGapMatrix` 只命中 chapter-builder 里一句"已删除死代码"的
+ * 历史注释）；② 它自身还有一个真实缺陷——内层 `for (var i = 0; ...)` 与外层同一个
+ * `var i` 共享函数作用域，内层一旦执行就把外层成员索引改写掉（会跳过成员），
+ * 留着迟早被误用。缺口矩阵的**唯一**权威实现是 chapter-builder 的 buildCoverageMatrix +
+ * _shared/gap-core.evaluateCoverage，不要在此另起一份。
  */
-function buildGapMatrix(gaps, members) {
-  var seen = {}
-  var cats = []
-  for (var i = 0; i < members.length; i++) {
-    var needed = neededCats(members[i].role)
-    for (var j = 0; j < needed.length; j++) {
-      var c = needed[j]
-      if (!seen[c]) { seen[c] = true; cats.push(c) }
-    }
-  }
-  for (var k = 0; k < gaps.length; k++) {
-    var gc = gaps[k].category
-    if (!seen[gc]) { seen[gc] = true; cats.push(gc) }
-  }
-  var rows = members.map(function(m) {
-    var needed = neededCats(m.role)
-    var cells = cats.map(function(cat) {
-      if (needed.indexOf(cat) === -1) return { v: '—', s: 'na' }
-      var g = null
-      for (var i = 0; i < gaps.length; i++) {
-        if (gaps[i].member === m.name && gaps[i].category === cat) { g = gaps[i]; break }
-      }
-      if (!g) return { v: '✅', s: 'ok' }
-      if (g.reliability === 'blocked') return { v: '待补', s: 'blocked' }
-      var status = g.existing > 0 ? 'partial' : g.reliability
-    return { v: g.existing + '万', s: status }
-    })
-    return { name: m.name, cells: cells }
-  })
-  return { heads: ['成员'].concat(cats), cats: cats, rows: rows }
-}
 
 /**
  * 构建保障覆盖矩阵（设计稿第 2 章）：成员×险种 已有保额（万元），缺失格标红
@@ -112,4 +86,4 @@ function buildCoverageMatrix(members, policies) {
   return { heads: ['成员'].concat(cats), cats: cats, rows: out }
 }
 
-module.exports = { buildGaps, buildGapMatrix, buildCoverageMatrix }
+module.exports = { buildGaps, buildCoverageMatrix }

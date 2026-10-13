@@ -9,46 +9,20 @@
  *  - 正则转义不崩溃 / DB 异常返回 500
  */
 
-// 简化过滤 mock：支持等值 + $in + RegExp({regexp, options})，orderBy desc + limit
-function matches(row, cond) {
-  if (!cond) return true
-  return Object.keys(cond).every(function (k) {
-    const c = cond[k]
-    if (c && typeof c === 'object' && !(c instanceof Date)) {
-      if (c.$in) return (c.$in || []).includes(row[k])
-      if (c.regexp) return new RegExp(c.regexp, c.options || 'i').test(String(row[k] || ''))
-      return true // 未知操作符：不拦截（保持 mock 宽松）
-    }
-    return row[k] === c
-  })
-}
-
+// 过滤 mock 收敛到 tests/helpers/memory-db（2026-09-15 架构审查候选 4）。
+// adapter 覆盖原手写能力：等值 / $in / $gt / db.RegExp 正则 / orderBy desc / limit；
+// 查询记录由 spy 提供（记录字段名为 where，原手写版为 cond）。
 function makeDb(presets) {
   const queries = []
-  const db = {
-    command: { in: function (v) { return { $in: v } }, gt: function (v) { return { $gt: v } } },
-    RegExp: function (o) { return o },
-    collection: function (name) {
-      const base = presets[name] || []
-      const state = { _where: null, _sort: null, _limit: null }
-      return {
-        where: function (cond) { state._where = cond; queries.push({ name: name, cond: cond }); return this },
-        orderBy: function (field, dir) { state._sort = { field: field, dir: dir }; return this },
-        limit: function (n) { state._limit = n; return this },
-        get: function () {
-          let rows = base.filter(function (r) { return matches(r, state._where) })
-          if (state._sort && state._sort.dir === 'desc') {
-            rows = rows.slice().sort(function (a, b) { return (new Date(b[state._sort.field]) - new Date(a[state._sort.field])) })
-          }
-          return Promise.resolve({ data: state._limit ? rows.slice(0, state._limit) : rows })
-        }
-      }
-    }
-  }
-  return { db: db, queries: queries }
+  const store = {}
+  Object.keys(presets || {}).forEach(function (k) {
+    store[k] = presets[k].map(function (r) { return Object.assign({}, r) })
+  })
+  return { db: makeMemoryDb(store, { spy: { queries: queries } }), queries: queries }
 }
 
 const { searchFamilies } = require('../cloudfunctions/dataQuery/family-list')
+const { makeMemoryDb } = require('./helpers/memory-db')
 
 const t0 = new Date('2026-01-01T00:00:00Z')
 const f1 = { _id: 'f1', _openid: 'mock_openid', family_name: '张三家庭', updated_at: t0 }
@@ -83,7 +57,7 @@ describe('searchFamilies（家庭名 + 成员名双路）', function () {
       expect(res.data.families[0]._id).toBe('f2')
       // 补查：members 命中后对家庭名未命中的 family_id 发起 families 查询
       const extraQuery = queries.some(function (q) {
-        return q.name === 'families' && q.cond._id && q.cond._id.$in && q.cond._id.$in.indexOf('f2') !== -1
+        return q.name === 'families' && q.where && q.where._id && q.where._id.$in && q.where._id.$in.indexOf('f2') !== -1
       })
       expect(extraQuery).toBe(true)
     })

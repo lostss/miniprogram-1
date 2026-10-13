@@ -1,6 +1,6 @@
 const { buildReportView } = require('../../utils/report-builder')
 const { buildEditConfig, validate: validateEdit, buildUpdateData, POLICY_STATUS_OPTIONS, POLICY_STATUS_LABEL_TO_VALUE } = require('../../utils/edit-form')
-const { buildShareTitle, buildSharePath, buildReportMeta, ensureShareToken } = require('../../utils/report-share')
+const { buildShareTitle, buildSharePath, buildReportMeta, ensureShareToken, shareExpireHint } = require('../../utils/report-share')
 const { HOME_CACHE_KEY } = require('../../utils/family-actions')
 const api = require('../../utils/apiClient')
 // 领域写薄层（候选 5）：表单保存收敛三种写入范式，避免调用方直拼字符串 action
@@ -8,15 +8,31 @@ const { savePolicyData, saveFamilyPatch } = require('../../utils/domain-writes')
 const session = require('../../utils/session-store')
 const errorHandler = require('../../utils/errorHandler')
 const { createReportAnalysis } = require('../../utils/report-analysis')
+// 2026-09-12 MVP 验证：产品埋点（复用 writeOpLog 通道落 operation_logs，零后台配置）
+const { track } = require('../../utils/track')
 // 画像确认：本地 readiness 判定（与后端 reportAI 共用同一事实源，sync-shared 契约同步）
 const { evaluateReadiness } = require('../../utils/readiness')
+// 客户档案视图（2026-09-14）：纯函数，按"信息稳定性"分四档；依赖 fact-vocab（同为契约文件）
+const { buildFactsView } = require('../../utils/facts-view')
 
 // 免责声明：报告底部静态合规小字（reportAI 未产出时兜底，见 _applyReportData）
 const DISCLAIMER_FALLBACK = '本报告基于OCR识别结果自动生成，数据仅供参考，不构成投保建议。请以保单原件为准。'
 
+// V1.5 语气模式（2026-09-12）：本地持久化的分析语气偏好（direct=直白默认 / warm=共情）
+const REPORT_TONE_KEY = 'report_tone'
+function _readReportTone() {
+  try { return wx.getStorageSync(REPORT_TONE_KEY) === 'warm' ? 'warm' : 'direct' } catch (e) { return 'direct' }
+}
+
+// 客户档案（2026-09-14 重构）：视图组装收敛到 utils/facts-view.js（纯函数，可单测）。
+// 从"时间线流水"改为四档：关键属性（常驻）→ 需要留意（constraint）→ 待核实（lead）→ 记录时间线（附属）。
+// 客户版（shared）走同一函数的不同规则：无线索、无时间线、只保留已确认的客观信息。
+
 /** 报告页 v2.0 — 基础版报告（6 章单页长图 + 保单 Sheet） */
 Page({
   data: {
+    // family 仅为视图切片（2026-09-18 性能）：data.family = { name } 且兼作"已加载"真值门禁；
+    // 整份 family 文档存在实例字段 this._family（JS 侧读取，不过桥）
     familyId: '', family: null, chapters: [],
     loading: true, loadError: false, loadingText: '小秘正在认真看保单...',
     // UI 审计 状态 S3：深度分析自定义弹层（可取消，替代 60s 锁死 showLoading）
@@ -33,7 +49,9 @@ Page({
     hasPolicy: true,
     reportMeta: { date: '', no: '' },
     // 活报告模型（2026-09）：summary 结构标签 + 时效标识（owner stale 提示）+ 待澄清项（owner）
-    familyTag: '', staleTag: '', clarifications: [],
+    staleTag: '', clarifications: [],
+    // 定性模式（tier=degraded）：报告不含量化测算，页头常驻披露（2026-09-18 报告页审计）
+    qualitativeMode: false,
     // 2026-09-11：孤儿现价表（自动匹配未中）→ 「待关联」入口数据源（owner 展示）
     unmatchedCashValues: [],
     disclaimer: '',
@@ -45,23 +63,37 @@ Page({
     isShared: false,
     // 对话空态预埋问题（从缺口引擎生成"您可能想问"，回退空数组用组件默认提示）
     presetHints: [],
+    // V1.5：报告滚动位置（吸顶目录跳转用，受控 scroll-top）+ 分析语气偏好（direct/warm）
+    scrollTop: 0, reportTone: 'direct',
+    // 2026-09-12 客户版预览：owner 端自跳 shared 视图时置 true（顶部提示条 + 一键返回编辑视角）
+    isPreview: false,
+    // 2026-09-14 客户档案：四档视图（关键属性 / 需要留意 / 待核实 / 时间线），默认折叠
+    factsView: null, factsOpen: false,
+    // 2026-09-12 MVP 验证：反馈已提交态 + 成交标记（成交是 ROI 的唯一真值来源）
+    feedbackGiven: false, dealStatus: '',
   },
   // 真机 404 修复兜底：familyId 为 'undefined'/'null' 字面量（跳转传参异常时）→ 走"缺少客户信息"而非 getFamily 404 误报"客户不存在"
   onLoad(o) {
     // 重构审计：深度分析关切下沉 controller（一次一个关切拆分 report 页）
+    // V1.5 语气偏好：从本地读回（缺省直白），并注入 controller（仅 warm 时随请求下发 tone）
+    this.setData({ reportTone: _readReportTone() })
     this._analysisCtl = createReportAnalysis({
       getFamilyId: () => this.data.familyId,
+      getTone: () => this.data.reportTone,
       setData: this.setData.bind(this),
       onDone: (cid) => this._refreshReportSequence(cid, { waitMs: 0 }),
       // readiness 门禁：422 明细 → 渲染补全清单（同一 tick 关分析弹层，无闪烁；补齐画像摘要供弹窗渲染）
       onBlocked: (readiness) => {
-        if (!readiness.portrait) readiness.portrait = this._buildPortrait(this.data.family || {})
+        if (!readiness.portrait) readiness.portrait = this._buildPortrait(this._family || {})
         this.setData({ readinessShow: true, readiness })
       }
     })
+    // 2026-09-12 客户版预览：isShared 有两条进入路径（share=1 或 token 非空），
+    // 预览复用 token 路径 —— 代理人不必先转发链接再点开消息，见客户前可直接自检客户视角。
+    const isPreview = o.preview === '1'
     const token = o.token || ''
     if (o.share === '1' || token) {
-      this.setData({ isShared: true })
+      this.setData({ isShared: true, isPreview: isPreview })
       this._clientToken = token
       if (!token) { this.setData({ loading: false }); wx.showModal({ title: '链接已失效', content: '缺少分享凭证，请联系代理人重新分享', showCancel: false, confirmText: '知道了', success: () => wx.reLaunch({ url: '/pages/index/index' }) }); return }
       this._loadSharedReport(token)
@@ -93,11 +125,11 @@ Page({
     const mode = detail.mode || ''
     const memberId = detail.memberId || ''
     if (mode === 'financials') {
-      this._openEditSheet(buildEditConfig({ mode: 'financials', family: this.data.family }))
+      this._openEditSheet(buildEditConfig({ mode: 'financials', family: this._family }))
       return
     }
     if (mode === 'family') {
-      const list = (this.data.family && this.data.family.members) || []
+      const list = (this._family && this._family.members) || []
       this.setData({
         showMemberManage: true,
         memberManageList: list.map(function(m) {
@@ -120,12 +152,12 @@ Page({
     const detail = e.detail || {}
     const pid = detail.policyId || ''
     if (!pid || this._disposed) return
-    const list = (this.data.family && this.data.family.policies) || []
+    const list = (this._family && this._family.policies) || []
     // 审计修复：pid 来自 `p.id || p._id`（chapter-builder），比对必须业务 id 与文档 _id 都试；
     // 原 `(x._id || x.id)` 恒取 _id，对带 pol_xxx 业务 id 的保单永不相等 → [核对] 无反应
     const p = list.find(x => (x.id === pid) || (x._id === pid))
     if (!p) return
-    this._openEditSheet(buildEditConfig({ mode: 'policy', family: this.data.family, member: p }))
+    this._openEditSheet(buildEditConfig({ mode: 'policy', family: this._family, member: p }))
   },
   // 活报告模型（2026-09）：待澄清项「去补全」→ 按缺失类型直达补录入口（复用现有编辑 sheet）
   onClarifyFix(e) {
@@ -133,12 +165,12 @@ Page({
     const mode = d.mode || ''
     const id = d.id || ''
     if (this._disposed) return
-    if (mode === 'financials') { this._openEditSheet(buildEditConfig({ mode: 'financials', family: this.data.family })); return }
+    if (mode === 'financials') { this._openEditSheet(buildEditConfig({ mode: 'financials', family: this._family })); return }
     if (mode === 'member' && id) { this._openMemberEdit(id); return }
     if (mode === 'policy' && id) {
-      const list = (this.data.family && this.data.family.policies) || []
+      const list = (this._family && this._family.policies) || []
       const p = list.find(x => (x._id || x.id) === id)
-      if (p) this._openEditSheet(buildEditConfig({ mode: 'policy', family: this.data.family, member: p }))
+      if (p) this._openEditSheet(buildEditConfig({ mode: 'policy', family: this._family, member: p }))
       return
     }
     wx.showToast({ title: '请先在报告对应位置补充该信息', icon: 'none' })
@@ -149,9 +181,9 @@ Page({
   onLinkCashValue(e) {
     if (this._disposed || this.data.isShared) return
     const ds = (e.currentTarget && e.currentTarget.dataset) || {}
-    const cv = (this.data.family && this.data.family.unmatchedCashValues || [])[Number(ds.idx)]
+    const cv = (this._family && this._family.unmatchedCashValues || [])[Number(ds.idx)]
     if (!cv) return
-    const policies = (this.data.family && this.data.family.policies) || []
+    const policies = (this._family && this._family.policies) || []
     if (!policies.length) { wx.showToast({ title: '该家庭暂无保单可关联', icon: 'none' }); return }
     // 候选排序：被保人同名优先（最强信号）→ 通常含现价的长期险种优先；showActionSheet 上限 6 项
     const LONG_TERM = ['寿险', '终身寿险', '重疾险', '年金', '增额终身寿', '年金险']
@@ -186,11 +218,77 @@ Page({
       }
     })
   },
+  // V1.5 语气模式（2026-09-12）：报告语气切换（直白=默认 / 共情=先认可再建议、禁用冲击词）。
+  // 持久化到本地，下一次生成分析时生效（不重跑当前报告，避免重复计费与等待）
+  onToggleTone() {
+    if (this._disposed) return
+    const next = this.data.reportTone === 'warm' ? 'direct' : 'warm'
+    try { wx.setStorageSync(REPORT_TONE_KEY, next) } catch (e) { /* 存储失败不阻断本次切换 */ }
+    this.setData({ reportTone: next })
+    wx.showToast({
+      title: next === 'warm' ? '已切换为共情语气，下次生成分析生效' : '已切换为直白语气，下次生成分析生效',
+      icon: 'none', duration: 2200
+    })
+  },
+
+  // 客户档案（2026-09-14）：拉取 facts → 视图组装在 utils/facts-view.js（纯函数，可单测）。
+  // 客户版不再整体排除，改为同一函数按 shared 规则过滤（不给线索/不给时间线/只保留已确认客观信息）。
+  // 非关键路径，失败静默（不打断报告渲染）。
+  // 埋点用 familyId（2026-09-20 流程审计 P2-3 后半）：
+  // owner 走 data.familyId；客户版**刻意不写入 data.familyId** —— 那会连带激活一批 owner 专用路径
+  // （下拉刷新 _refreshReportSequence → getFamily、导出 PDF、OCR 上传都读它），而客户用自己的 openid
+  // 调必然 401/404。故只给埋点取值：从共享响应里取 this._family._id
+  //（share.js 保留 _id，仅剔除 _openid 与 last_*）。
+  _trackFamilyId() {
+    return this.data.familyId || (this._family && this._family._id) || ''
+  },
+
+  async _loadFacts() {
+    if (this._disposed) return
+    // 2026-09-20 修（流程审计 P2-3）：客户版拿不到 owner 的 facts —— queryFacts 按调用方 openid
+    // 过滤，客户调必然空/无权。改用共享响应里带下来的 facts（getSharedFamily 已分页取回 + 脱敏）。
+    // 视图组装仍由 buildFactsView(shared:true) 独家承担（"只给客观信息、不给线索/时间线"这条规则
+    // 只有一处实现）——wxml 注释早已写"owner 与客户版都渲染"，断的只是取数。
+    if (this.data.isShared) {
+      const view = buildFactsView((this._family && this._family.facts) || [], { shared: true })
+      this.setData({ factsView: view.empty ? null : view })
+      return
+    }
+    const cid = this.data.familyId
+    if (!cid) return
+    try {
+      const q = await api('queryFacts', { familyId: cid }, { retries: 0 })
+      if (this._disposed || !q || !q.ok) return
+      const view = buildFactsView((q.data && q.data.facts) || [], { shared: false })
+      this.setData({ factsView: view.empty ? null : view })
+    } catch (e) {
+      console.error('[report] load facts:', (e && e.message) || e)
+    }
+  },
+  onToggleFacts() {
+    if (this._disposed) return
+    this.setData({ factsOpen: !this.data.factsOpen })
+  },
+
+  // V1.5 吸顶目录跳转：组件测出目标章节的视口 top，此处按当前滚动位置换算 scroll-top
+  onTocNav(e) {
+    if (this._disposed) return
+    const top = e.detail && e.detail.top
+    if (typeof top !== 'number') return
+    const target = Math.max(0, Math.round((this._scrollTop || 0) + top - 8))
+    this.setData({ scrollTop: target })
+  },
+
+  // 记录滚动位置（有意不入 data：滚动事件高频，setData 会造成掉帧）
+  onReportScroll(e) {
+    this._scrollTop = (e.detail && e.detail.scrollTop) || 0
+  },
+
   // 深度分析（手工触发）：仅 BLOCK 级缺口先弹画像确认，WARN 直接开始（后端 422 兜底仍会拦截）
   // 用户决策（2026-08-31）：画像确认按需——BLOCK 影响产出质量强制核对，WARN 不打断流程
   onDeepAnalysis() {
     if (this._disposed) return
-    const family = this.data.family
+    const family = this._family
     if (!family) { wx.showToast({ title: '请先加载报告', icon: 'none' }); return }
     const readiness = this._evalReadiness(family)
     if (readiness.hasBlockers) {
@@ -217,7 +315,6 @@ Page({
       finances: [{
         annual_income: income, income: income,
         total_debt: debt.amount, debt: debt.amount,
-        fixed_annual_expense: fin.fixed_expense, fixed_expense: fin.fixed_expense,
         annual_premium_budget: fin.annual_premium_budget
       }],
       policies: family.policies || []
@@ -232,14 +329,16 @@ Page({
     const income = fin.income != null ? fin.income : family.family_income
     const policies = family.policies || []
     return {
-      members: members.map(m => ({
+      // 2026-09-18 报告页审计：补稳定唯一 key —— WXML 原用 wx:key="name"，
+      // 两个"未命名"或同名成员会碰撞（member_id 缺失时用 _id、再退化为下标）
+      members: members.map((m, i) => ({
+        key: m.member_id || m._id || ('m' + i),
         name: m.name || '未命名', role: m.role || '未设角色',
         ageText: m.age ? m.age + '岁' : (m.birth_date ? '由出生日期推算' : '未填'),
         health: m.health || '未填', income: m.income != null ? m.income + '万' : '未填'
       })),
       income: income != null ? income + '万' : '未填写',
       debt: debt.amount != null ? debt.amount + '万' : '未填写',
-      fixedExpense: fin.fixed_expense != null ? fin.fixed_expense + '万' : '未填写',
       policyCount: policies.length,
       activePolicyCount: policies.filter(p => p.status === 'active' || !p.status).length
     }
@@ -255,18 +354,18 @@ Page({
     const id = ds.id || ''
     this.setData({ readinessShow: false, readiness: null })
     if (mode === 'addMember') {
-      this._openEditSheet(buildEditConfig({ mode: 'addMember', family: this.data.family }))
+      this._openEditSheet(buildEditConfig({ mode: 'addMember', family: this._family }))
       return
     }
     if (mode === 'member' && id) { this._openMemberEdit(id); return }
     if (mode === 'financials') {
-      this._openEditSheet(buildEditConfig({ mode: 'financials', family: this.data.family }))
+      this._openEditSheet(buildEditConfig({ mode: 'financials', family: this._family }))
       return
     }
     if (mode === 'policy' && id) {
-      const list = (this.data.family && this.data.family.policies) || []
+      const list = (this._family && this._family.policies) || []
       const p = list.find(x => (x.id === id) || (x._id === id))
-      if (p) this._openEditSheet(buildEditConfig({ mode: 'policy', family: this.data.family, member: p }), 'view')
+      if (p) this._openEditSheet(buildEditConfig({ mode: 'policy', family: this._family, member: p }), 'view')
       return
     }
     if (mode === 'upload') { this._startFlow(); return }
@@ -278,10 +377,10 @@ Page({
     this.setData(Object.assign({ showEdit: true, editTitle: cfg.title, sheetMode: sheetMode || 'edit', showMemberManage: false, memberManageList: [] }, cfg))
   },
   _openMemberEdit(memberId) {
-    const list = (this.data.family && this.data.family.members) || []
+    const list = (this._family && this._family.members) || []
     const m = list.find(x => x.member_id === memberId)
     if (!m) return
-    this._openEditSheet(buildEditConfig({ mode: 'member', family: this.data.family, member: m }))
+    this._openEditSheet(buildEditConfig({ mode: 'member', family: this._family, member: m }))
   },
   closeMemberManage() {
     if (this.data.editSaving) return
@@ -294,13 +393,13 @@ Page({
   },
   onMemberManageAdd() {
     // sheetMode:'edit'：新增成员空表单直接编辑（否则残留 onPolicyTap/onCloseEdit 的 'view' → 只读不可输入）
-    this._openEditSheet(buildEditConfig({ mode: 'addMember', family: this.data.family }))
+    this._openEditSheet(buildEditConfig({ mode: 'addMember', family: this._family }))
   },
   // 家庭结构可编辑性：删除成员（确认后从全量 members 移除 → updateFamily → _syncMembers 软删，保留审计轨迹）
   onMemberManageDelete(e) {
     const mid = (e.currentTarget.dataset && e.currentTarget.dataset.mid) || ''
     if (!mid || this.data.editSaving) return
-    const list = (this.data.family && this.data.family.members) || []
+    const list = (this._family && this._family.members) || []
     const target = list.find(x => x.member_id === mid)
     if (!target) return
     wx.showModal({
@@ -311,7 +410,9 @@ Page({
       success: (res) => {
         if (!res.confirm) return
         const remaining = list.filter(x => x.member_id !== mid)
-        saveFamilyPatch({ familyId: this.data.familyId, updateData: { members: remaining } })
+        // 2026-09-19（流程审计 P2-7）：带上删除基线（本次列表＝用户所见）。
+        // 后端只软删 mid 本身；"编辑期间被对话新增、因不在陈旧快照里而缺席"的成员不再被连带误删。
+        saveFamilyPatch({ familyId: this.data.familyId, updateData: { members: remaining, members_baseline: list.map(x => x.member_id).filter(Boolean) } })
           .then(r => {
             if (this._disposed) return
             if (r.ok) {
@@ -357,22 +458,41 @@ Page({
   },
 
   _applyReportData(c, reportOverride, extra) {
+    // 2026-09-18 性能：整份 family 文档只存实例字段 this._family，不再经 setData 过桥。
+    // 原实现 `setData({ family: c })` 把 c 整体（含 members / policies / 现价表 / **c.report 报告全文**）
+    // 序列化到视图层——几十 KB，且与紧随其后的 chapters / deep 重复传输一遍；而 WXML 对 family 的
+    // 全部用法只有两类：① 真值门禁 `!family` / `family`（错误态、预览条、正文 scroll-view 三处 wx:if）
+    // ② 页头标题 `{{family.name}}`。故 data 只留切片 { name }。
+    // ⚠️ 赋值必须在本方法**最前**：下方 reportMeta 与各处 setData 分支都依赖"本次"的 family。
+    this._family = c
     // 2026-09-06：保障分析恒展开完整解读（无折叠态）
     const rp = reportOverride || (c.report || {})
     // 双视图：客户版（share=1）走中性措辞 + 置信度/现价回本隐藏；owner 版行为不变
     const view = buildReportView(c, rp, { view: this.data.isShared ? 'shared' : 'owner' })
-    // 审计 P1-1：meta 必须基于本次 family（c），不能读 this.data.family（setData 前是旧值/首次为 null，
-    // 否则标题日期首次显示当前时刻、后续滞后一个刷新周期，且分享标题同步错）
+    // 审计 P1-1：meta 必须基于本次入参 c，不可依赖任何"上一次"数据（否则标题日期首次显示当前时刻、
+    // 后续滞后一个刷新周期，且分享标题同步错）。现 this._family 已在方法首行赋为本次 c，约束天然成立。
     const reportMeta = buildReportMeta(c)
-    // 活报告模型（2026-09）：summary（家庭保障结构标签）接线页头；stale 提示仅 owner 且已有分析待刷新
-    const summaryText = rp.summary || ''
-    const familyTag = summaryText ? String(summaryText).replace(/\s+/g, ' ').slice(0, 50) : ''
+    // 2026-09-12：不再取 rp.summary 渲染摘要卡——summary 的设计场景是列表页/卡片预览，
+    // 在报告中与 hero.conclusion 要素重叠（结构 + 最致命风险 + 负债）造成同义重复；summary 仍写库
     const staleTag = (!this.data.isShared && !!c.insight_stale && !!view.deep) ? '数据有更新，下拉刷新报告内容' : ''
+    // 定性模式（tier=degraded）常驻披露：报告不含缺口金额/回本年限等量化测算。
+    // reportAI 在 degraded 时会给 AI 上下文注入【定性模式】并禁额，但该状态此前只存在于
+    // 生成前的 readiness 弹层里——弹层一关就再也看不到，用户无从解释「为什么这份报告没有金额」。
+    //
+    // 2026-09-19 修（流程审计 P1-3）：**只读后端在生成时刻落库的 readiness_tier，不再前端重推**。
+    // 原实现用共享契约 readiness.js 对当前数据自行求 tier，理由是"前后端同源、零新字段"——
+    // 但契约同源只保证**算法**同源，不保证**输入**同源：后端读 finances 原始集合（空 → 判得出未填），
+    // 前端读 getFamily 合成后的文档（`family_income = fs.income || 0` 把缺失抹平为 0 ⇒ 判为已填）
+    // ⇒ 前端恒 ok、卡片永不出现（探针实测 BE=degraded / FE=ok）。
+    // 落库后同时消掉"按当前数据求值 vs 生成时刻"的漂移——报告内容与 tier 恒为同一次生成。
+    // 仅在 deep 已生成时展示：未生成时 deep-entry 已引导"立即生成分析"，再提示"定性"会误导。
+    const qualitativeMode = c.readiness_tier === 'degraded' && !!view.deep
     this.setData(Object.assign({
-      family: c,
+      // 视图切片（见方法头）：name 供页头标题，对象本身作三处 wx:if 的真值门禁。整份文档在 this._family。
+      family: { name: c.name || '' },
       reportMeta: reportMeta,
-      familyTag: familyTag,
       staleTag: staleTag,
+      qualitativeMode: qualitativeMode,
       // 活报告模型（2026-09）：待澄清项（readiness 缺失清单派生，owner 展示；客户版不渲染）
       clarifications: this.data.isShared ? [] : (Array.isArray(c.pending_clarifications) ? c.pending_clarifications.slice(0, 5) : []),
       // 2026-09-11：待关联现价表（客户版不渲染，与 clarifications 同口径）
@@ -387,12 +507,22 @@ Page({
       disclaimer: DISCLAIMER_FALLBACK,
       // 全链路审计 UC4：无保单时走空状态（buildReportView 对空 policies 产生零值+红色告警，需引导而非报错）
       hasPolicy: !!(c.policies && c.policies.length > 0),
+      // 2026-09-12 MVP 验证：成交标记回显（owner 手动登记；客户版不渲染开关）
+      dealStatus: this.data.isShared ? '' : (c.deal_status || ''),
       // 对话空态预埋问题（"您可能想问"）：基于本次缺口引擎数据生成
       presetHints: this._buildPresetQuestions(view, c)
     }, extra || {}))
     // 活报告模型（2026-09）：owner 且数据已变更（stale）→ 自动触发保障分析。
     // 本方法是 OCR/编辑/对话/撤销/进场所有刷新路径的汇聚点，作为自动介入唯一挂载位。
     this._tryAutoAnalysis()
+    // 客户档案要点随报告刷新同步（facts 非关键路径：失败静默，不打断报告渲染）
+    this._loadFacts()
+    // MVP 验证：报告打开埋点（每页面生命周期只报首次——本方法会随刷新/编辑/OCR 多次调用）。
+    // view 区分 owner / shared：客户打开才算真实触达，否则代理人自己打开会污染打开率与 7 日回访率
+    if (!this._openTracked) {
+      this._openTracked = true
+      track('report_open', { view: this.data.isShared ? 'shared' : 'owner', familyId: this._trackFamilyId() })
+    }
   },
 
   // 活报告模型（2026-09）：自动介入保障分析（source:'auto'，fire-and-forget）。
@@ -400,7 +530,7 @@ Page({
   _tryAutoAnalysis() {
     if (this.data.isShared || this._disposed || this._autoTrying) return
     const cid = this.data.familyId
-    const f = this.data.family
+    const f = this._family
     if (!cid || !f || !f.insight_stale) return
     if (!f.policies || !f.policies.length) return
     const now = Date.now()
@@ -414,7 +544,15 @@ Page({
     this._autoTrying = true
     // 2026-09-06 进行中反馈：auto 已发起 → 页头提示切换"自动更新中"，避免用户误以为刷新未生效
     this.setData({ staleTag: '保障分析自动更新中…' })
-    api('generateReport', { familyId: cid, source: 'auto' }, { retries: 0 })
+    // V1.5 语气：自动分析沿用用户当前语气偏好（与手工路径一致）
+    const autoPayload = { familyId: cid, source: 'auto' }
+    if (this.data.reportTone === 'warm') autoPayload.tone = 'warm'
+    // 2026-09-22 全面审计 P1-3：必须显式给 60s 超时。reportAI 的**函数时限就是 60s**
+    // （cloudbaserc.json），而 apiClient 默认超时 30s → 只要一次真实生成超过 30s，
+    // 前端先放弃、报"云函数超时"，后端仍在跑并最终落库：用户看到"自动更新中…"后又退回
+    // "数据有更新"，实际报告已悄悄更新（或反之）。手工路径 report-analysis.js 早已显式
+    // 传 60000 并注明此坑，自动路径漏了。retries 保持 0（重发会双份计费）。
+    api('generateReport', autoPayload, { timeout: 60000, retries: 0 })
       .then((r) => {
         if (r && r.ok && r.data && r.data.portrait && !this._disposed) {
           // 实际生成完成：静默刷新取新分析（stale 复位后 staleTag 自然消失）
@@ -431,7 +569,7 @@ Page({
   // 2026-09-06：auto 未执行/失败时恢复 staleTag 提示（数据仍待刷新则回到下拉引导，否则清空）
   _restoreStaleTag() {
     if (this._disposed || this.data.isShared) return
-    const f = this.data.family
+    const f = this._family
     const stillStale = f && f.insight_stale && !!this.data.deep
     this.setData({ staleTag: stillStale ? '数据有更新，下拉刷新报告内容' : '' })
   },
@@ -467,7 +605,9 @@ Page({
         const modalTitle = code === 404 ? '客户不存在' : (code === 401 ? '登录异常' : '加载失败')
         // UI 审计 R-S2：404 家庭已删除，"留在本页"是死胡同（空白无内容可看），移除取消项强制回首页
         const is404 = code === 404
-        wx.showModal({ title: modalTitle, content: msg, showCancel: !is404, cancelText: is404 ? '' : '留在本页', confirmText: '返回首页', success: (r) => { if (r.confirm) wx.reLaunch({ url: '/pages/index/index' }) } })
+        // 审计 #P3：404/401 需强制动作才弹 modal；其余 code 已由上方 inline 错误卡承载（含重试+返回），
+        // 原一律弹 modal → 同一失败被报两次（modal 盖在错误卡上）
+        if (is404 || code === 401) wx.showModal({ title: modalTitle, content: msg, showCancel: !is404, cancelText: is404 ? '' : '留在本页', confirmText: '返回首页', success: (r) => { if (r.confirm) wx.reLaunch({ url: '/pages/index/index' }) } })
         return
       }
       const c = q.data
@@ -480,11 +620,88 @@ Page({
   // 分享 token 预生成（owner 端）：进入报告页即懒生成，onShareAppMessage 复用；失败静默（分享时兜底 familyId 旧路径）
   async _ensureShareToken(cid) {
     if (!cid || this._disposed || this._shareToken) return
-    const tok = await ensureShareToken(api, cid)
-    if (tok && !this._disposed) this._shareToken = tok
+    const info = await ensureShareToken(api, cid)
+    if (info && !this._disposed) {
+      this._shareToken = info.token
+      // 2026-09-19（流程审计 UX4）：token 一直是带到期时间的，只是没被展示
+      this.setData({ shareExpireHint: shareExpireHint(info.expiresAt) })
+    }
   },
-  // 客户查看模式：token 鉴权读取脱敏报告（只读规则版 7 章，不含 AI 深度分析文本）
-  // 审计修复：失败区分 404（链接失效，重试无意义 → 弹窗引导返回）与其他错误（进 loadError 态，可重试）
+  // MVP 验证：反馈入口（2026-09-12）——系统里唯一的主观信号，比 990 个单测更能说明下一步该做什么
+  onFeedbackYes() { this._sendFeedback(true) },
+  onFeedbackNo() { this._sendFeedback(false) },
+  _sendFeedback(useful) {
+    if (this._disposed || this.data.feedbackGiven) return
+    track('report_feedback', {
+      view: this.data.isShared ? 'shared' : 'owner',
+      familyId: this._trackFamilyId(),
+      useful: !!useful
+    })
+    this.setData({ feedbackGiven: true })
+    wx.showToast({ title: '感谢反馈', icon: 'none' })
+  },
+  // MVP 验证：成交标记（2026-09-12）——小程序无法自动获知成交，手动登记是 ROI 的唯一真值来源。
+  // 乐观更新 + 失败回滚（与 client-card 删除后的本地先行的口径一致）
+  onToggleDeal() {
+    if (this._disposed || this.data.isShared) return
+    const cid = this.data.familyId
+    if (!cid) return
+    const next = this.data.dealStatus === 'won' ? '' : 'won'
+    this.setData({ dealStatus: next })
+    saveFamilyPatch({ familyId: cid, field: 'deal_status', value: next })
+      .then((r) => {
+        if (this._disposed) return
+        if (!r || !r.ok) {
+          this.setData({ dealStatus: next ? '' : 'won' })
+          wx.showToast({ title: '标记失败，请重试', icon: 'none' })
+          return
+        }
+        track('deal_marked', { familyId: cid, status: next || 'none' })
+        wx.showToast({ title: next === 'won' ? '已标记成交' : '已取消成交标记', icon: 'none' })
+      })
+      .catch(() => {
+        if (this._disposed) return
+        this.setData({ dealStatus: next ? '' : 'won' })
+        wx.showToast({ title: '标记失败，请重试', icon: 'none' })
+      })
+  },
+
+  // 2026-09-12 客户版预览入口（owner）：直接把当前客户切到客户视角。
+  // 复用 token 路径（isShared 本就接受 token），因此**不发链接、不进消息列表**，见客户前可自检。
+  // 价值：①见客户前判断"这份报告能否拿出手" ②客户面前直接展示而不暴露 owner 口径（需求公式/优先级/置信度）
+  async onPreviewShared() {
+    if (this._disposed || this._previewing) return
+    const cid = this.data.familyId
+    if (!cid) return
+    this._previewing = true
+    try {
+      let tok = this._shareToken
+      if (!tok) {
+        const info = await ensureShareToken(api, cid)
+        if (info) { tok = info.token; this._shareToken = tok }
+      }
+      if (this._disposed) return
+      if (!tok) { wx.showToast({ title: '预览准备失败，请重试', icon: 'none' }); return }
+      wx.navigateTo({ url: '/pages/report/index?token=' + encodeURIComponent(tok) + '&share=1&preview=1' })
+    } catch (e) {
+      console.error('[report] preview shared:', (e && e.message) || e)
+      if (!this._disposed) wx.showToast({ title: '预览准备失败，请重试', icon: 'none' })
+    } finally {
+      this._previewing = false
+    }
+  },
+  // 退出预览：返回上一页（owner 视角）
+  onExitPreview() {
+    wx.navigateBack({ fail: () => wx.reLaunch({ url: '/pages/index/index' }) })
+  },
+
+  // 客户查看模式：token 鉴权读取脱敏报告（只读规则版 7 章 + **AI 叙事正文**）
+  // ⚠️ 2026-09-28 更正（口径漂移，曾误导一次审计）：原文写"不含 AI 深度分析文本"，与实现相反 ——
+  //   `share.js:148` 在清理 last_* **之前**用 `toReadReport` 生成 report 副本，注释即写明"客户可读"；
+  //   报告页 `index.wxml:117` 的 deep 区块条件为 `hasPolicy && deep`（**不含 isShared**），
+  //   注释也写"完整展开（客户版叙事主内容）"。即：客户版**有意**渲染 AI 叙事。
+  //   客户版真正被裁掉的只有「AI 解读」角标、语气切换、待澄清项、现价/回本等 owner 口径。
+  //   审计修复：失败区分 404（链接失效，重试无意义 → 弹窗引导返回）与其他错误（进 loadError 态，可重试）
   async _loadSharedReport(token) {
     try {
       this._startLoading()
@@ -537,7 +754,13 @@ Page({
     this._exportingPdf = true
     wx.showLoading({ title: '生成 PDF 中...', mask: true })
     try {
-      const r = await api('generateReportPdf', { familyId: this.data.familyId }, { timeout: 60000, retries: 0 })
+      // 2026-09-20（PDF 审计 P2-3）：前端超时 60s → **70s**。
+      // 云函数 reportPdf 时限同为 60s（cloudbaserc.json），但两个计时**起点不同**：客户端从发出
+      // 请求就开始计时，云函数从真正开始执行才计时，中间还夹着冷启动/排队 → 实际是"前端几乎
+      // 必然先放弃"。于是一个 58s 完成且**成功**的导出，用户看到的是"导出失败"，再点一次又多一份。
+      // 留 10s 余量让真实成功的请求走完；云函数被平台杀掉时（60s）依然返回真实错误，不会白等满 70s。
+      // retries: 0 保持不变——重发只会多生成一份 PDF。
+      const r = await api('generateReportPdf', { familyId: this.data.familyId }, { timeout: 70000, retries: 0 })
       wx.hideLoading()
       if (!r.ok || !r.data || !r.data.fileID) {
         wx.showToast({ title: r.msg || '生成失败，请重试', icon: 'none' })
@@ -545,6 +768,7 @@ Page({
       }
       const dl = await wx.cloud.downloadFile({ fileID: r.data.fileID })
       if (!dl || !dl.tempFilePath) throw new Error('下载失败')
+      track('report_export', { view: this.data.isShared ? 'shared' : 'owner', familyId: this.data.familyId || '' })
       wx.openDocument({
         filePath: dl.tempFilePath,
         fileType: 'pdf',
@@ -562,7 +786,9 @@ Page({
 
   // 分享标题/路径/封面元数据：纯逻辑已抽离至 utils/report-share.js（可单测），此处仅转发
   onShareAppMessage() {
-    const c = this.data.family || {}
+    // MVP 验证：转发率分子（每次点击转发计一次；承接方是否打开由 shared 视图的 report_open 记录）
+    track('report_share', { view: 'owner', familyId: this.data.familyId || '' })
+    const c = this._family || {}
     const token = this._clientToken || this._shareToken || ''
     const path = buildSharePath(token, this.data.familyId)
     const title = buildShareTitle(c.name, (this.data.reportMeta && this.data.reportMeta.dateTime) || '')
@@ -582,7 +808,9 @@ Page({
       (ocr && (ocr.data.ocrMask.visible || ocr.data.ocrSheet.visible)) ||
       this.data.showEdit || this.data.showMemberManage ||
       // 全项目审计 G-2：深度分析弹层打开时同样拦截下拉刷新（避免刷新 loading 盖在 analysis 弹层上）
-      this.data.analysisShow
+      this.data.analysisShow ||
+      // 审计 #5：画像核对弹层同样纳入（真机原生下拉可绕过 catchtouchmove）
+      this.data.readinessShow
     )
     if (overlayOpen || (panel && !panel.data.collapsed)) { this.setData({ pullDownTriggered: false }); return }
     if (this.data.isShared) {
@@ -645,7 +873,7 @@ Page({
         // 分析流程自带反馈：成功→"分析完成"、节流→"已是最新分析"、门禁→readiness 补全弹层。
         // 仅当本次不触发分析（无保单/分享模式/非下拉来源）时才用"报告已更新"兜底。
         const willAnalyze = !!(opts.refreshAnalysis && !this._disposed && !this.data.isShared &&
-          this.data.family && this.data.family.policies && this.data.family.policies.length)
+          this._family && this._family.policies && this._family.policies.length)
         if (willAnalyze) this.onDeepAnalysis()
         else wx.showToast({ title: '报告已更新', icon: 'success' })
       } else {
@@ -674,7 +902,7 @@ Page({
       if (mode === 'policy' && vals.status) {
         const newStatus = POLICY_STATUS_LABEL_TO_VALUE[vals.status]
         const pid = this.data._editMemberIdx
-        const current = (this.data.family && this.data.family.policies || []).find(p => (p.id === pid) || (p._id === pid))
+        const current = (this._family && this._family.policies || []).find(p => (p.id === pid) || (p._id === pid))
         const oldActive = !current || !current.status || current.status === 'active' || current.status === 'unknown'
         if (newStatus && newStatus !== 'active' && oldActive) {
           const confirmed = await new Promise(function(resolve) {
@@ -695,14 +923,24 @@ Page({
     try {
       if (mode === 'policy') {
         // 保单编辑走 updatePolicy（白名单字段 + 事实同步）
-        const r = buildUpdateData('policy', vals, null, this.data._editMemberIdx)
-        await savePolicyData({ familyId: this.data.familyId, policyId: r.updatePolicy.policyId, data: r.updatePolicy.data })
+        // 2026-09-19 修（流程审计 P2-2 前半）：原传 null 使 buildUpdateData 取不到原保单，
+        // 「仅在状态实际变化时下发 status」的防线恒失效——每次保存都把 picker 当前值写回 DB。
+        const r = buildUpdateData('policy', vals, this._family, this.data._editMemberIdx)
+        // 2026-09-19 修（流程审计 P1-4）：业务失败必须拦在这里。
+        // apiClient 把 400/404/500 归一化为 {ok:false,msg} 并 **resolve**（只有网络异常才 reject），
+        // 原实现不读返回值 → 照常本地生效 + 弹「小秘记下了」，随后后台静默刷新再退回旧值
+        // ⇒ 用户以为保存成功、实际未落库（家庭已被其他设备删除、成员列表被清空等场景）。
+        // 修法与同页 _changePolicyStatus 一致：throw 交给下方 catch（errorHandler 统一文案+上报）。
+        const rp = await savePolicyData({ familyId: this.data.familyId, policyId: r.updatePolicy.policyId, data: r.updatePolicy.data })
+        if (!rp || !rp.ok) throw new Error((rp && rp.msg) || '保存失败')
         // 本地增量更新：merge 到本地 policies → 立即重算 6 章
         const localFamily = this._applyLocalUpdate(r)
         if (localFamily) this._applyReportData(localFamily, null, {})
       } else {
-        const updateData = buildUpdateData(mode, vals, this.data.family, this.data._editMemberIdx)
-        await saveFamilyPatch({ familyId: this.data.familyId, updateData })
+        const updateData = buildUpdateData(mode, vals, this._family, this.data._editMemberIdx)
+        // 同上（P1-4）：成员/财务保存失败同样不得当成功
+        const rm = await saveFamilyPatch({ familyId: this.data.familyId, updateData })
+        if (!rm || !rm.ok) throw new Error((rm && rm.msg) || '保存失败')
         // 本地增量更新：立即应用 + 重算渲染（消除 500ms 缓冲 + 网络往返的感知延迟）
         const localFamily = this._applyLocalUpdate(updateData)
         if (localFamily) this._applyReportData(localFamily, null, {})
@@ -724,7 +962,7 @@ Page({
   // 仅处理编辑表单产生的变更；后台由 _refreshReportSequence 校验 DB 规范化数据
   _applyLocalUpdate(updateData) {
     if (!updateData) return null
-    const f = Object.assign({}, this.data.family || {})
+    const f = Object.assign({}, this._family || {})
     let changed = false
     if (Array.isArray(updateData.members)) {
       f.members = updateData.members.slice()
@@ -775,17 +1013,17 @@ Page({
   // ===== 保单明细（附录卡片点击）—— 复用统一 edit-sheet：view 态只读 → [编辑] 切编辑态 → [保存] =====
   onPolicyTap(e) {
     const id = (e.detail && e.detail.policyId) || ''
-    const list = (this.data.family && this.data.family.policies) || []
+    const list = (this._family && this._family.policies) || []
     const p = list.find(x => (x.id === id) || (x._id === id))
     if (!p) return
     // 弹层叠加审计：与 onMemberManageEdit/onMemberManageAdd 互斥模式对齐——打开 sheet 同时清底层 member sheet
-    this._openEditSheet(buildEditConfig({ mode: 'policy', family: this.data.family, member: p }), 'view')
+    this._openEditSheet(buildEditConfig({ mode: 'policy', family: this._family, member: p }), 'view')
   },
     // 快速状态变更：点击保单卡片上的状态标识直接弹出操作项
     onStatusChange(e) {
       if (this.data.isShared) return
       const id = (e.detail && e.detail.policyId) || ''
-      const list = (this.data.family && this.data.family.policies) || []
+      const list = (this._family && this._family.policies) || []
       const p = list.find(x => (x.id === id) || (x._id === id))
       if (!p) return
 
@@ -852,6 +1090,15 @@ Page({
   onFabFocus() { const cp = this._cp(); if (cp) cp.onFocus() },
   onFabSend() {
     const cp = this._cp()
+    // 2026-09-18 报告页审计 布局 P2-2：loadError 态下 chat-panel 不渲染（wxml:234 条件含 !loadError），
+    // 而 FAB 栏仍显示（wxml:303）→ 原实现被 `if (cp)` 静默吞掉，用户"点了发送没反应"。
+    // 修法与审计建议不同：**不给整条 FAB 加 !loadError** —— 上传按钮（_startFlow → 常驻渲染的
+    // #ocrFlow，wxml:343）并不依赖报告加载成功，整条隐藏会连带砍掉这个仍然可用的入口。
+    // 故只在此处给显式反馈。（onFabTap/onFabFocus 保持静默：被动操作，弹 toast 是噪声。）
+    if (!cp) {
+      wx.showToast({ title: '报告加载失败，请先重试', icon: 'none', duration: 1500 })
+      return
+    }
     if (cp) {
       // FAB 输入清空时机修复：发送即清（onSend 是 async，resolve(true) 要等流式+B 通道完成，
       // 原等 then 才清导致文本遗留到 AI 回复输出后）；onSend 返回 false（守卫/注入/异常拦截）时微任务内恢复文本

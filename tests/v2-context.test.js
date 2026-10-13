@@ -63,7 +63,7 @@ const BASE_MEMBERS = [
 ]
 
 const BASE_FINANCES = [
-  { _id: 'fin1', family_id: 'f1', annual_income: '30', total_debt: '50', fixed_annual_expense: '8', debt_type: '房贷' }
+  { _id: 'fin1', family_id: 'f1', annual_income: '30', total_debt: '50', debt_type: '房贷' }
 ]
 
 describe('buildFamilyContext — 返回契约', () => {
@@ -89,7 +89,11 @@ describe('buildFamilyContext — 返回契约', () => {
     const allowedKeys = [
       'family_id', 'family_name', 'last_analysis_at',
       'last_summary', 'last_conclusion', 'financial_snapshot', 'engagement_stage',
-      'updated_at', 'ctx_compacted_at'
+      'updated_at', 'ctx_compacted_at',
+      // 2026-09-22（数据质量批次 3）：新增。writeSeam 每次写家庭数据置位 insight_stale=true，
+      // 报告上下文据此告诉模型"上一版结论之后数据已变更"（否则它分不清"上版说错"与"数据变了"）。
+      // 本白名单是**显式登记制**：加字段必须来这里登记一次 —— 本次改动就是被这条断言拦下的。
+      'insight_stale'
     ]
     Object.keys(familyMeta).forEach(k => {
       expect(allowedKeys).toContain(k)
@@ -354,10 +358,10 @@ describe('经济状况表取数口径（P1-3）', () => {
     const db = makeDb({
       families: [fam],
       members: BASE_MEMBERS,
-      finances: [{ _id: 'fin1', family_id: 'f1', annual_income: 300000, total_debt: 500000, fixed_annual_expense: 80000, debt_type: '房贷' }]
+      finances: [{ _id: 'fin1', family_id: 'f1', annual_income: 300000, total_debt: 500000, debt_type: '房贷' }]
     })
     const { markdown } = await buildFamilyContext(db, 'f1', 'openid1', 'analysis')
-    expect(markdown).toContain('|30|50|8|房贷|') // 元 → 万
+    expect(markdown).toContain('|30|50|房贷|') // 元 → 万（固定支出列已移除）
     expect(markdown).not.toContain('|99|')
     expect(markdown).not.toContain('旧快照')
   })
@@ -370,13 +374,13 @@ describe('经济状况表取数口径（P1-3）', () => {
     })
     const { markdown } = await buildFamilyContext(db, 'f1', 'openid1', 'analysis')
     // 收入取 snapshot（30），负债取 finances（50），负债类型取 snapshot（房贷）
-    expect(markdown).toContain('|30|50|-|房贷|')
+    expect(markdown).toContain('|30|50|房贷|')
   })
 
   test('无 finances 记录 → 完全用 snapshot', async () => {
     const db = makeDb({ families: [BASE_FAMILY], members: BASE_MEMBERS, finances: [] })
     const { markdown } = await buildFamilyContext(db, 'f1', 'openid1', 'analysis')
-    expect(markdown).toContain('|30|50|-|房贷|')
+    expect(markdown).toContain('|30|50|房贷|')
   })
 })
 
@@ -405,5 +409,46 @@ describe('report 场景去重与精简', () => {
     expect(markdown).toContain('第20年现价 600元')
     expect(markdown).not.toContain('前5行')
     expect(markdown).not.toContain('1年: 100元')
+  })
+})
+
+// ============ 2026-09-15 覆盖权威收敛（架构审查候选 1） ============
+// 契约：三个场景都把 policies 集合传给 buildPortrait（与 reportAI 的「保障缺口矩阵」同源）。
+// 不传则画像回退 facts 派生 → facts 缺 policy 记录时误报"无保障"，
+// 与缺口矩阵在同一次 AI 调用里给出矛盾判定（原实现靠在 prompts 里写警告兜这件事）。
+describe('画像覆盖与缺口矩阵同源（候选 1）', () => {
+  beforeEach(() => jest.clearAllMocks())
+
+  const AUTH_POLICY = { id: 'pol_1', member_id: 'm1', status: 'active', insurance_category: '重疾险', sum_assured: 500000, product_name: '平安福' }
+
+  test.each(['conversation', 'report', 'tool'])('%s 场景把 policies 传给 buildPortrait', async (scene) => {
+    const db = makeDb({ families: [BASE_FAMILY], members: BASE_MEMBERS, finances: BASE_FINANCES, facts: [], policies: [AUTH_POLICY] })
+    await buildFamilyContext(db, 'f1', 'openid1', scene)
+    const { buildPortrait } = require('../cloudfunctions/conversationAI/_shared/familyPortrait')
+    expect(buildPortrait).toHaveBeenCalled()
+    const lastCall = buildPortrait.mock.calls[buildPortrait.mock.calls.length - 1]
+    expect(lastCall[2]).toBeTruthy()
+    expect(lastCall[2].policies).toHaveLength(1)
+    expect(lastCall[2].policies[0].id).toBe('pol_1')
+  })
+
+  test('保单读取失败 → 传 null（回退旧路径），而不是空数组', async () => {
+    const { safeQuery } = require('../cloudfunctions/conversationAI/_shared/db-helpers')
+    const orig = safeQuery.getMockImplementation()
+    // 精确让 policies 查询失败（safeQuery 在 v2-context 里也用于 members/finances，不能一刀切）
+    safeQuery.mockImplementation((db, collection, where, openid) => {
+      if (collection === 'policies') return Promise.reject(new Error('network'))
+      return Promise.resolve({ data: (db && db._data && db._data[collection]) || [] })
+    })
+    try {
+      const db = makeDb({ families: [BASE_FAMILY], members: BASE_MEMBERS, finances: BASE_FINANCES, facts: [] })
+      await buildFamilyContext(db, 'f1', 'openid1', 'report')
+      const { buildPortrait } = require('../cloudfunctions/conversationAI/_shared/familyPortrait')
+      const lastCall = buildPortrait.mock.calls[buildPortrait.mock.calls.length - 1]
+      // null → buildPortrait 回退 facts 派生；若传 [] 会被判成"该家庭确实无保单"→ 全维度误报缺失
+      expect(lastCall[2].policies).toBeNull()
+    } finally {
+      safeQuery.mockImplementation(orig)
+    }
   })
 })

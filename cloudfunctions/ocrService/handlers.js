@@ -15,9 +15,7 @@ const cloud = require('wx-server-sdk')
 const { ocrPhase, aiPhase } = require('./_shared/ocr-core')
 const { buildExtractionPrompt } = require('./prompts')
 const { logOperation } = require('./_shared/logSeam')
-const { wrapError } = require('./_shared/errorHandler')
 const _aiClient = require('./_shared/ai-client')
-const { AI } = require('./_shared/config')
 
 /** 并发限流：每次最多 n 个异步任务并行 */
 async function _withConcurrency(tasks, n) {
@@ -143,8 +141,13 @@ async function ocrOnly(db, openid, event) {
 // 公共前置：入参校验 + 空 ocrText 过滤 + 全空短路（aiExtractParallel）
 // 返回 { error } | { allEmpty } | { validResults, emptyFileIds }
 // M1：ocrText 长度上限（OCR 审计 M1）——正常单张 OCR 文本 < 5000 字，超长视为异常，
-// 拒绝进入 AI 调用防异常大文本浪费 token（gateway sanitize 16000 截断仅为最后兜底）
-const OCR_TEXT_MAX_LEN = 30000
+// 拒绝进入 AI 调用防异常大文本浪费 token。
+// 2026-09-22 全面审计 P2：上限值改为引用 config.AI.OCR_TEXT_MAX_LEN（单一事实源）——
+// 原注释写"gateway sanitize 16000 截断仅为最后兜底"，但实际上网关**就是**按 16000 截断的，
+// 检查放行到 30000 之后的 1.4 万字会被静默丢弃。现由 ocr-extractor 把同一常量作为
+// ctx.maxInput 透传给网关，校验与闸门终于一致。
+const { AI } = require('./_shared/config')
+const OCR_TEXT_MAX_LEN = AI.OCR_TEXT_MAX_LEN
 
 function _prepareOcrInput(ocr_results) {
   if (!ocr_results || !Array.isArray(ocr_results) || ocr_results.length === 0) {

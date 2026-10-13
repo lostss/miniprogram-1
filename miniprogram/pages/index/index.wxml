@@ -28,6 +28,11 @@
         <text class="ob-step-text">生成保障报告</text>
       </view>
     </view>
+    <!-- 2026-09-22 修复（UX 审计 P1）：无客户时「全部」入口在下方 clients-section 的 wx:if 内，
+         而客户列表页是**唯一**能手动建档的页面（clients/index.wxml:11 的 ＋ 与 :52 的「手动新建客户」），
+         → 新用户在拿到第一张保单前根本进不去，"第一次见面、还没拿到保单时就无处建档"这一设计意图失效。
+         此处补显式入口，通向该页（其空态自带建档按钮）。 -->
+    <view class="empty-create pressable" wx:if="{{recentClients.length === 0 && !loadError}}" bindtap="onViewAll">已有客户资料？手动新建客户</view>
     <!-- UI 审计 R-M5：加载失败显示错误态 + 重试，不再伪装空数据引导 -->
     <view class="load-error" wx:if="{{recentClients.length === 0 && loadError}}">
       <text class="load-error-text">客户列表加载失败</text>
@@ -71,5 +76,9 @@
   <image class="fab-icon" src="/images/upload.svg" mode="aspectFit" />
 </view>
 
-<!-- OCR 全流程组件 -->
+<!-- OCR 全流程组件 —— ⚠️ 必须留在 .page 之外（与下方 FAB 同理），勿以"结构整洁"为由移入。
+     2026-09-18 布局审计曾建议移入 .page，已查实**不可移动**：.page-view 带常驻 transform
+     （pageEnter 动画 + fill-mode both → 终帧 translateY(0) 仍非 none），而 transform 会为
+     position:fixed 后代建立包含块 → 本组件内 .ocr-mask（fixed 全屏遮罩）会改为相对 .page-view
+     定位而错乱。app.wxss 对该动画已注明"不放在 page 选择器上"即为此原因。 -->
 <ocr-flow id="ocrFlow" bind:busychange="onOcrBusy" bind:saved="onOcrSaved" bind:savedhome="onOcrSavedHome" bind:discarded="onOcrDiscarded" />

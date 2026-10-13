@@ -31,7 +31,6 @@ const ARG_SUMMARIZERS = {
     const parts = []
     if (a.annual_income != null) parts.push('年收入:' + Number(a.annual_income).toLocaleString() + '元')
     if (a.total_debt != null) parts.push('总负债:' + Number(a.total_debt).toLocaleString() + '元')
-    if (a.fixed_annual_expense != null) parts.push('年固定支出:' + Number(a.fixed_annual_expense).toLocaleString() + '元')
     if (a.debt_type) parts.push('负债类型:' + a.debt_type)
     return parts.join('，') || '更新家庭财务'
   },

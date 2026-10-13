@@ -11,6 +11,8 @@
  */
 const _ = require('wx-server-sdk').database().command
 const { detectInjection } = require('./_shared/guard')
+// 手动可设的保单状态（契约导出）：下方 POLICY_STATUS_CHANGEABLE 由它派生，勿再手写第二份清单
+const { MANUAL_STATUSES } = require('./_shared/policy-status')
 const { desensitize } = require('./_shared/pii-rules')
 const { normalizeInsurer } = require('./_shared/insurer-normalize')
 const { writeSeam } = require('./_shared/writeSeam')
@@ -18,6 +20,8 @@ const { logOperation } = require('./_shared/logSeam')
 const { locatePolicy } = require('./policy-locate')
 const { policyToFacts } = require('./policyToFacts')
 const { matchPoliciesToMembers } = require('./_shared/member-matcher')
+// 完整度重算：写/删保单会改变 policies 数量，而完整度评分依赖它（流程审计 UX3）
+const { syncCompleteness } = require('./completeness-sync')
 const { matchCashToPolicies, matchOrphanCashValues } = require('./cash-value-matcher')
 const { addFact } = require('./fact-write')
 
@@ -55,7 +59,14 @@ async function writePolicy(db, openid, event) {
   const { familyId, memberId, data } = event
   if (!familyId) return { code: 400, msg: '缺少参数 familyId' }
   // 级联删除审计 #2 竞态防护：家庭已删/删除中 → 拒绝写入，避免删除窗口内 OCR/对话写孤儿保单
-  const alive = await db.collection('families').where({ _id: familyId, _openid: openid }).count().catch(() => ({ total: 0 }))
+  // 审计 P2-14：原 `.catch(() => ({ total: 0 }))` 把 DB 故障伪装成"家庭不存在"（404 误导排查方向）
+  let alive
+  try {
+    alive = await db.collection('families').where({ _id: familyId, _openid: openid }).count()
+  } catch (e) {
+    console.error('[dataWrite] writePolicy 家庭校验查询失败:', (e && e.message) || e)
+    return { code: 500, msg: '写入校验失败，请稍后重试' }
+  }
   if (!(alive.total > 0)) return { code: 404, msg: '家庭不存在，无法写入保单' }
   // A1 修复：insured_name 为空时回退用 policyholder_name（新华保险投保人=被保人场景）
   if (!data || !(data.insured_name || data.policyholder_name)) return { code: 400, msg: '缺少保单数据（insured_name/policyholder_name）' }
@@ -286,6 +297,12 @@ async function ingestPolicies(db, openid, event) {
   }
 
   // writePolicy / writeCashValue 内部已通过 writeSeam 触发 markMutated + advanceStage，此处无需重复
+  //
+  // 2026-09-19 修（流程审计 UX3）：但**完整度必须重算** —— calcCompletenessScore 依赖 policies
+  // 数量（有保单 +20 分），而原实现只在 updateFamily / reportAI 里重算 → OCR 存完一批，
+  // 首页完整度圆环仍是旧值（用户以为没生效），得等打开报告或编辑一次才更新。
+  // 按**批次**调用一次（不要放进逐条循环，见 completeness-sync 的成本说明）。
+  await syncCompleteness(db, familyId, openid)
   return { code: 200, data: { written: results.filter(r => r.ok).length, total: policies.length, dedupSkipped, results } }
 }
 
@@ -342,13 +359,23 @@ async function deletePolicy(db, openid, event) {
   await ws.silentUpdateWhere('policy_cash_values', { policy_id: pid }, { policy_id: '', matched: false, matched_by: null, matched_at: null }).catch(e => console.error('[dataWrite] deletePolicy 现价表清理失败:', e.message))
 
   // addFact 已触发钩子，此处无需重复 triggerHooks
+  // 2026-09-19（流程审计 UX3 同源）：删掉最后一张保单后完整度会掉档，同样需要重算，
+  // 否则首页圆环停留在旧值（用户以为删除没生效）。
+  await syncCompleteness(db, familyId, openid)
   return { code: 200, data: { deleted: true, policyId: pid, product_name: target.product_name } }
 }
 
 // ---------- updatePolicy ----------
 // 修改已录入保单字段（白名单），保额/保费变化同步"拥有保障"事实边
 // 业务员可手动变更的保单状态；到期终止(expired)由系统自动判断，不在此白名单
-const POLICY_STATUS_CHANGEABLE = ['active', 'lapsed', 'surrendered', 'claim_terminated', 'cancelled']
+// 保单状态**可手动变更**的白名单 = 契约 `MANUAL_STATUSES`（4 个终止态）+ 'active'（"手动恢复有效"，
+// 见 policy-status.ensureStatus 注释：读取层不覆盖手动状态）。
+//
+// 【2026-09-22 口径自查】原先是**手写第二份清单** ✗ —— 而 `policy-status.js` 顶部明写
+// "与 dataWrite/policy-write.js 的变更白名单**保持同构**"：两份人工同步的清单注定漂移
+// （本仓库已在 write-tools.js 为此栽过一次：前端手写镜像漏了三个删除类工具）。
+// 现从契约派生 → 漂移在结构上不可能。新增/删除手动状态只改 `MANUAL_STATUSES` 一处。
+const POLICY_STATUS_CHANGEABLE = ['active', ...MANUAL_STATUSES]
 const POLICY_STATUS_META = ['status_reason', 'status_effective_date']
 const POLICY_EDITABLE = ['product_name', 'insurer', 'sum_assured', 'annual_premium', 'insurance_category', 'insurance_type', 'effective_date', 'insurance_period', 'payment_period', 'payment_method', 'premium_term', 'coverage_term', 'policyholder_name', 'beneficiary_name', 'insured_name', 'policy_number', 'status', ...POLICY_STATUS_META]
 
@@ -391,7 +418,12 @@ async function updatePolicy(db, openid, event) {
     // 安全审计 M7：字符串字段注入检测（防提示词注入产物回写保单字段成二次注入载体）
     if (typeof v === 'string' && detectInjection(v).injected) { console.warn('[dataWrite] updatePolicy 注入拦截:', k); continue }
     // 金额字段：与 writePolicy 同规则（万/亿→元 + 数字化），其余数值字段 Number
-    if (['sum_assured', 'annual_premium'].includes(k) && v !== undefined && v !== '') v = _toYuanAmount(v)
+    if (['sum_assured', 'annual_premium'].includes(k) && v !== undefined && v !== '') {
+      // 2026-09-17 审计 P1-4：_toYuanAmount 无法解析时返回 NaN（其自身注释写明"由上层 isNaN ? 0 兜底"），
+      // 原实现漏了兜底 → NaN 经 JSON 序列化变 null 落库，报告侧出现 null 金额。此处补齐，与 writePolicy 对齐。
+      const yuan = _toYuanAmount(v)
+      v = isNaN(yuan) ? 0 : yuan
+    }
     if (['premium_term', 'coverage_term'].includes(k) && v !== undefined && v !== '') v = Number(v)
     // 保险公司简称统一收敛（与 writePolicy 同规则，防编辑写入新变体）
     if (k === 'insurer' && typeof v === 'string') v = normalizeInsurer(v)
@@ -512,8 +544,8 @@ async function writeCashValue(db, openid, event) {
   if (!familyId) return { code: 400, msg: '缺少参数 familyId' }
   if (!cv || !cv.cash_values || !cv.cash_values.length) return { code: 400, msg: '缺少现金价值数据' }
 
-  // 尝试匹配保单
-  const { policyId, matched, candidates } = await matchCashToPolicies(db, familyId, openid, cv)
+  // 尝试匹配保单（matchedBy: 'same_image' = mixed 图同图直连，'auto' = 通用匹配）
+  const { policyId, matched, candidates, matchedBy } = await matchCashToPolicies(db, familyId, openid, cv)
 
   const now = new Date()
   const cashDoc = {
@@ -527,7 +559,7 @@ async function writeCashValue(db, openid, event) {
     total_years: (cv.cash_values || []).length,
     latest_value: cv.cash_values && cv.cash_values.length ? cv.cash_values[cv.cash_values.length - 1].v : 0,
     matched,
-    matched_by: matched ? 'auto' : null,
+    matched_by: matched ? (matchedBy || 'auto') : null,
     matched_at: matched ? now : null,
     confidence: cv.overall_confidence || 0,
     source: 'ocr',

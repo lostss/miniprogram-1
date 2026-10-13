@@ -12,6 +12,10 @@ jest.mock('wx-server-sdk', function() {
       where: jest.fn(function() { return this }),
       limit: jest.fn(function() { return this }),
       orderBy: jest.fn(function() { return this }),
+      // 2026-09-22 全面审计 P1-2：mock 缺 skip（真实 collection 有）。
+      // 成员批量查询改为分页取全量后必须补上，否则 where().orderBy().skip 直接抛错、
+      // 用例退化成"成员数恒 0"的假绿灯。
+      skip: jest.fn(function() { return this }),
       field: jest.fn(function() { return this }),
       get: jest.fn()
     }

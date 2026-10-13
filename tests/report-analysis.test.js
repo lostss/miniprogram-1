@@ -127,6 +127,22 @@ describe('report-analysis controller', function () {
     return flush().then(() => { ctl.destroy() })
   })
 
+  test('V1.5 语气模式：getTone 返回 warm → 随请求下发 tone', function () {
+    api.mockImplementation(() => Promise.resolve({ ok: true }))
+    const { ctl } = setup({ getTone: () => 'warm' })
+    ctl.start()
+    expect(api).toHaveBeenCalledWith('generateReport', { familyId: 'f1', tone: 'warm' }, { timeout: 60000, retries: 0 })
+    return flush().then(() => { ctl.destroy() })
+  })
+
+  test('V1.5 语气模式：direct（默认）不下发 tone，请求形态与历史一致', function () {
+    api.mockImplementation(() => Promise.resolve({ ok: true }))
+    const { ctl } = setup({ getTone: () => 'direct' })
+    ctl.start()
+    expect(api).toHaveBeenCalledWith('generateReport', { familyId: 'f1' }, { timeout: 60000, retries: 0 })
+    return flush().then(() => { ctl.destroy() })
+  })
+
   test('destroy 后完成：不再 setData / toast（防卸载后 setData 告警）', function () {
     let resolveApi
     api.mockImplementation(() => new Promise(r => { resolveApi = r }))

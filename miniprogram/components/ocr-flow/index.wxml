@@ -43,6 +43,8 @@
             <view class="proc-side">
               <text class="ocr-badge badge-ok" wx:if="{{item.kind === 'policy'}}">已确认</text>
               <text class="ocr-badge badge-cash" wx:if="{{item.kind === 'cash'}}">现价表</text>
+              <!-- 2026-09-12 同图绑定标识：mixed 图（保单+现价表同屏）此前的现价表静默入库，用户不可见 -->
+              <text class="ocr-badge badge-cash" wx:if="{{item.hasCash}}">含现价表</text>
             </view>
           </view>
         </block>
@@ -137,6 +139,9 @@
           <view class="match-radio"></view>
           <view class="match-body">
             <text class="match-name">{{item.name}}</text>
+            <!-- 2026-09-19 流程审计 P1-1：标注命中依据（家庭名相同/包含、成员名命中），
+                 用户据此核对候选；复用 .match-members 样式避免为一行提示改 WXSS -->
+            <text class="match-members" wx:if="{{item.basis}}">✓ {{item.basis}}</text>
             <text class="match-members" wx:if="{{item.membersText}}">成员：{{item.membersText}}</text>
           </view>
         </view>

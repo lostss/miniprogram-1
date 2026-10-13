@@ -12,6 +12,9 @@ const errorHandler = require('../../utils/errorHandler')
 const roleInfer = require('../../utils/role-infer')
 // 领域写薄层（候选 5）：成员字段写收敛 field/value 语义
 const { saveMemberField } = require('../../utils/domain-writes')
+const { yuanToWan, wanToYuan } = require('../../utils/amount')
+// 置信度阈值契约（2026-09-24 口径自查：原为内联 0.95；下方 0.8 是 UI 三档底色的私有分界，不在契约内）
+const { OCR_RELIABLE_THRESHOLD } = require('../../utils/ocr-confidence')
 
 // UI 审计 A-S1/A-S2/A-S3：OCR 编辑/手动录入共用的数值字段清单（弹数字键盘 + 校验）。
 // 注意：payment_period 是文本（"20年/交至60岁/月交"），不能用数字键盘
@@ -65,6 +68,26 @@ Component({
           if (valid.length < r.tempFiles.length) wx.showToast({ title: (r.tempFiles.length - valid.length) + '张超过10MB已跳过', icon: 'none' })
           if (valid.length === 0) return
           this._startOCR(valid.map(f => f.tempFilePath))
+        },
+        // 2026-09-22 全面审计 P1-2（前端）：原实现只有 success，漏了 fail。
+        // chooseMedia 自 2023-09 起属**必须声明隐私协议**的接口：用户拒绝相册/相机权限，
+        // 或小程序后台未在「用户隐私保护指引」声明「选中的照片或视频信息」时，API 直接走 fail
+        // → 点「上传保单」毫无反应（主入口死按钮），既不提示也不引导，用户只会以为小程序坏了。
+        fail: (err) => {
+          const msg = String((err && err.errMsg) || '')
+          if (/cancel/i.test(msg)) return // 用户主动取消选择：不打扰
+          if (/auth\s*deny|authorize|permission/i.test(msg)) {
+            wx.showModal({
+              title: '需要相册/相机权限',
+              content: '识别保单需要读取你选择的照片。请在设置中允许使用相册/相机后重试。',
+              confirmText: '去设置', cancelText: '取消',
+              // openSetting 必须由用户点击触发；modal 的 confirm 属用户手势，合规
+              success: (m) => { if (m.confirm) wx.openSetting({}) }
+            })
+          } else {
+            // 其余失败（如基础库过低、系统异常）也要有反馈，不再静默
+            wx.showToast({ title: '打开相册失败，请重试', icon: 'none' })
+          }
         }
       })
     },
@@ -158,6 +181,12 @@ Component({
         }
         var _ownerPrefix = 'temp/' + ((_g && _g.openid) || 'anon')
         var upResult = await flow.compressAndUpload(tempFiles, upProgress, _ownerPrefix)
+        // 2026-09-22 修（全面审计 · 前端 P2）：上传是整条链路里最慢的一步（弱网下数十秒），
+        // 而用户在等待期间最自然的动作就是点「取消并清理」。原实现**只在下游两处检查取消标志**
+        // （L204/L210），上传完成后的检查点缺失 → 取消后仍会走进 flow.batchOCR，
+        // **照常产生 OCR（约 0.5 元/张）与 AI 提取的真实计费**，拿回结果再被丢弃、临时文件也被清理。
+        // 这里补上第一个检查点：已取消/已销毁则立即收尾，不发起计费调用。
+        if (this._disposed || this._ocrCancelled) return
         var validThumbs = []
         for (var i = 0; i < upResult.fileIds.length; i++) {
           if (upResult.fileIds[i]) { allFileIds.push(upResult.fileIds[i]); validThumbs.push(upResult.localPaths[i] || tempFiles[i]) }
@@ -190,6 +219,10 @@ Component({
           var activeFid = this.properties.familyId || session.getActiveFamily()
           if (!activeFid) {
             wx.showModal({ title: '需要先创建家庭', content: '现价表需关联到家庭，请先上传保单或创建家庭后再试。', showCancel: false, confirmText: '知道了' })
+            // 2026-09-17 审计 P1-7：原实现直接 return，未关遮罩 → "正在处理"永久停留
+            // （有取消按钮可手动退出，非硬卡死，但体验为卡住）。与其他 early-return 分支同款收尾。
+            this.setData(flow.hide())
+            this._emitBusy()
             return
           }
           var cr = await flow.saveCashValuesWithRetry(activeFid, cashValues, setData)
@@ -198,6 +231,14 @@ Component({
             // 存储审计 P1：纯现价表保存也 emit saved（原 return 前无 triggerEvent，首页/报告页无感知入库）
             this.triggerEvent('saved', { familyId: activeFid, matched: !!cr.matched })
           }
+          // 2026-09-22 全面审计 P1-1（前端）：本分支是本函数**唯一**漏发 busychange 的收尾路径。
+          // saveCashValuesWithRetry 内部已 setData(hide()) 把遮罩关掉（成功/失败都关），但组件没
+          // 通知父页——pages/index 的 ocrBusy 停在 true → 首页「上传保单」框（index.wxml:10）
+          // 整个 wx:if 隐藏、FAB 也拿不到 fab--show（index.wxss:34 scale(0) 无命中区）→
+          // 两个上传入口同时消失且不可点，只能杀进程重进。
+          // 注：不能改到外层 finally 里统一发——_renderProc 路径要在遮罩**可见**时发 busy=true，
+          // finally 再发一次会把它覆盖成 false。故在本分支显式收尾。
+          this._emitBusy()
           return
         }
         // 方案 B：全部失败（含 not_policy）不再弹 modal 拦截，统一进识别列表——错误卡含具体信息 + 手动录入/预览/重试出口。
@@ -208,7 +249,33 @@ Component({
         this._renderProc(allPolicies, cashValues, familyId, errors, thumbMap)
       } catch (e) {
         console.error('OCR失败:', e)
-        wx.showModal({ title: '识别失败', content: '遇到点问题，请重试', showCancel: false, confirmText: '重试', success: function() { if (!this._disposed) this._startOCR(tempFiles) }.bind(this) })
+        // 2026-09-22 修复（全面审计 · 前端 P1）：原实现
+        //   wx.showModal({ showCancel:false, confirmText:'重试', success: () => this._startOCR(tempFiles) })
+        // 有两个缺陷：
+        //   ① 「重试」是**空操作**：_startOCR 开头 `if (this._ocrBusy || this.data.ocrMask.visible) return`，
+        //      而本路径从不收起遮罩 → 重入必然被挡回。用户看到的是"点了重试没反应"，遮罩停在
+        //      「正在处理 N 张图片 / 已等待 X 秒」的永动进度上（elapsed 还在涨），像是卡死。
+        //   ② `showCancel:false` 只给一个按钮，用户没有"先不处理"的出口（要退只能先关掉这个弹窗，
+        //      再去点遮罩里的「取消并清理」——两步且不直观）。
+        // 现：先收起遮罩并清空本批渲染数据（恢复可重入），再让用户在「重试 / 先不处理」之间明确选择。
+        // 放弃分支与 onFailedBack 同口径（_clearBatch + triggerEvent('discarded')），
+        // 否则 checkResume 会在下次进入页面时把用户已放弃的批次又弹回来。
+        this._procPolicies = []; this._procCash = []; this._procErrors = []
+        this.setData(Object.assign(flow.hide(), { 'ocrMask._policies': [], 'ocrMask._cashValues': [], 'ocrMask._familyId': '' }))
+        this._emitBusy()
+        wx.showModal({
+          title: '识别失败',
+          content: '遇到点问题，请重试',
+          showCancel: true,
+          cancelText: '先不处理',
+          confirmText: '重试',
+          success: function(res) {
+            if (this._disposed) return
+            if (res && res.confirm) { this._startOCR(tempFiles); return }
+            this._clearBatch()
+            this.triggerEvent('discarded')
+          }.bind(this)
+        })
       } finally {
         clearInterval(this._ocrTick)
         // 保留失败项的云端 fileId（供重试/跨会话恢复直 OCR），仅清理成功项
@@ -442,6 +509,19 @@ Component({
         this.setData(flow.setFailed('保单未能保存：' + failedN + ' 份未通过校验，请检查后重试'))
         return
       }
+      // 2026-09-19 修（流程审计 P1-5）：**部分失败**同样不得当成功。
+      // 后端逐条写、失败项只记 logOperation，整体仍返回 200 + written<total（writePoliciesBatch 契约）。
+      // 原实现只拦 written===0，`2/3` 会顺流走进 _showSaved → 批次被 _clearBatch 清空、
+      // 失败项既无提示也无补救入口（数据静默丢失）。
+      // 改为与 written=0 同一条出路（failed 相）：批次保留 → 「重试」可再提交（已落库的由后端
+      // dedupSkipped 去重，不会双写），或显式「放弃全部」。
+      var skippedN = (ok && typeof ok.dedupSkipped === 'number') ? ok.dedupSkipped : 0
+      if (totalN > 0 && writtenN + skippedN < totalN) {
+        var missN = totalN - writtenN - skippedN
+        errorHandler.handle({ msg: '部分保单未落库' }, { silent: true, context: 'ocrSave' })
+        this.setData(flow.setFailed('已保存 ' + writtenN + '/' + totalN + ' 份，' + missN + ' 份未通过校验。可重试（已保存的不会重复）或放弃。'))
+        return
+      }
       // 写入成功后回写 familyId（_procRefresh 时匹配未定，_familyId 仍为空；
       // saved 事件依赖它跳转报告页，缺失会导致"缺少客户信息"）
       this._procFamilyId = familyId
@@ -451,10 +531,19 @@ Component({
         var fam = await apiGetFamily(familyId)
         if (this._disposed) return
         if (fam) {
+          var missingMembers = []
           await Promise.all(newRoles.map(function(rp) {
             var m = (fam.members || []).find(function(x) { return x.name === rp.name })
             if (m && m.member_id) return saveMemberField({ familyId: familyId, memberId: m.member_id, field: 'role', value: rp.role }).catch(function() {})
+            missingMembers.push(rp.name)
           }))
+          // 2026-09-19 修（流程审计 P1-2）：回查不到成员**必须告知**，不得静默跳过。
+          // 原实现在这里没有 else —— 用户确认过的角色被默默丢弃，界面却显示"保存成功"
+          // （根因在后端建档范围只含 insured_name，已同批修复；此处是前端侧的兜底可见性）。
+          if (missingMembers.length) {
+            errorHandler.handle({ msg: '新成员未建档：' + missingMembers.join('、') }, { silent: true, context: 'ocrRoleWrite' })
+            wx.showToast({ title: '保单已保存；' + missingMembers.join('、') + ' 的角色待补', icon: 'none' })
+          }
         } else {
           // UI 审计 F-S3：角色补写失败不再静默吞错（保单已写入，提示用户稍后可手动调整角色）
           errorHandler.handle({ msg: '成员角色同步失败（apiGetFamily 返回空）' }, { silent: true, context: 'ocrRoleWrite' })
@@ -484,6 +573,10 @@ Component({
       var bloodNames = [primaryHolder], seen = { [primaryHolder]: true }
       function _add(name) { if (name && !seen[name]) { seen[name] = true; bloodNames.push(name) } }
       allPolicies.forEach(function(p) {
+        // 2026-09-19 修（流程审计 P1-2）：原实现只把"票数最高的投保人"（primaryHolder）列进角色卡，
+        // 次要投保人不会出现；而后端建档范围以"投保人/被保人/受益人"为准 → 会出现"后端建了档、
+        // 角色卡却没问过"的不对称。这里补齐全部投保人，使角色卡展示的人与后端会创建的人一致。
+        _add(p.policyholder_name)
         _add(p.insured_name)
         if (p.beneficiary_name && !/法定|法定继承人|未指定/.test(p.beneficiary_name)) _add(p.beneficiary_name)
       })
@@ -496,16 +589,54 @@ Component({
         if (cached) candidates.push(cached)
       } else {
         // 悬空修复：searchFamilies 网络失败降级为空候选（默认"新建家庭"），不再抛错冒泡至 _doSave 悬空
-        var matchRes = null
-        try { matchRes = await api('searchFamilies', { keyword: primaryHolder }) } catch (e) { matchRes = null }
+        //
+        // 2026-09-19 修（流程审计 P1-1）：候选不再按"家庭名精确相等"过滤。
+        // 后端 searchFamilies 本就是**正则子串**双路匹配（家庭名 family_name **或**成员 name，
+        // family-list.js L45-46），返回项已含两类命中；前端再 `c.name === primaryHolder` 一刀切，
+        // 把「成员名命中」与「子串命中」全部丢弃 → 用户只能"新建家庭"，同一家庭被拆成多份档案。
+        // 典型场景：① 给已有客户上传配偶投保的保单（家庭名是本人名，投保人只在成员表里）
+        //          ② 客户档案叫「李姐-转介绍」（家庭名包含关键词但不等）
+        // 另：关键词从"仅投保人"扩为"投保人 + 各被保人"——父母为孩子投保时，投保人既不是家庭名
+        // 也不是成员，只有被保人姓名能命中（原实现此场景必然找不到）。
+        var keywords = [primaryHolder]
+        allPolicies.forEach(function(p) {
+          var n = (p.insured_name || '').trim()
+          if (n && keywords.indexOf(n) === -1) keywords.push(n)
+        })
+        var searchResults = await Promise.all(keywords.map(function(kw) {
+          return api('searchFamilies', { keyword: kw }).catch(function() { return null })
+        }))
         if (this._disposed) return null
-        if (matchRes && matchRes.ok) {
-          var cands = (matchRes.data.families || []).filter(function(c) { return c.name === primaryHolder })
-          if (cands.length > 0) {
-            var details = await Promise.all(cands.map(function(c) { return apiGetFamily(c._id).then(function(f) { return { c: c, f: f } }).catch(function() { return { c: c, f: null } }) }))
-            if (this._disposed) return null
-            details.forEach(function(item) { if (item.f) candidates.push(item.f) })
-          }
+        var seenIds = {}, rawCands = []
+        searchResults.forEach(function(res, ri) {
+          if (!res || !res.ok) return
+          ;(res.data.families || []).forEach(function(c) {
+            if (!c || !c._id || seenIds[c._id]) return
+            seenIds[c._id] = true
+            rawCands.push({ c: c, kw: keywords[ri] })
+          })
+        })
+        if (rawCands.length > 0) {
+          var details = await Promise.all(rawCands.map(function(rc) {
+            return apiGetFamily(rc.c._id).then(function(f) { return { f: f, kw: rc.kw } }).catch(function() { return { f: null, kw: rc.kw } })
+          }))
+          if (this._disposed) return null
+          details.forEach(function(item) {
+            if (!item.f) return
+            // 命中依据 + 强度排序（供用户核对；强命中靠前，默认预选取首位）
+            var fn2 = item.f.name || '', kw = item.kw, rank = 3, basis = '名称近似'
+            if (fn2 === kw) { rank = 0; basis = '家庭名相同' } else if (fn2.indexOf(kw) !== -1) { rank = 2; basis = '家庭名包含「' + kw + '」' } else {
+              var hit = (item.f.members || []).find(function(x) { return x.name === kw })
+              if (hit) { rank = 1; basis = '成员「' + kw + '」所在家庭' } else {
+                var fz = (item.f.members || []).find(function(x) { return x.name && x.name.indexOf(kw) !== -1 })
+                if (fz) { rank = 1; basis = '成员「' + fz.name + '」所在家庭' }
+              }
+            }
+            item.f._basis = basis
+            item.f._rank = rank
+            candidates.push(item.f)
+          })
+          candidates.sort(function(a, b) { return (a._rank || 9) - (b._rank || 9) })
         }
       }
       // 2026-09-09 回滚：恢复默认预选（产品要求）。缓存命中优先，否则预选第一候选；
@@ -514,7 +645,7 @@ Component({
       var defaultPick = cachedValid ? cachedId : (candidates.length > 0 ? candidates[0]._id : 'new')
       this._stageCtx = { primaryHolder: primaryHolder, bloodNames: bloodNames }
       var candsUI = candidates.map(function(c) {
-        return { _id: c._id, name: c.name, membersText: (c.members || []).map(function(m) { return m.name + (m.role ? '(' + m.role + ')' : '') }).join('、') }
+        return { _id: c._id, name: c.name, basis: c._basis || '', membersText: (c.members || []).map(function(m) { return m.name + (m.role ? '(' + m.role + ')' : '') }).join('、') }
       })
       this.setData({
         'ocrMask.visible': true, 'ocrMask.phase': 'match',
@@ -664,6 +795,10 @@ Component({
       var sheet = this.data.ocrSheet
       if (!sheet.visible) return
       var data = e.detail || {}
+      // 审计 #3：保额 sheet 以「万」呈现，写库前转回元（与 edit-form 的 wanToYuan 同口径）；
+      // 填了「亿」等其它单位时保持原样，交下游 _toYuanAmount 解析
+      var saRaw = String(data.sum_assured == null ? '' : data.sum_assured).replace(/[,，\s]/g, '').replace(/万$/, '')
+      if (saRaw && /^\d+(\.\d+)?$/.test(saRaw)) data.sum_assured = String(wanToYuan(saRaw))
       if (sheet.policyIndex === -1) {
         // 手动录入新增：保留非空字段，清空项不入库
         // M2：人工录入视为人工核对过，置 auto_confirmed=true（避免待核对组残留）
@@ -707,9 +842,15 @@ Component({
     onFailedRetry() { if (!this._disposed) this._doSave() },
     onFailedBack() {
       if (this._disposed) return
+      // 2026-09-19 修（流程审计 P2-4）：失败态「放弃全部」必须同时清掉本地批次快照。
+      // 否则 checkResume 在下次进入首页/报告页时再次弹"检测到未完成的保单处理…是否继续？"——
+      // 用户刚明确放弃的批次又复活了。对照 done 放弃（L332-341）与移除最后一项（L363-367）：
+      // 两处都 _clearBatch() + triggerEvent('discarded')，本路径此前两样都缺。
+      this._clearBatch()
       this._procPolicies = []; this._procCash = []; this._procErrors = []
       this.setData(Object.assign(flow.hide(), { 'ocrMask._policies': [], 'ocrMask._cashValues': [], 'ocrMask._familyId': '' }))
       this._emitBusy()
+      this.triggerEvent('discarded')
     },
     onSavedHome() {
       if (this._disposed) return
@@ -754,14 +895,14 @@ Component({
       return {
         product_name: '产品名称', insurance_category: '险种', policy_number: '保单号', insurer: '保险公司',
         effective_date: '生效日期', insured_name: '被保险人', policyholder_name: '投保人', beneficiary_name: '受益人',
-        sum_assured: '保额', payment_method: '缴费方式', payment_period: '缴费年限', annual_premium: '年缴保费',
+        sum_assured: '保额(万)', payment_method: '缴费方式', payment_period: '缴费年限', annual_premium: '年缴保费(元)',
         insurance_period: '保障期限'
       }
     },
     // 置信度三档 → 底色 tone（设计稿：高白/中淡黄/低淡橙/已修改浅蓝）
     _fieldTone(conf) {
       if (conf < 0.8) return 'low'
-      if (conf < 0.95) return 'mid'
+      if (conf < OCR_RELIABLE_THRESHOLD) return 'mid'
       return 'high'
     },
     _buildSheetFields(p) {
@@ -774,7 +915,7 @@ Component({
       if (!hasTone && (p2.confidence || 0) < 0.8) {
         var lowAll = ['product_name', 'policy_number', 'insured_name', 'sum_assured', 'annual_premium', 'effective_date']
         lowAll.forEach(function(f) { tone[f] = 'low' })
-      } else if (!hasTone && (p2.confidence || 0) < 0.95) {
+      } else if (!hasTone && (p2.confidence || 0) < OCR_RELIABLE_THRESHOLD) {
         var midAll = ['product_name', 'policy_number', 'insured_name', 'sum_assured', 'annual_premium', 'effective_date']
         midAll.forEach(function(f) { tone[f] = 'mid' })
       }
@@ -797,7 +938,16 @@ Component({
           // UI 审计 交互 M2/M1：必填星号；effective_date 走原生 date picker（与 edit-sheet 一致）
           // 数值字段补 pattern：兼容"80万/2亿/800,000"等单位与分隔写法，仅拦截纯非数字（原 _validateSheet 能力）
           var isNum = SHEET_NUMERIC_KEYS.indexOf(k) !== -1
-          var f = { key: k, label: FL[k], value: p2[k] || '', tone: t, confidence: t === 'low' ? 0.4 : (t === 'mid' ? 0.7 : 1), modified: false, required: REQUIRED_KEYS.indexOf(k) !== -1, type: k === 'effective_date' ? 'date' : (isNum ? 'digit' : 'text') }
+          // 审计 #3：保额以「万」呈现（与 edit-form 契约一致），保存时转回元。
+          // 原展示元数字而 label 裸「保额」+ digit 键盘 → 用户按"万"心智填 80，落库 80 元（差 1e4）
+          var dispVal = p2[k] || ''
+          if (k === 'sum_assured' && p2.sum_assured != null && p2.sum_assured !== '') {
+            var saS = String(p2.sum_assured).replace(/[,，\s]/g, '')
+            if (/万$/.test(saS)) dispVal = saS.slice(0, -1)                        // OCR 原始值已是「万」
+            else if (/^\d+(\.\d+)?$/.test(saS)) dispVal = String(yuanToWan(saS))   // 元 → 万
+            else dispVal = saS                                                      // 亿/元等保留原值
+          }
+          var f = { key: k, label: FL[k], value: dispVal, tone: t, confidence: t === 'low' ? 0.4 : (t === 'mid' ? 0.7 : 1), modified: false, required: REQUIRED_KEYS.indexOf(k) !== -1, type: k === 'effective_date' ? 'date' : (isNum ? 'digit' : 'text') }
           if (isNum) { f.pattern = '^[0-9万亿,，.\\s]+$'; f.patternMsg = '「' + FL[k] + '」需为数字' }
           return f
         })

@@ -64,6 +64,8 @@
 | 分批 | 每批并发 OCR（ocrOnly，无 AI；9 张全并发安全） |
 | 模型分流 | **1 张与 N 张统一 → `aiExtractParallel`（DeepSeek 直连，每张 1 次并发）**（2026-08-30 收敛：`aiExtractBatch`/hy3 单图路径已删除，批量拼接已弃用） |
 | 字段 | 保单号、保险公司、生效日期、投保人、被保人、产品名、险种分类、保额、保费、缴费期、保障期、受益人、出生日期 |
+| 现价表同图绑定（2026-09-12） | `mixed` 图（保单正页 + 现价表同屏）提取的现价表携带来源保单键（`from_policy`），写库时优先直连该保单（`matched_by='same_image'`），多候选/未命中回落通用模糊匹配 |
+| 页脚残表判据（2026-09-12） | OCR 文本自带行 y 坐标 → 现价表标题落入页脚区（>0.75）且表行数 <12 → 否决提取（`cashValueRejected='footer_residue'`，经 operation_logs 可观测）；后半页完整大表不受影响 |
 
 **置信度分流**（`ocr-confidence.js` 单一真相源，`CONF_THRESHOLD=0.9` + 核心字段完整性双条件）：
 - `autoConfirmed=true` → 自动入库（自动/手动确认路径）
@@ -123,7 +125,7 @@ triggerAnalysis (对话工具) → conversationAI/_dispatch → cloud.callFuncti
 | 维度 | BLOCK（必填，无逃生口） | WARN（建议，可跳过） |
 |------|------------------------|----------------------|
 | 家庭成员 | 无成员；经济支柱（本人/经济支柱）缺可用年龄（birth_date 推导后仍空） | 非支柱成员缺年龄；缺性别/职业/健康 |
-| 家庭财务 | —（收入缺失不再 BLOCK，2026-09 降 degraded 放行定性分析） | 家庭收入空且无成员收入可推导（degraded）；收入空但部分成员有收入（弱锚点）；缺负债/固定支出/年度保费预算 |
+| 家庭财务 | —（收入缺失不再 BLOCK，2026-09 降 degraded 放行定性分析） | 家庭收入空且无成员收入可推导（degraded）；收入空但部分成员有收入（弱锚点）；缺总负债/年度保费预算 |
 | 已有保障 | 无有效保单（loadActivePolicies 已滤软删） | 保单缺保额/被保人；状态待确认 |
 
 **前端交互（画像确认，2026-08-30）**：点击深度分析 → **每次先弹画像确认**（显著提示"信息不完整或不真实将严重影响报告质量"）+ 家庭成员列表/财务摘要/保障摘要 + 缺口高亮（BLOCK 红/×、WARN 琥珀/!）→ 按钮：「信息属实，开始分析」（主）/「去补全」（缺口项，复用 edit-sheet mode: member/financials/policy/upload）/「取消」。后端 `422` 兜底时同一容器渲染（`onBlocked` 补齐画像）。补全后再次点击自然重查（无前端状态）。
@@ -170,7 +172,7 @@ triggerAnalysis (对话工具) → conversationAI/_dispatch → cloud.callFuncti
 | 工具 | 用途 | 执行模式（v10 确认策略） |
 |------|------|---------|
 | `upsertMember` | 录入/更新成员属性（姓名/年龄/职业/健康/角色/性别） | **默认执行 + 撤销**（5 分钟内可撤销） |
-| `updateFinances` | 录入/更新家庭财务（年收入/负债/固定支出） | **默认执行 + 撤销**（5 分钟内可撤销） |
+| `updateFinances` | 录入/更新家庭财务（年收入/总负债/年保费预算） | **默认执行 + 撤销**（5 分钟内可撤销） |
 | `addPolicy` | 录入保单（产品/险种/保额/保费/被保人等） | **前端确认卡**（保单信息） |
 | `updatePolicy` | 修改已有保单字段 | **前端确认卡**（保单信息） |
 | `createFamily` | 新建客户家庭档案 | **前端确认卡**（家庭结构） |
@@ -287,7 +289,7 @@ age（冗余，由 birth_date 推导）, occupation, health, income（万元）,
 
 ### finances — 财务主数据
 ```
-_id, family_id, annual_income（元）, total_debt（元）, fixed_annual_expense（元）, debt_type, updated_at
+_id, family_id, annual_income（元）, total_debt（元）, debt_type, annual_premium_budget, updated_at
 ```
 **唯一索引**：`family_id`
 
@@ -313,18 +315,23 @@ created_at, updated_at
 - `source.url` + `confirm_log` 保证每个概念值可回溯（合规审计）
 - `_openid` 隔离（个人主体单代理人，产品数据归建档人；多代理人共享为后话）
 
-### facts — 三元组关系表
+### facts — 事实表
 ```
 _id, family_id, subject_type:'member'|'family'|'policy', subject_id, subject_name,
-predicate（66 谓词 L1/L2 全维度：关系/保障/人况/经济依赖/风险敞口/现有保障/家庭资产/财富目标/关键时点/投保偏好/法律身份；enum 单一事实源 tools.js，策略单一事实源 fact-write.js）,
+predicate（开放文本：AI 原话，不再受词表限制）,
+kind:'fact'|'constraint'|'relation'|'lead', axis（归一化属性槽，可空）,
 object_type:'member'|'policy'|'literal', object_id, object_value, object_value_type,
 confidence, source:'ocr'|'ai'|'user_form'|'agent_confirmed'|'agent_edit', status:'active'|'superseded',
 reasoning, created_at
 ```
 
-**写入策略**：`FACT_STRATEGIES` 66 谓词全覆盖（dedup 12 + versioned 54），未知谓词默认 dedup 兜底；5 条入口统一经 `addFact` 单点写入。`versioned` 策略自动 supersede 旧事实 → 写入新事实。**facts/policies 更新走 supersede 保留审计轨迹，不物理删除**；例外：`deleteFamily`（整家庭删除）为物理删除——先 batchTx 清空关联集合（policies/facts/messages/operation_logs 等），全部成功后才删除 family 文档（部分失败保留 family 返回 207 可重试）。
+**语义标注（2026-09-14 重构）**：`kind` 决定"这条信息怎么被消费"——`fact` 可直接引用 / `constraint` 分析时必须考虑 / `relation` 提示多实体 / `lead` 列入待确认；`axis` 决定"是否参与确定性计算"，字典单一事实源 `_shared/fact-vocab.js`（未命中留空，**信息不丢**，仍按 kind 进入 AI 上下文）。
 
-**去重策略**：`dedup` 谓词（关系、备注等）按 subject+predicate+object_value 查重，已存在则跳过；`versioned` 谓词（保单字段、个人特征等）先 supersede 旧事实再写入新事实，保留版本历史。
+**写入策略**：谓词开放，写策略由 axis 槽派生（属性类 `versioned` / 关系与多值类 `dedup` / 保单节点属性 `versioned`），5 条入口统一经 `addFact` 单点写入。`versioned` 自动 supersede **同槽**旧事实 → 写入新事实。**facts/policies 更新走 supersede 保留审计轨迹，不物理删除**；例外：`deleteFamily`（整家庭删除）为物理删除——先 batchTx 清空关联集合（policies/facts/messages/operation_logs 等），全部成功后才删除 family 文档（部分失败保留 family 返回 207 可重试）。
+
+**去重/消解**：`dedup` 按 subject+(axis 或 predicate)+object_value 查重，已存在则跳过；`versioned` 按 subject+axis 消解（同槽的不同说法也互相作废），保留版本历史。
+
+> 原「`FACT_STRATEGIES` 66 谓词全覆盖」已废弃（未命中谓词兜底「备注/有特征」→ 语义压平 + 消费侧白名单二次过滤 = 等于没采）。
 
 ### 其他集合
 `messages`(对话) / `agents`(登录) / `agent_logs`(审计) / `operation_logs`(操作日志)
@@ -339,7 +346,7 @@ reasoning, created_at
 | dataWrite | 19 | createFamily / updateFamily / deleteFamily / upsertMember / updateFinances / recordField / updateMember / deleteMember / addFact / updateFactConfidence / deleteFact / writePolicy / writePoliciesBatch / deletePolicy / updatePolicy / changePolicyStatus / writeCashValue / writeMessage / writeOpLog（setStage/submitProfiling 已删） |
 | reportAI | 1 | 报告生成（portrait/review/plan/analysis/summary/conclusion/suggestions + core_insights），前端注册名 `generateReport`（apiClient），对话侧由 triggerAnalysis 工具触发（fire-and-forget，DB 30s 节流） |
 | ocrService | 2 | ocrOnly（OCR 并发识别）/ aiExtractParallel（AI 提取，DeepSeek 直连，1 张与 N 张统一；aiExtractBatch 已收敛删除）；环境变量含 DEEPSEEK_API_KEY/TENCENT_SECRET_ID/TENCENT_SECRET_KEY（DeepSeek 直连） |
-| conversationAI | 2 mode + 14 工具路由 | chat / generateText；_dispatch 按工具定义数组路由 → 复用 dataWrite + dataQuery + reportAI；chat 内置 sug/CONFIRM/KEEP 拦截（确认卡二次执行）；写入类工具（成员/财务/保单/新建家庭）挂 write_confirm 确认卡，addFact 免确认；addFact 工具谓词为自由字符串（非 enum 约束），后端 `FACT_STRATEGIES` 兜底未知谓词为 dedup |
+| conversationAI | 2 mode + 14 工具路由 | chat / generateText；_dispatch 按工具定义数组路由 → 复用 dataWrite + dataQuery + reportAI；chat 内置 sug/CONFIRM/KEEP 拦截（确认卡二次执行）；写入类工具（成员/财务/保单/新建家庭）挂 write_confirm 确认卡，addFact 免确认；addFact 工具谓词为自由字符串（非 enum 约束），另填 kind（信息性质）/axis（归一化属性槽），后端由 `_shared/fact-vocab` 派生写策略 |
 | login | 1 | openid 静默登录（方案 A：个人主体下微信唯一身份即账号，无需手机号授权；writeSeam 建档/更新 agents） |
 | productService | 3（规划） | 产品条款主数据·专家评审（2026-08 定稿）：matchProductByName（OCR 产品名匹配 products）/ extractClausePdf（云存储取 PDF + pdf-parse 提取文本，扫描件判定）/ parseProductClause（AI 概念化提取 liability+benefits）；条款统一 PDF 上传，独立超时预算；写入 products，人工确认走 dataWrite.confirmProduct |
 | cleanup | 2 mode | prune（生产 TTL 清理，NODE_ENV=production 守卫，cron `daily-log-prune` 每日 3:00，按集合区分时间字段 agent_logs.timestamp/operation_logs.created_at）/ clear（开发全清，需 openid + development） |
@@ -357,7 +364,7 @@ reasoning, created_at
 | 工具执行 | 三类：确认卡（addPolicy/updatePolicy/createFamily）/ 默认执行+撤销（upsertMember/updateFinances/addFact）/ 直接执行（query*/triggerAnalysis） | 写入策略按数据敏感度分流 |
 | 降级策略 | 对话后端 function calling 429 指数退避重试（orchestrate withRetry）→ generateText（无工具兜底）→ 兜底文本 | 多级降级保证可用性 |
 | 上下文构建 | v2-context.js buildFamilyContext (5 场景: list/conversation/report/tool/analysis) | 统一上下文构建，各云函数共用 |
-| 三元组写入 | addFact 单入口，FACT_STRATEGIES 谓词全覆盖 | 5 条产线（OCR/对话/表单/备注/编辑）统一策略 |
+| 事实写入 | addFact 单入口；谓词开放 + kind/axis 标注，写策略由 axis 槽派生 | 5 条产线（OCR/对话/表单/备注/编辑）统一策略；非标信息不再被压平进「备注」 |
 | 数据不可变 | facts+policies 更新走 supersede 保留审计轨迹 | 保留审计轨迹；deleteFamily 例外：物理删除（batchTx 清关联 → 删 family） |
 | 对话渲染 | 已删除流式节流（v10 无流式，完整文本返回） | 单通道无流式渲染 |
 | 定时器管理 | chat-panel detached 生命周期全量清理 | 避免内存泄漏 |
@@ -441,7 +448,7 @@ reasoning, created_at
 
 | 集合 | 记录内容 |
 |------|---------|
-| agent_logs | 每轮对话：openid/familyId/sessionId/action/model/userText(200字)/replyText(800字)/tools[]/metrics/promptVersion；时间字段 `timestamp` |
+| agent_logs | 每轮对话：openid/familyId/sessionId/action/model/userText(200字)/replyText(800字)/tools[]/metrics/promptVersion/tokens{input,output,total}/cost/**currency**；时间字段 `timestamp`。记账口径（定价→配额→日志）由 `_shared/ai-accounting.js` 单点提供（含失败调用留痕），`currency` 必须与 `cost` 同时落库——hy3=USD、deepseek-*=CNY，缺货币时跨模型求和静默出错 |
 | operation_logs | OCR/编辑等操作：action/openid/family_id/result{status,summary,error}/meta；时间字段 `created_at` |
 
 ### 11.5 登录鉴权与越权防护
@@ -619,8 +626,7 @@ reasoning, created_at
 | 操作 | 目标 | 超时处理 |
 |------|------|---------|
 | chat | ≤5s（纯问答）/ ≤10s（含工具执行+回流） | 前端 60s 超时 + retries:0（对齐 P2-3：超时≠后端失败） |
-| generateText | ≤8s | safeCallChat 超时兜底 |
-| ocrOnly（单张） | ≤15s | ocrService 平台超时 100s（实测生效）；前端 AI 提取 timer 70s（有意 < 平台，防 race 丢错误码） |
+| ocrExtract（1-9 张主链） | ≤60s | 云函数超时 100s（cloudbaserc.json `ocrService.timeout`）；前端 timer 70s（有意 < 云函数超时，防与平台同时触发时 race 丢真实错误码） |
 | reportAI | ≤60s | 云函数超时 60s；对话侧 fire-and-forget 不阻塞 |
 | conversationAI | ≤60s | 云函数超时 60s；前端对话调用 timer 60s |
 

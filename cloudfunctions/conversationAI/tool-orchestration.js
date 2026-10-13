@@ -18,9 +18,10 @@
  *   - toolSummaries: { [toolName]: (tr) => string|null }  仅 summary 函数
  *   - buildToolSystemPrompt: prompts.js 导出（单通道主 prompt）
  *
- * 工具分类（确认策略，2026-08-29 用户决策）：
- *   - CONFIRM_TOOLS（写入成员/财务/保单/新建家庭）→ 不 dispatch，构造 write_confirm 确认卡，前端确认后二次执行
- *   - addFact（facts 写入）→ 免确认直接执行
+ * 工具分类（确认策略，2026-08-29 用户决策；2026-09-22 审计后已收敛为两份清单）：
+ *   - CONFIRM_TOOLS_KEEP（addPolicy / updatePolicy / createFamily）→ 不 dispatch，
+ *     构造 write_confirm 确认卡，前端确认后二次执行
+ *   - DEFAULT_EXEC_UNDO_TOOLS（upsertMember / updateFinances / addFact）→ 默认执行 + 撤销记录
  *   - delete* → dispatch 时 409 待确认（现状保留）
  *   - query* / triggerAnalysis → 直接执行
  *
@@ -32,16 +33,25 @@
 const cloud = require('wx-server-sdk')
 const { buildSuggestions, buildWriteConfirms } = require('./suggestion-builder')
 const { withRetry } = require('./_shared/retry')
+// purpose 枚举（观测/成本归因单一事实源）。
+// 注意：必须用 ai-purposes（无依赖）而非 config——config 在模块顶层执行 cloud.init()，
+// 本文件承诺"懒加载以避免启动期炸裂"，顶层 require config 会在加载期就要求 SDK 可用。
+const { AI_PURPOSE } = require('./_shared/ai-purposes')
 
-// 需前端确认的写入类工具（用户决策：家庭结构/家庭财务/保单信息均要确认；facts 写入免确认）
-const CONFIRM_TOOLS = ['upsertMember', 'updateFinances', 'addPolicy', 'updatePolicy', 'createFamily']
+// 工具分流（2026-09-22 全面审计 · 死代码清理）：
+// 原此处有一个 `CONFIRM_TOOLS = ['upsertMember','updateFinances','addPolicy','updatePolicy','createFamily']`
+// 常量并在文件尾导出，但它与真正的分流清单**矛盾**（把已改免确认的 upsertMember/updateFinances
+// 仍列为"需确认"），且全仓零引用（生产/测试/文档均无 import）——文件头 L22-23 也复述了这个过期分类。
+// 真实分流只有下面两处（A 类默认执行+可撤销 / B 类保留确认卡），定义已提到模块级以便导出与单测复用。
+const DEFAULT_EXEC_UNDO_TOOLS = ['updateFinances', 'upsertMember', 'addFact']
+const CONFIRM_TOOLS_KEEP = ['addPolicy', 'updatePolicy', 'createFamily']
 
 // token 成本审计 P2：按用户意图裁剪工具 schema（全量 14 个注入是每消息固定 9-12K tokens 开销）
 // 高频查询工具常驻；写/管理工具按意图关键词追加；无意图命中或用户主动要求"全部"时回退全量（保能力优先）
 const BASE_TOOLS = ['queryPolicies', 'queryMembers', 'queryFacts', 'queryMemberProfile']
 const INTENT_TOOLS = [
   { kw: ['成员', '家人', '孩子', '配偶', '老人', '父母', '加人', '添加', '老婆', '老公', '媳妇', '丈夫', '妻子', '妈', '爸', '爹', '娘', '儿子', '女儿', '娃', '儿媳', '女婿', '岳父', '岳母', '婆婆', '公公', '爷爷', '奶奶', '外公', '外婆', '孙子', '孙女', '外孙', '外孙女', '兄弟', '姐妹', '哥哥', '弟弟', '姐姐', '妹妹'], tools: ['upsertMember', 'deleteMember'] },
-  { kw: ['收入', '支出', '负债', '财务', '年薪', '月薪', '预算'], tools: ['updateFinances'] },
+  { kw: ['收入', '支出', '负债', '总负债', '财务', '年薪', '月薪', '预算'], tools: ['updateFinances'] },
   { kw: ['保单', '保险', '保额', '投保', '续保', '合同', '重疾险', '医疗险', '寿险', '意外险'], tools: ['addPolicy', 'updatePolicy', 'deletePolicy'] },
   { kw: ['事实', '记一下', '记录', '注意', '患有', '过敏', '职业', '血压', '手术', '烟酒'], tools: ['addFact', 'deleteFact'] },
   { kw: ['分析', '报告', '生成', '检视', '评估'], tools: ['triggerAnalysis'] },
@@ -70,7 +80,40 @@ function _isWriteClaim(text, userText) {
   if (!text || !userText) return false
   if (!WRITE_CLAIM_RE.test(text)) return false
   // 用户输入需含写意图，防止纯问答（如复述确认卡机制）误触发重试
-  return /(修改|更新|调整|改成|改为|变更|设置|新增|补录|录入|收入|支出|负债|财务|年薪|月薪|成员|家人|保单|保险|投保|保额|新建|创建)/.test(userText)
+  return /(修改|更新|调整|改成|改为|变更|设置|新增|补录|录入|收入|支出|负债|总负债|财务|年薪|月薪|成员|家人|保单|保险|投保|保额|新建|创建)/.test(userText)
+}
+
+/**
+ * 直连通道记账（agent_logs + 用户月度配额）——2026-09-12 补齐。
+ *
+ * 为什么不让直连走 ai-gateway：gateway 的 _secureInput 会对**每条 message**（含塞满工具协议
+ * 与客户档案的 system prompt）做 sanitize，而 sanitize 按 SECURITY.MAX_INPUT 截断
+ * （见 pii-rules.js `if (s.length > limit) s = s.substring(0, limit)`）→ 会截断 prompt、
+ * 直接损坏工具决策。因此直连保持裸调用，成本与配额在此显式补记，口径与 gateway 一致
+ * （2026-09-15 候选 3 起由 `_shared/ai-accounting.recordAIUsage` 统一提供，不再是人工对齐）。
+ */
+async function _recordDirectUsage({ openid, familyId, sessionId, usage, status, error }) {
+  if (!openid) return
+  try {
+    const db = cloud.database()
+    // 架构审查候选 3：口径统一收敛到 _shared/ai-accounting（算价 → 按状态计配额 → 写 agent_logs）。
+    // 此前这里手写「calcTokenUsage + bumpAgentTokens + logAI」三联，与 ai-gateway 的实现各写一遍，
+    // 靠人工对齐口径——正是 2026-09-12 之前"直连既不写 agent_logs 也不计配额"漏账口的成因土壤。
+    const { recordAIUsage } = require('./_shared/ai-accounting')
+    const { AI } = require('./_shared/config')
+    await recordAIUsage(db, {
+      openid,
+      familyId,
+      sessionId: sessionId || '',
+      action: 'conversation_tools',
+      model: AI.DIRECT_MODEL,
+      usage,
+      status,
+      error
+    })
+  } catch (e) {
+    console.warn('[tool-orchestration] 直连记账失败（不阻断对话）:', (e && e.message) || e)
+  }
 }
 
 // 强指令重试：hy3/hunyuan-exp 工具遵从差（2026-08-29 两轮实测"修改家庭收入"均不输出
@@ -88,10 +131,13 @@ async function _retryForceToolCall({ toolMessages, filteredDefs, userText, ctx, 
   try {
     const { callChatWithToolsDirect } = require('./_shared/ai-client')
     // openid 透传观测归因（裸直连不经 ai-gateway，须显式传）
-    const directPhase = await callChatWithToolsDirect(retryMsgs, filteredDefs, { maxTokens: 1200, openid })
+    const directPhase = await callChatWithToolsDirect(retryMsgs, filteredDefs, { maxTokens: 1200, openid, purpose: AI_PURPOSE.CONVERSATION_RETRY_DIRECT })
     console.log('[tool-orchestration] 强指令重试(DeepSeek 直连): toolCalls=%d text=%s',
       (directPhase.toolCalls || []).length, String(directPhase.text || '').slice(0, 300))
-    if (directPhase.toolCalls && directPhase.toolCalls.length > 0) return directPhase
+    if (directPhase.toolCalls && directPhase.toolCalls.length > 0) {
+      await _recordDirectUsage({ openid, familyId, sessionId: sid, usage: directPhase.usage })
+      return directPhase
+    }
     console.warn('[tool-orchestration] 强指令重试(DeepSeek 直连) 仍无 tool_calls，回退 hy3 强指令重试')
   } catch (e) {
     console.warn('[tool-orchestration] 强指令重试(DeepSeek 直连) 失败，回退 hy3 强指令重试:', (e && e.message) || e)
@@ -105,7 +151,7 @@ async function _retryForceToolCall({ toolMessages, filteredDefs, userText, ctx, 
       () => safeCallChatWithTools(
         retryMsgs, filteredDefs, callChatWithTools,
         { cloud, db: cloud.database(), openid, familyId, sessionId: sid, model: 'hy3', action: 'conversation_tools_retry', skipRateLimit: true },
-        { maxTokens: 1200 }
+        { maxTokens: 1200, purpose: AI_PURPOSE.CONVERSATION_RETRY_HY3 }
       ),
       { maxAttempts: 2, backoff: 'exponential', delayMs: 2000, retryOn: (e) => (e.message || '').includes('429'), label: 'tool-orchestration 强制工具调用重试(hy3)' }
     )
@@ -119,13 +165,39 @@ async function _retryForceToolCall({ toolMessages, filteredDefs, userText, ctx, 
 // 429 罕见、DEEPSEEK_API_KEY 已配置），hy3/SDK 作 fallback。两通道共用同一 toolMessages/filteredDefs，
 // 返回结构均为 { text, toolCalls, usage }（toolCalls 为 {id,type,function:{name,arguments}} 规范化格式）。
 async function _callPhase1(toolMessages, filteredDefs, ctx, sid) {
-  const { callChatWithToolsDirect, callChatWithTools } = require('./_shared/ai-client')
-  const { safeCallChatWithTools } = require('./_shared/ai-gateway')
+  const { callChatWithToolsDirect } = require('./_shared/ai-client')
 
   // 通道 1：DeepSeek 直连（仅 429 退避重试；缺 key/网络/格式错误直接回退 hy3，不空耗重试）
+  //
+  // 2026-09-20（流程审计 P1-B4 (b)/(c) 收口 · **决定不做**）：
+  //   (b) 给 phase1 传更紧的 timeoutMs（现吃 ai-client 默认 30000）
+  //   (c) 前端超时与函数时限同为 60s（"前端先放弃 → 用户重试 → 双计费"，前端见
+  //       miniprogram/components/chat-panel/index.js 的 `{ timeout: 60000 }`）
+  // **不做的依据**：(b) 定阈值需要 agent_logs 里 conversation_phase1 的**耗时分布**，而云函数日志
+  //   CLI 不可读（本项目多处记载），当前拿不到数据；无数据收紧会把偶发慢请求变成确定性失败。
+  //   已知直连实测 11-15s，30s 对它是余量而非浪费。
+  // **复核修正审计的一处数字**：审计算的"最坏 30+1.5+30=61.5s"不成立——下方 retryOn 只匹配 429
+  //   （服务端**立刻**返回），超时**不**重试，故单通道最坏 ≈31.5s。真正的超预算路径是
+  //   **通道回退链**：直连 30s 超时 → 回落 hy3 再最坏 30s → 60s+。
+  // ⚠️ 将来若要收口，切入点不是"把 30s 改小"，而是给 phase1 一个**跨通道总预算**，
+  //    否则只是把超时点从一个通道挪到另一个。改之前先取耗时分布。
+  // 2026-09-28 复审（dsh 审计项②）：直连通道此前**只记账不校验**月度配额 ——
+  // `_recordDirectUsage` 是事后累加，于是配额对 phase1 这条**最高频**路径实际不封顶
+  // （trial 的 30000 token 用满后照常对话，只有落到通道 2 的请求才会被拦）。
+  // 现改为入口预检：配额耗尽即**跳过直连**，直接走通道 2 —— ai-gateway 的 _pipelineGuard
+  // 必定查配额（该处无 skip 开关），会拦下并给出可操作原因（dsh 本轮新增的 blocked 通道）。
+  // 效果等价于让网关拦，但省掉一次注定超额的模型调用（约 11-15s + 计费）。
+  const _quota = await _directQuotaAllowed(ctx)
+  if (!_quota.allowed) {
+    console.warn('[tool-orchestration] 月度配额已耗尽 → 跳过 phase1 直连，交由通道 2 拦下:', _quota.reason)
+    return _callPhase2Hy3(toolMessages, filteredDefs, ctx, sid)
+  }
+
   try {
     const direct = await withRetry(
-      () => callChatWithToolsDirect(toolMessages, filteredDefs, { maxTokens: 1200 }),
+      // 2026-09-12 观测修复：补 openid（实测该路 operation_logs 记录 openid 为空 → 归因/配额全部漏掉
+      // 这条最高频调用）+ purpose（原不传导致 purpose 只能反映客户端函数名，无法按业务场景聚合）
+      () => callChatWithToolsDirect(toolMessages, filteredDefs, { maxTokens: 1200, openid: ctx.openid, purpose: AI_PURPOSE.CONVERSATION_PHASE1 }),
       {
         maxAttempts: 2,
         backoff: 'exponential',
@@ -137,19 +209,40 @@ async function _callPhase1(toolMessages, filteredDefs, ctx, sid) {
     if (direct && Array.isArray(direct.toolCalls)) {
       console.log('[tool-orchestration] phase1(DeepSeek 直连): toolCalls=%d text=%s',
         direct.toolCalls.length, String(direct.text || '').slice(0, 200))
+      // 2026-09-12 记账补齐：直连不经 ai-gateway（gateway 的 sanitize 会截断 prompt），
+      // 原先既不写 agent_logs 也不计用户配额——对话是最高频调用，这是最大的漏账口。
+      await _recordDirectUsage({ openid: ctx.openid, familyId: ctx.familyId, sessionId: sid, usage: direct.usage })
       return direct
     }
     console.warn('[tool-orchestration] phase1 直连返回异常，回退 hy3')
   } catch (e) {
     console.warn('[tool-orchestration] phase1 直连失败，回退 hy3:', (e && e.message) || e)
+    // 失败也留痕（带已收到的 usage，如 ai_empty/ai_format 的已消耗输入）
+    await _recordDirectUsage({
+      openid: ctx.openid, familyId: ctx.familyId, sessionId: sid, usage: e && e.usage, status: 'fail',
+      error: { code: (e && e.code) || 'AI_CALL_FAIL', message: (e && e.message) || '' }
+    })
   }
 
-  // 通道 2：hy3（SDK）；skipRateLimit 保留（工具调用 60/60s 用户级限流会误伤多工具并发）
+  // 通道 2：hy3（SDK）
+  return _callPhase2Hy3(toolMessages, filteredDefs, ctx, sid)
+}
+
+/**
+ * 通道 2：hy3（经 ai-gateway，配额/限流/内容安全全链生效）；skipRateLimit 保留
+ * （工具调用 60/60s 用户级限流会误伤多工具并发，配额检查不受该开关影响）
+ *
+ * 2026-09-28 复审：从 `_callPhase1` 尾部提出为独立函数 —— 配额耗尽时需由 `_callPhase1`
+ * **提前**转入本通道（原先只能顺序走到这里，直连已先吃掉一次超额调用）。
+ */
+async function _callPhase2Hy3(toolMessages, filteredDefs, ctx, sid) {
+  const { callChatWithTools } = require('./_shared/ai-client')
+  const { safeCallChatWithTools } = require('./_shared/ai-gateway')
   return withRetry(
     () => safeCallChatWithTools(
       toolMessages, filteredDefs, callChatWithTools,
       { cloud, db: cloud.database(), openid: ctx.openid, familyId: ctx.familyId, sessionId: sid, model: 'hy3', action: 'conversation_tools', skipRateLimit: true },
-      { maxTokens: 1200 }
+      { maxTokens: 1200, purpose: AI_PURPOSE.CONVERSATION_PHASE1_HY3 }
     ),
     {
       maxAttempts: 3,
@@ -159,6 +252,21 @@ async function _callPhase1(toolMessages, filteredDefs, ctx, sid) {
       label: 'tool-orchestration 429 退避'
     }
   )
+}
+
+/**
+ * 直连通道的**入口**月度配额预检（2026-09-28 复审，dsh 审计项②）。
+ * 预检自身失败一律放行（与 guard.checkMonthlyQuota 的口径一致：配额系统不可用不阻断业务）。
+ */
+async function _directQuotaAllowed(ctx) {
+  try {
+    const { checkMonthlyQuota } = require('./_shared/guard')
+    const r = await checkMonthlyQuota(cloud.database(), ctx && ctx.openid)
+    return { allowed: !(r && r.allowed === false), reason: (r && r.reason) || '' }
+  } catch (e) {
+    console.warn('[tool-orchestration] 直连配额预检失败（放行）:', (e && e.message) || e)
+    return { allowed: true, reason: '' }
+  }
 }
 
 // 工具结果回流：把执行结果（成功=模板句，失败=错误详情）回流模型再生成最终回复
@@ -277,11 +385,19 @@ async function _dispatchUndoTools({ tools, toolDefs, dispatch, familyId, openid,
     if (!val.ok) {
       return { toolName, toolCallId, success: false, error: '参数校验失败：' + val.errors.join('；'), validation: true, args }
     }
+    // 2026-09-17 审计 P1-B2：快照失败必须显式记账 —— `before=null` 在恢复侧被解释为"撤销新建"
+    // （restoreFinance/restoreMember 的 null 分支会 silentRemoveDoc 当前文档），于是"没拿到快照"
+    // 与"这条是新建的"两种语义撞车 → 撤销会把**存量**财务/成员文档整删（数据丢失级）。
+    const needSnapshot = toolName === 'updateFinances' || toolName === 'upsertMember'
     let before = null
+    let snapshotFailed = false
     try {
       if (toolName === 'updateFinances') before = await snapshotFinance(db, familyId, openid)
       else if (toolName === 'upsertMember') before = await snapshotMember(db, familyId, openid, args)
-    } catch (e) { console.warn('[tool-orchestration] 快照失败(继续执行):', (e && e.message) || e) }
+    } catch (e) {
+      snapshotFailed = true
+      console.warn('[tool-orchestration] 快照失败（本次不落 undo，避免撤销删存量）:', (e && e.message) || e)
+    }
     const result = await dispatch(toolName, { ...args, familyId }, openid)
       .then(r => r)
       .catch(e => ({ success: false, error: e.message }))
@@ -295,7 +411,11 @@ async function _dispatchUndoTools({ tools, toolDefs, dispatch, familyId, openid,
       let after = null
       if (toolName === 'upsertMember' && result.data && result.data.memberId) after = { member_id: result.data.memberId, action: result.data.action }
       else if (toolName === 'addFact' && result.data && result.data.factId) after = { factId: result.data.factId }
-      const opId = await createUndo(db, { familyId, openid, toolName, args, before, after })
+      // 可撤销性是写入的**前置条件**，不是事后补齐：快照缺失时宁可撤销按钮不出现，
+      // 也不能落一条 before=null 的 undo 记录（撤销时会被当作"新建"而删掉存量文档）。
+      const opId = (needSnapshot && snapshotFailed)
+        ? null
+        : await createUndo(db, { familyId, openid, toolName, args, before, after })
       if (opId) {
         const summary = toolSummaries && toolSummaries[toolName]
           ? toolSummaries[toolName]({ toolName, success: true, result, args })
@@ -392,12 +512,18 @@ async function orchestrate({
       if (tc.type === 'function' && tc.function) {
         let args = {}
         try { args = JSON.parse(tc.function.arguments || '{}') } catch (_) {}
+        // 2026-09-22 全面审计 P1-3：**剥离模型自带的 confirmed**。
+        // 删除类工具的确认门完全依赖这一字段（index.js _dispatch：needsConfirm && !args.confirmed
+        // → 409 待确认），它只应由服务端确认路径注入（_handleConfirm → dispatch(..., confirmed:true)）。
+        // 原实现把模型输出原样透传 → 模型只要输出 deletePolicy{policyId, confirmed:true} 即可**跳过确认**
+        // 直接软删保单 + supersede 保障 facts（且报告缺口结论随之变化、UI 无提示）。
+        // 模型可被 system prompt 里的第三方文本（facts / OCR 产物 / 用户粘贴）诱导输出该字段。
+        if (args && typeof args === 'object' && 'confirmed' in args) delete args.confirmed
         parsed.push({ toolName: tc.function.name, args, toolCallId: tc.id || tc.function.name })
       }
     }
     // ② 工具分流：A 类默认执行+撤销 / B 类保留确认 / 直接执行（query/delete/triggerAnalysis/writeMessage）
-    const DEFAULT_EXEC_UNDO_TOOLS = ['updateFinances', 'upsertMember', 'addFact']
-    const CONFIRM_TOOLS_KEEP = ['addPolicy', 'updatePolicy', 'createFamily']
+    // （两份清单在模块级定义，见文件头附近的说明）
     const undoableTools = parsed.filter(p => DEFAULT_EXEC_UNDO_TOOLS.indexOf(p.toolName) !== -1)
     const confirmTools = parsed.filter(p => CONFIRM_TOOLS_KEEP.indexOf(p.toolName) !== -1)
     const directTools = parsed.filter(p => DEFAULT_EXEC_UNDO_TOOLS.indexOf(p.toolName) === -1 && CONFIRM_TOOLS_KEEP.indexOf(p.toolName) === -1)
@@ -411,12 +537,18 @@ async function orchestrate({
 
     // 2) A 类默认执行 + 撤销（before 快照 → dispatch → 落 undo_logs）
     if (undoableTools.length > 0) {
-      toolResults = toolResults.concat(await _dispatchUndoTools({ tools: undoableTools, toolDefs: filteredDefs, dispatch, familyId, openid, toolSummaries }))
+      // 2026-09-22 全面审计 P1-3：参数校验必须用**完整** toolDefs，不能用按用户文本裁剪过的
+      // filteredDefs —— filterToolDefs 只按关键词挑出本轮「相关」工具，未命中的工具在
+      // validateArgs 里 `if (!def) return { ok: true }`（无 def 即放行，schema-validate.js:24）
+      // → 模型幻觉/被注入调用本轮未裁剪出的工具时，**完全绕过字段校验**（连未知字段检查都没有）。
+      // filteredDefs 仍只用于「给模型看哪些工具」，不作为校验依据。
+      toolResults = toolResults.concat(await _dispatchUndoTools({ tools: undoableTools, toolDefs, dispatch, familyId, openid, toolSummaries }))
     }
 
     // 3) 直接执行工具（query/delete/triggerAnalysis/writeMessage）→ dispatch（校验 + 执行）
     if (directTools.length > 0) {
-      toolResults = toolResults.concat(await _dispatchDirectTools({ directTools, toolDefs: filteredDefs, dispatch, familyId, openid }))
+      // 同上：校验用完整 toolDefs（filteredDefs 仅供模型可见性裁剪）
+      toolResults = toolResults.concat(await _dispatchDirectTools({ directTools, toolDefs, dispatch, familyId, openid }))
     }
 
     // 数据变更后仅失效状态块（2026-08-30 长期记忆）：基础摘要为稳定前缀，保 DeepSeek context caching 命中；
@@ -489,9 +621,14 @@ async function orchestrate({
     return { cleanText, suggestions, pending_confirms, toolResults }
   } catch (e) {
     console.warn('[tool-orchestration] function calling 失败:', e.message)
+    // 审计 P2-14：工具可能已执行（toolResults 有值）但回复生成中断 → 原样返回会渲染"空气泡"，
+    // 用户以为没执行；补兜底文案指向已返回的结果
+    if (!cleanText && toolResults && toolResults.length) cleanText = '操作已完成，回复生成中断，请查看上方结果。'
   }
 
   return { cleanText, suggestions, pending_confirms, toolResults }
 }
 
-module.exports = { orchestrate, filterToolDefs, CONFIRM_TOOLS, DEFAULT_EXEC_UNDO_TOOLS: ['updateFinances', 'upsertMember', 'addFact'], CONFIRM_TOOLS_KEEP: ['addPolicy', 'updatePolicy', 'createFamily'] }
+// `_callPhase1` / `_directQuotaAllowed` 导出仅供单测（直连配额预检的行为验证需要真实调用分支，
+// 源码文本断言测不出"是否真的跳过了直连"）
+module.exports = { orchestrate, filterToolDefs, DEFAULT_EXEC_UNDO_TOOLS, CONFIRM_TOOLS_KEEP, _callPhase1, _directQuotaAllowed }

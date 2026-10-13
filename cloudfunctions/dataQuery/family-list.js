@@ -9,6 +9,42 @@
  */
 const { wrapError } = require('./_shared/errorHandler')
 
+// 云函数端单次 get 硬上限（CloudBase 平台值，超出**静默截断**——见 _shared/db-helpers.js 文件头
+// 记载的 2026-09-09 报告缺保障事故）。此处按 100 分页，不自造更大的 limit。
+const PAGE_SIZE = 100
+
+/**
+ * 按 where 分页取全量成员（2026-09-22 全面审计 P1-2）
+ *
+ * 为什么不复用 _shared/db-helpers.safeQueryAll：本文件对成员查询有**既定的降级契约**——
+ * 失败时返回已取到的部分、并输出带 [family-list] 前缀的错误日志（"降级必须可观测"，
+ * 见 _fetchMembersByFam 的注释与 tests/queryHomeList.test.js 的契约锁定用例）。
+ * safeQueryAll 在内部逐页吞错，会把失败与"查到 0 条"混为同一结果，丢掉这层可观测性。
+ *
+ * @returns {Promise<Array>} 已取到的成员行（失败时为已成功页的并集，可能为空）
+ */
+async function _pageAllMembers(db, where, openid, maxPages) {
+  const rows = []
+  try {
+    for (let p = 0; p < maxPages; p++) {
+      const res = await db.collection('members')
+        .where({ ...where, _openid: openid })
+        .orderBy('_id', 'asc')   // 稳定排序：skip 翻页无稳定序会漏读/重复（审计 #15）
+        .skip(p * PAGE_SIZE)
+        .limit(PAGE_SIZE)
+        .get()
+      const data = (res && res.data) || []
+      rows.push(...data)
+      if (data.length < PAGE_SIZE) break
+      if (p === maxPages - 1) console.warn('[family-list] 成员分页达上限 ' + maxPages + ' 页，结果可能不完整（已取 ' + rows.length + ' 条）')
+    }
+  } catch (e) {
+    // 部分成功优于全丢：保留已取到的页，仅记录失败（调用方按"成员数可能偏少"降级显示）
+    console.error('[family-list] 成员批量查询失败，已降级为空（家庭列表仍显示）:', e.message)
+  }
+  return rows
+}
+
 // ---------- listFamilies ----------
 // 首页/客户列表用：列出 openid 下所有家庭（含成员数、经济支柱名、资料完整度）
 // 客户列表审计 P1-1：主查询失败必须传播（外层 wrapError → 前端错误态），
@@ -25,7 +61,8 @@ async function listFamilies(db, openid, event) {
     const membersByFam = await _fetchMembersByFam(db, openid, (famRes.data || []).map(f => f._id))
     const families = _projectFamilyList(famRes.data || [], membersByFam)
 
-    return { code: 200, data: { families, family_count: families.length } }
+    // 审计 P2-16：达到上限时显式告知，避免"客户只有这些"的静默截断
+    return { code: 200, data: { families, family_count: families.length, truncated: (famRes.data || []).length >= limit, limit } }
   } catch (e) {
     return wrapError('获取', e)
   }
@@ -47,7 +84,10 @@ async function searchFamilies(db, openid, event) {
     // 双路并发：家庭名直查 + 成员名命中取 family_id
     const [famRes, memRes] = await Promise.all([
       db.collection('families').where(famWhere).orderBy('updated_at', 'desc').limit(50).get(),
-      db.collection('members').where(memWhere).limit(200).get()
+      // 2026-09-22 全面审计 P1-2：原 .limit(200) 是**无效上限**——云函数端单次 get 硬上限
+      // 100 条，超出静默截断。命中成员数超过 100 时（如关键词「王」命中大量客户），
+      // 部分"按成员名搜索"的家庭会被漏掉。改走分页；maxPages=2 保持原「最多 200 条命中」成本上限。
+      _pageAllMembers(db, memWhere, openid, 2).then(data => ({ data }))
     ])
 
     // 成员命中：排除软删（status=deleted），取其 family_id；补查家庭名未命中的家庭
@@ -92,12 +132,12 @@ async function _fetchMembersByFam(db, openid, famIds) {
   // 降级保留（见文件头：主查询失败传播、成员查询容错降级——家庭列表仍可显示）。
   // 2026-09-11 修复（全面审计 P1-1）：但降级**必须可观测**——原实现完全静默，
   // 成员查询失败时列表成员数变 0 却无任何日志，线上无法察觉（不掩盖失败原则）。
-  const memRes = await db.collection('members').where({ family_id: _.in(famIds), _openid: openid }).limit(500).get()
-    .catch(e => {
-      console.error('[family-list] 成员批量查询失败，已降级为空（家庭列表仍显示）:', e.message)
-      return { data: [] }
-    })
-  for (const m of (memRes.data || [])) {
+  // 2026-09-22 全面审计 P1-2（本条最严重的现场）：原 .limit(500) 是**无效上限**——
+  // 云函数端单次 get 硬上限 100 条，超出静默截断。首页一次取「最多 50 个家庭的全部成员」，
+  // 用户成员总数 >100（如 30 个客户 × 4 名成员 = 120）时，被截断成员所属家庭在首页显示
+  // 「0 名成员 / 经济支柱为空」，且无任何报错——纯静默错数据。改走分页取全量。
+  const rows = await _pageAllMembers(db, { family_id: _.in(famIds) }, openid, 30)
+  for (const m of rows) {
     if (!membersByFam[m.family_id]) membersByFam[m.family_id] = []
     membersByFam[m.family_id].push(m)
   }
@@ -120,6 +160,8 @@ function _projectFamilyList(familiesRaw, membersByFam) {
       deliverable_status: f.last_portrait ? 'generated' : 'none',
       completeness_score: f.completeness_score || 0,
       engagement_stage: f.engagement_stage || '',
+      // 2026-09-12 MVP 验证：成交标记透出到列表（代理人一眼看到哪些客户已成单）
+      deal_status: f.deal_status || '',
       insight_stale: !!f.insight_stale,
       created_at: f.created_at,
       updated_at: f.updated_at
