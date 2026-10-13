@@ -44,15 +44,19 @@
                               onRefreshReport 重新拉取数据
 ```
 
-## 三、页面架构（3 页）
+## 三、页面架构（2 页）
+
+> 2026-10-13 合并：原「首页（最近客户）+ 客户列表页（搜索/全量）」并为**一页**。
+> 两者同一份 `listFamilies`、同一 `client-card`/骨架屏，且客户列表页只能从首页进入（单向二级页），
+> 拆两页要多付一次跳转 + 第二套缓存。合并后该页同时是小程序**根页面**（未完成批次恢复提示的宿主）。
 
 | 页面 | 路径 | 组成 |
 |------|------|------|
-| 首页 | pages/index | brand-header（内联）+ OCR 三态蒙层 + 最近服务 client-card ×N |
+| 客户列表（根页面） | pages/index | brand-header（内联）+ 搜索栏 + client-card ×N + 空态建档引导 + OCR 三态蒙层（恢复提示/保存跳转） |
 | 报告页 | pages/report | 结论卡片 + report-markdown(chapters) + 提示卡片 + chat-panel(FAB) |
-| 客户列表 | pages/clients | 搜索 + client-card ×N |
 
-**跳转**：首页点击客户/OCR完成 → 报告页 · 首页查看全部 → 客户列表
+**跳转**：客户列表点击客户 → 报告页 · 报告页返回 → 客户列表（onShow 刷新/秒开）。
+页面注册表一致性由 `tests/page-registry.test.js` 守卫（app.json ↔ pages 目录 ↔ 导航目标）。
 
 ## 四、核心功能
 
