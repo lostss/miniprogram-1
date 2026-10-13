@@ -18,7 +18,10 @@
 1. 输出保持「事实白名单 + 分节」形状（`header/summary/groups/unassigned/pending`），阶段二＝在同一份数据上**增加段落**，不需要插件/主题机制
 2. 阶段一的 `organize.js` **不得**掺入缺口/建议逻辑（那是阶段二的段落，混进来会同时破坏红线 1 与可判定性）
 
-**入口落点**：家庭页（`pages/report/index`）内的「保单整理报告」入口——与流程（建档 → 家庭页 → 上传保单 → 报告）一致；客户列表页不再单独放入口（单一入口，判据才好归因）。
+**落地形态（2026-10-13 用户澄清后修正）**：**调整当前报告页本身**——`pages/report/index` 的正文主体改为保单整理视图；原 AI 分析报告**结构保留、默认收起**（一行可展，内容一字未删），阶段一验完再决定是否删除。
+
+- 曾试过并**已作废**的做法：新增独立页 `pages/checkup` + 入口 + `utils/explore-flags.js` 开关 —— 那是"并存"而非"降级"，且会造出第二套渲染实现。相关文件已删。
+- 组装位置：报告页 `_applyReportData`（**唯一 choke point**）内调用 `buildCheckupReport` → 下拉刷新 / 客户版预览 / 分享加载等所有刷新路径自动同源。
 
 三条红线（沿用，且是本次探索要验证的核心）：
 
@@ -51,9 +54,9 @@
 ## 3. 数据与隔离开关
 
 - 取数：**零云函数改动**——复用 `getFamily`（`loadFamilyView` + `loadActivePolicies`，已带 `_openid` 与 deleted 过滤）
-- 组装：`miniprogram/utils/checkup/organize.js`（**纯函数**，输出视图模型，不落库、不含 `_openid`）
-- 入口：新增独立页 `pages/checkup`，由 `miniprogram/utils/explore-flags.js` 的常量开关控制入口可见性（全仓原无任何 flag 机制，本开关一并建立）
-- 客户版：沿用现有分享脱敏链（`dataQuery/share.js`），本轮不新做脱敏实现
+- 组装：`miniprogram/utils/checkup/organize.js`（**纯函数**，输出视图模型，不落库、不含 `_openid`），在报告页 `_applyReportData` 一处构建
+- 渲染：报告页正文主体（`pages/report/index.wxml`），原 AI 报告区由 `showLegacyBody` 控制默认收起
+- 客户版：沿用现有分享脱敏链（`dataQuery/share.js`），本轮不新做脱敏实现；客户版与 owner 版渲染**同一份** `checkup` 数据（脱敏在云端已完成）
 
 ## 4. 内测判据（探索的验收，不是功能的验收）
 

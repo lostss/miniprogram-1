@@ -55,13 +55,82 @@
     </view>
     <!-- 标题区域与正文分隔线 -->
     <view class="title-divider"></view>
-    <!-- 探索版（MVP 内测）：保单整理报告入口。产品决策 2026-10-13「当前报告降级成保单整理报告」→
-         流程落点在家庭页，入口放这里；客户版不显示（同看时由代理人操作）。 -->
-    <view class="checkup-entry pressable" wx:if="{{showCheckup && !isShared && family}}" bindtap="onOpenCheckup" aria-label="保单整理报告">
-      <text class="checkup-entry-main">保单整理报告</text>
-      <text class="checkup-entry-sub">把保单按成员整理成可逐条核对的清单</text>
-      <text class="checkup-entry-go">›</text>
+    <!-- ===== 阶段一报告主体：保单整理（2026-10-13 决策「当前报告降级成保单整理报告」）=====
+         红线：只做归集/汇总/标注——不出建议、不加形容词、不确定就标出来（见 utils/checkup/organize.js）。
+         数据与正文同源（_applyReportData 一处构建）→ 下拉刷新/客户版预览自动一致。 -->
+    <block wx:if="{{hasPolicy && checkup}}">
+      <view class="sum-card">
+        <view class="sum-grid">
+          <view class="sum-item"><view class="sum-label">保单张数</view><view class="sum-value">{{checkup.summary.policyCount}}</view></view>
+          <view class="sum-item"><view class="sum-label">年缴保费合计</view><view class="sum-value">{{checkup.summary.annualPremiumText}}</view></view>
+        </view>
+        <view class="sum-note" wx:if="{{checkup.summary.premiumNote}}">{{checkup.summary.premiumNote}}</view>
+        <view class="sum-wide">
+          <view class="sum-label">保额合计</view>
+          <view class="sum-value-lg">{{checkup.summary.totalSumAssuredText}}</view>
+          <view class="sum-note" wx:if="{{checkup.summary.shortTermCount > 0}}">其中一年期 {{checkup.summary.shortTermCount}} 张 · {{checkup.summary.shortTermSumAssuredText}}（每年需续保）</view>
+        </view>
+        <view class="sum-wide">
+          <view class="sum-label">已覆盖险种</view>
+          <view class="tags">
+            <view class="tag" wx:for="{{checkup.summary.categories}}" wx:key="*this">{{item}}</view>
+            <view class="tag-empty" wx:if="{{checkup.summary.categories.length === 0}}">暂无</view>
+          </view>
+        </view>
+        <view class="sum-note" wx:if="{{checkup.summary.memberNote}}">{{checkup.summary.memberNote}}</view>
+      </view>
+
+      <view class="sec-title">按成员整理</view>
+      <view class="sum-card" wx:for="{{checkup.groups}}" wx:key="memberId" wx:for-item="g">
+        <view class="mem-hd">
+          <view class="mem-name">{{g.name}}</view>
+          <view class="mem-role" wx:if="{{g.role}}">{{g.role}}</view>
+          <view class="mem-src">{{g.source}}</view>
+        </view>
+        <view class="mem-meta">{{g.policyCount}} 张保单 · 保额 {{g.sumAssuredText}}</view>
+        <view class="pol-empty" wx:if="{{g.policyCount === 0}}">这 1 位成员名下暂无保单记录</view>
+        <view class="pol" wx:for="{{g.policies}}" wx:key="id" wx:for-item="p">
+          <view class="pol-title"><text class="pol-name">{{p.productName}}</text><text class="pol-cat">{{p.category}}</text></view>
+          <view class="pol-row"><text class="k">保额</text><text class="v">{{p.sumAssuredText}}</text></view>
+          <view class="pol-row"><text class="k">{{p.premiumLabel}}</text><text class="v">{{p.annualPremiumText}}</text></view>
+          <view class="pol-row"><text class="k">保障期间</text><text class="v">{{p.period}}</text></view>
+          <view class="pol-row"><text class="k">生效日</text><text class="v">{{p.effectiveDate}}</text></view>
+          <view class="pol-flags">
+            <text class="flag flag-term" wx:if="{{p.shortTerm}}">一年期 · 每年需续保</text>
+            <text class="flag flag-low" wx:if="{{p.lowConfidence}}">含待核对字段</text>
+          </view>
+        </view>
+      </view>
+
+      <block wx:if="{{checkup.unassigned.length > 0}}">
+        <view class="sec-title">未归入成员（被保人不在成员名单）</view>
+        <view class="sum-card">
+          <view class="pol" wx:for="{{checkup.unassigned}}" wx:key="id" wx:for-item="p">
+            <view class="pol-title"><text class="pol-name">{{p.productName}}</text><text class="pol-cat">{{p.category}}</text></view>
+            <view class="pol-row"><text class="k">被保人</text><text class="v">{{p.insuredName}}</text></view>
+            <view class="pol-row"><text class="k">保额</text><text class="v">{{p.sumAssuredText}}</text></view>
+          </view>
+        </view>
+      </block>
+
+      <block wx:if="{{checkup.pending.length > 0}}">
+        <view class="sec-title">待完善（{{checkup.pending.length}} 项）</view>
+        <view class="sum-card">
+          <view class="pend" wx:for="{{checkup.pending}}" wx:key="index">
+            <view class="pend-name">{{item.productName}}</view>
+            <view class="pend-detail">{{item.detail}}</view>
+          </view>
+        </view>
+      </block>
+    </block>
+
+    <!-- 原 AI 分析报告（保障摘要/覆盖检查/缺口成因/配置建议…）：结构保留、**默认收起**，
+         一行可展开对照；内容一字未删 → 阶段一验完再决定是否删除（可回退）。 -->
+    <view class="legacy-toggle pressable" wx:if="{{hasPolicy && checkup}}" bindtap="onToggleLegacyBody">
+      <text class="legacy-toggle-text">{{showLegacyBody ? '收起保障分析（AI 解读）' : '展开保障分析（AI 解读）'}}</text>
+      <text class="legacy-toggle-go">{{showLegacyBody ? '⌃' : '⌄'}}</text>
     </view>
+    <block wx:if="{{!hasPolicy || showLegacyBody}}">
     <!-- 全链路审计 UC4：无保单空状态（引导上传，替代零值数字+红色告警） -->
     <view class="empty-report" wx:if="{{!hasPolicy}}">
       <view class="empty-report-icon">📄</view>
@@ -255,6 +324,7 @@
         <view class="share-watermark">由保小秘生成 · 数据仅供参考</view>
       </block>
     </view>
+    </block>
   </scroll-view>
 
   <chat-panel id="chatpanel" wx:if="{{!loading && !loadError && !isShared}}" familyId="{{familyId}}" presetHints="{{presetHints}}" bindreportRefresh="onChatReportRefresh" bindcollapse="onChatCollapse" bindbusy="onChatBusy" />

@@ -2,8 +2,7 @@
   "pages": [
     "pages/index/index",
     "pages/report/index",
-    "pages/clients/index",
-    "pages/checkup/index"
+    "pages/clients/index"
   ],
   "window": {
     "backgroundColor": "@bgColor",

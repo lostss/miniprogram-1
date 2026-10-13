@@ -2,8 +2,9 @@ const { buildReportView } = require('../../utils/report-builder')
 const { buildEditConfig, validate: validateEdit, buildUpdateData, POLICY_STATUS_OPTIONS, POLICY_STATUS_LABEL_TO_VALUE } = require('../../utils/edit-form')
 const { buildShareTitle, buildSharePath, buildReportMeta, ensureShareToken, shareExpireHint } = require('../../utils/report-share')
 const { HOME_CACHE_KEY } = require('../../utils/family-actions')
-// 探索版入口开关（MVP 内测）：关掉即隐藏入口，页面可整页删（见 utils/explore-flags.js）
-const EXPLORE_FLAGS = require('../../utils/explore-flags')
+// 阶段一（2026-10-13 产品决策「当前报告降级成保单整理报告」）：报告主体＝保单整理视图。
+// 组装是纯函数（有单测），本页只调用——保证"同一份数据只有一处组装"。
+const { buildCheckupReport } = require('../../utils/checkup/organize')
 const api = require('../../utils/apiClient')
 // 领域写薄层（候选 5）：表单保存收敛三种写入范式，避免调用方直拼字符串 action
 const { savePolicyData, saveFamilyPatch } = require('../../utils/domain-writes')
@@ -73,16 +74,13 @@ Page({
     factsView: null, factsOpen: false,
     // 2026-09-12 MVP 验证：反馈已提交态 + 成交标记（成交是 ROI 的唯一真值来源）
     feedbackGiven: false, dealStatus: '',
-    // 探索版（MVP 内测）：保单整理报告入口，受 utils/explore-flags.js 控制
-    showCheckup: EXPLORE_FLAGS.checkupReport,
+    // 保单整理视图（阶段一报告主体，见 _applyReportData）；原 AI 分析报告默认收起、可展开对照
+    checkup: null,
+    showLegacyBody: false,
   },
-  // “当前报告降级成保单整理报告”（2026-10-13 产品决策）：家庭页作为流程落点，
-  // 入口从这里进；客户版（isShared）不显示，避免与"只给代理人看的工作性入口"混淆。
-  onOpenCheckup() {
-    if (this.data.isShared) return
-    const id = this.data.familyId
-    if (!id) { wx.showToast({ title: '缺少客户信息', icon: 'none' }); return }
-    wx.navigateTo({ url: '/pages/checkup/index?familyId=' + id })
+  onToggleLegacyBody() {
+    if (this._disposed) return
+    this.setData({ showLegacyBody: !this.data.showLegacyBody })
   },
   // 真机 404 修复兜底：familyId 为 'undefined'/'null' 字面量（跳转传参异常时）→ 走"缺少客户信息"而非 getFamily 404 误报"客户不存在"
   onLoad(o) {
@@ -499,9 +497,14 @@ Page({
     // 落库后同时消掉"按当前数据求值 vs 生成时刻"的漂移——报告内容与 tier 恒为同一次生成。
     // 仅在 deep 已生成时展示：未生成时 deep-entry 已引导"立即生成分析"，再提示"定性"会误导。
     const qualitativeMode = c.readiness_tier === 'degraded' && !!view.deep
+    // 保单整理视图（阶段一报告主体，2026-10-13 决策）：在此**唯一 choke point** 构建，
+    // 下拉刷新 / 客户版预览 / 分享加载等所有刷新路径自动一致（各自重算 = 又一次口径分裂）。
+    // 输入是同一份 family（members/policies），输出只含事实白名单（见 utils/checkup/organize.js）。
+    const checkup = buildCheckupReport({ family: c, members: c.members || [], policies: c.policies || [] })
     this.setData(Object.assign({
       // 视图切片（见方法头）：name 供页头标题，对象本身作三处 wx:if 的真值门禁。整份文档在 this._family。
       family: { name: c.name || '' },
+      checkup: checkup,
       reportMeta: reportMeta,
       staleTag: staleTag,
       qualitativeMode: qualitativeMode,
