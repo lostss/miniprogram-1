@@ -11,6 +11,7 @@
  */
 
 var { buildChapters, buildGaps, buildCoverageMatrix, buildTimeline, normalizeFamilyData } = require('./report/index')
+var { buildRiskAlerts } = require('./report/risk-alerts-builder')
 
 /**
  * buildReportView — 报告聚合入口深模块（候选 2）
@@ -63,7 +64,16 @@ function buildReportView(family, report, opts) {
   // 2026-09-22 全面审计（前端 P2）：原此处再次调用 buildDeepAnalysis(report) —— 与上方 L27 的
   // 入参完全相同（纯函数、无副作用），等于每次刷新报告都白算一遍（含 core_insights 包装与
   // 3 次 String.replace）。直接复用已算好的 deep。
-  return { chapters: chapters, hero: hero, summaryCards: summaryCards, gaps: gaps, hints: hints, deep: deep }
+  // 2026-10-13 报告结构 v2.0 ①：总检结论的风险预警 TOP-N（红黄绿灯，按急重缓轻）。
+  // 依据全部来自已算好的 gaps / 保单字段 / 保费占比，故放在 norm 之后计算（premiumRatio 来自 norm）。
+  const risks = buildRiskAlerts({
+    gaps: gaps,
+    members: family.members || [],
+    policies: family.policies || [],
+    premiumRatio: norm.premiumRatio,
+    view: opts.view
+  })
+  return { chapters: chapters, hero: hero, summaryCards: summaryCards, gaps: gaps, hints: hints, deep: deep, risks: risks }
 }
 
 /**

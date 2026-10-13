@@ -59,6 +59,8 @@ Page({
     unmatchedCashValues: [],
     disclaimer: '',
     hero: { alerts: [], summary: '', topAdvice: '', conclusion: '' },
+    // 风险预警 TOP-N（2026-10-13 报告结构 v2.0 ①）：默认空对象，渲染侧 wx:if 兜住
+    risks: { items: [], counts: {}, more: 0, total: 0 },
     summaryCards: { premium: '', coverage: '', count: 0 },
     showMemberManage: false, memberManageList: [],
     fabText: '',
@@ -128,6 +130,21 @@ Page({
   onChatCollapse() { this.setData({ fabText: '' }) },
   // AI 回复期间 FAB 发送按钮置灰（chat-panel busy 事件）
   onChatBusy(e) { this.setData({ chatBusy: !!e.detail.busy }) },
+
+  // ===== 风险预警 TOP-N：点条目展开/收起依据（2026-10-13 报告结构 v2.0 ①）=====
+  // 为什么做成交互而不是直接铺开：依据是审计用的（"参考50万（治疗费+收入损失），现有20万"），
+  // 首屏全铺会盖住结论本身；折叠默认 + 一键展开，既保"结论可追溯"，又不牺牲一屏冲击。
+  // 用 setData 的路径写法只改被点那一条（不清空其它条的展开态，也不重传整份 risks）。
+  onRiskTap(e) {
+    const idx = (e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.idx) || 0
+    const items = (this.data.risks && this.data.risks.items) || []
+    const it = items[idx]
+    if (!it || !it.basis) return // 无依据可展开（不该发生：构建器保证有依据才出结论）
+    const path = 'risks.items[' + idx + '].expanded'
+    const patch = {}
+    patch[path] = !it.expanded
+    this.setData(patch)
+  },
 
   // ===== 章节内编辑入口（设计稿：家庭结构/财务 [编辑]） =====
   onChapterEdit(e) {
@@ -515,6 +532,8 @@ Page({
       chapters: view.chapters,
       hero: view.hero,
       summaryCards: view.summaryCards,
+      // 风险预警 TOP-N（2026-10-13 报告结构 v2.0 ①）：红黄绿灯列表，条目可点开看依据（basis）
+      risks: view.risks || { items: [], counts: {}, more: 0, total: 0 },
       // 深度分析（AI 专家解读）：无深度分析时为 null，WXML wx:if 隐藏
       deep: view.deep,
       // 合规审计 P0-1：免责声明固定模板——法律文书必须稳定，不随 AI 生成逐次漂移。

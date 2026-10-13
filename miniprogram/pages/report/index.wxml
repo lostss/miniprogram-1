@@ -183,6 +183,23 @@
         </view>
         <view class="hero-advice" wx:if="{{hero.topAdvice}}">{{hero.topAdvice}}</view>
       </view>
+      <!-- 风险预警 TOP-N（2026-10-13 报告结构 v2.0 ① 家庭总检结论）
+           排序口径（report/risk-alerts-builder）：等级 → gapPriority → 敞口金额降序 → 成员档案顺序，
+           **不按险种、不引入主观权重**；每条都可展开看依据（basis），给不出依据的结论不出现。
+           达标项（绿）同样展示，建立信任、不只制造焦虑。 -->
+      <view class="risk-list" wx:if="{{risks.items.length}}">
+        <view class="risk-item risk-{{item.level}}" wx:for="{{risks.items}}" wx:key="key" catchtap="onRiskTap" data-idx="{{index}}">
+          <view class="risk-head">
+            <text class="risk-dot"></text>
+            <text class="risk-level">{{item.levelLabel}}</text>
+            <text class="risk-title">{{item.title}}</text>
+          </view>
+          <text class="risk-detail">{{item.detail}}</text>
+          <!-- 依据：默认收起（避免首屏噪音），点击条目展开 —— 结论可追溯是"错误不对称"的落地方式 -->
+          <text class="risk-basis" wx:if="{{item.expanded && item.basis}}">依据：{{item.basis}}</text>
+        </view>
+        <view class="risk-more" wx:if="{{risks.more}}">另有 {{risks.more}} 项未展开{{risks.moreRed ? '（含高危 ' + risks.moreRed + ' 项）' : ''}}，共 {{risks.total}} 项</view>
+      </view>
     </view>
     <!-- 深度分析（可选项 2026-09-02）：未生成=结论下生成入口（owner）；已生成=折叠洞察摘要（owner）/完整展开（客户版叙事主内容） -->
     <!-- 审计 C4（2026-09-02）：hints 死区块已删除（report 契约无 hints 键，恒空） -->

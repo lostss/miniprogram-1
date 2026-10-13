@@ -21,7 +21,7 @@ var { normalizeFamilyData } = require('./data-normalizer')
 var { buildCoverageMatrix } = require('./gap-engine')
 var { buildTimeline } = require('./timeline-builder')
 var { buildGantt } = require('./gantt-builder')
-var { canonCat } = require('../thresholds')
+var { canonCat, premiumRatioVerdict } = require('../thresholds')
 var { yuanToWan, fmtYuan } = require('../amount')
 // 现价取行唯一事实源（2026-09-27 起：保单年度也在此契约内，勿再自行写年差公式）
 var { policyYearAt, cashAtYear, coverScale } = require('../cash-value-math')
@@ -362,6 +362,10 @@ function buildChapters(family, report, gaps, opts) {
     return arr
   })()
   var peakMonth = months.filter(function(x) { return x.h === 2 }).map(function(x) { return x.m + '月' }).join('、')
+  // 保费收入比判定（报告结构 v2.0 ④）：仅 owner 且收入已知时输出。口径见 thresholds.PREMIUM_RATIO
+  // （7%/10% 属行业经验值、非监管标准 → 文案只写"常见参考区间"）。收入缺失时 premiumRatio 回落 0
+  // → verdict.code='unknown' → text 为空 → 不输出（有依据才出结论）。
+  var premiumNote = (!shared && totalIncome > 0) ? premiumRatioVerdict(premiumRatio).text : ''
   ch.push({
     key: 'premium_calendar', title: '缴费月历', num: '5',
     // V1.5（2026-09-12）：明细型章节默认折叠——首屏只保留结论/缺口，月历与附录按需展开（保留手动展开能力）
@@ -373,9 +377,13 @@ function buildChapters(family, report, gaps, opts) {
     // premiumRatio 回落 0，原实现直接拼成 0%，与"收入未填写"事实矛盾；改为显式缺失说明
     // 2026-09-12 客户版去除占收入比：家庭财务章对客户隐藏（:181），客户无从核对"家庭年收入"基数，
     // 引用不可见数据并附"仅供参考"是双重减分（数字算不出 + 结论自我注销）。owner 侧保留占比。
+    // 2026-10-13 报告结构 v2.0 ④：owner 侧补"参考区间判定"（thresholds.PREMIUM_RATIO 7%/10%）。
+    // ⚠️ 判定文案只随 owner 的占比一起出现 —— 客户版不显示占比，也不得显示基于占比的结论
+    // （引用不可见数据下结论，与上一行同一条口径）；家庭年收入缺失时不判定（verdict.code='unknown'）。
     content: '年总保费 ' + annualPremiumW + '万' + (!shared
       ? (totalIncome > 0 ? '（占收入 ' + premiumRatio + '%）' : '（家庭年收入未填写，暂不计算占比）')
-      : '') + (peakMonth ? '<br>💡 ' + peakMonth + '缴费压力最大，请提前安排资金' : '')
+      : '') + (premiumNote ? '<br>' + premiumNote : '')
+      + (peakMonth ? '<br>💡 ' + peakMonth + '缴费压力最大，请提前安排资金' : '')
   })
 
   // ======== ⑦ 特别提醒（置信度告警） ========
