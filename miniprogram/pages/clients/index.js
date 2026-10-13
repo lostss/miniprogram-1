@@ -1,5 +1,7 @@
 const api = require('../../utils/apiClient')
 const { navigateToFamily, confirmDeleteFamily, CLIENTS_CACHE_KEY, HOME_CACHE_KEY } = require('../../utils/family-actions')
+// 跨树契约：骨架成员命名（建档占位）——与后端 member-matcher 的认领判定同源
+const { skeletonName } = require('../../utils/member-skeleton')
 
 Page({
   data: { families: [], keyword: '', loading: false, removingId: '', loadError: false, truncated: false },
@@ -133,7 +135,9 @@ Page({
   _doCreateFamily(name, memberCount) {
     const self = this
     const members = []
-    for (let i = 0; i < (memberCount || 0); i++) members.push({})
+    // 占位成员必须按契约命名「成员1/成员2…」：OCR 写保单时后端以此识别并**按顺序认领**
+    // （member-matcher「未匹配上的人一律建档」前置的骨架认领）——空名会让认领失效、变成新建成员。
+    for (let i = 0; i < (memberCount || 0); i++) members.push({ name: skeletonName(i) })
     self._creating = true
     wx.showLoading({ title: '创建中...', mask: true })
     api('createFamily', { family_name: name, family_structure: [], members: members })

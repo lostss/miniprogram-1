@@ -8,7 +8,9 @@
 const { writeSeam } = require('./writeSeam')
 const { getMembers, updateMemberFields } = require('./memberRepo')
 
-const SKELETON_RE = /^成员\d+$/
+// 骨架成员判定收敛到跨树契约（2026-10-13）：命名格式是前后端接口（前端按人数造占位、后端认领），
+// 原实现把正则只放在本文件 —— 前端无从复用，于是建档占位写成空名、认领机制静默失效。
+const { SKELETON_RE } = require('./member-skeleton')
 
 function _tryMatch(name, members) {
   if (!name) return null

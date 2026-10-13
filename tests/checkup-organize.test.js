@@ -36,14 +36,14 @@ describe('checkup/organize — 归集与汇总', () => {
     expect(r.summary.membersWithoutPolicy).toEqual(['张某'])
   })
 
-  test('占位成员（建档按人数造、无名无角色）可辨识，且不污染「无保单成员」统计', () => {
+  test('骨架占位成员（建档按人数造「成员N」）可辨识，且不污染「无保单成员」统计', () => {
     const r = buildCheckupReport({
       family: {
         members: [
           M({ member_id: 'm1', name: '张某' }),                      // 有保单
           M({ member_id: 'm2', name: '李某' }),                      // 真·无保单（信任点）
-          M({ member_id: 'm3', name: '', role: '' }),                // 占位
-          M({ member_id: 'm4', name: '', role: '' })                 // 占位
+          M({ member_id: 'm3', name: '成员2', role: '' }),           // 骨架占位
+          M({ member_id: 'm4', name: '成员3', role: '' })            // 骨架占位
         ],
         policies: [P({ member_id: 'm1', insured_name: '张某' })]
       }
@@ -56,6 +56,24 @@ describe('checkup/organize — 归集与汇总', () => {
     expect(r.summary.membersWithoutPolicy).toEqual(['李某'])
     expect(r.summary.placeholderCount).toBe(2)
     expect(r.summary.memberNote).toContain('2 位成员待补姓名')
+  })
+
+  test('占位判定与后端认领同源：骨架名走契约，真实姓名/空名都不算占位 → 不会把真人当占位隐藏', () => {
+    const r = buildCheckupReport({
+      family: {
+        members: [
+          M({ member_id: 'm1', name: '张某' }),
+          M({ member_id: 'm2', name: '成员' }),   // 酷似但不匹配 ^成员\d+$
+          M({ member_id: 'm3', name: '成员1' })   // 骨架
+        ],
+        policies: [P({ member_id: 'm1', insured_name: '张某' })]
+      }
+    })
+    const byName = {}
+    r.groups.forEach(g => { byName[g.skeletonName] = g.placeholder })
+    expect(byName['成员1']).toBe(true)
+    expect(byName['成员']).toBe(false)
+    expect(byName['张某']).toBe(false)
   })
 
   test('无占位成员时不出现提示（不制造噪音）', () => {

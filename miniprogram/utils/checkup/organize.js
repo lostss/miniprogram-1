@@ -16,6 +16,8 @@
 const { fmtYuan } = require('../amount')
 const { STATUS_LABELS, isOneYearPolicy } = require('../policy-status')
 const { OCR_RELIABLE_THRESHOLD, CORE_FIELDS } = require('../ocr-confidence')
+// 跨树契约：骨架成员判定（建档按人数造的「成员N」占位）——与后端认领判定同源，勿自写第二份正则
+const { isSkeletonName } = require('../member-skeleton')
 
 const DASH = '—'
 
@@ -133,11 +135,14 @@ function buildCheckupReport(input) {
   const groups = members.map((m) => {
     const key = _str(m.member_id || m._id || m.name)
     const bucket = buckets[key] || { policies: [] }
-    // 建档时按"人数"造的占位成员（无名无角色）——必须可辨识，否则会污染"无保单成员"这个信任点
-    const placeholder = _str(m.name) === ''
+    // 建档时按"人数"造的骨架占位（名字形如「成员1」）——必须可辨识，否则会污染"无保单成员"这个信任点。
+    // 判定走跨树契约（与后端认领同一规则），不自己写正则。
+    const placeholder = isSkeletonName(m.name)
     return {
       memberId: _str(m.member_id || m._id),
-      name: placeholder ? '待补姓名' : _str(m.name),
+      // 展示名：骨架占位与"历史空名成员"都显示为待补，避免出现空白行（空名已不再产生，仅作兜底）
+      name: placeholder || !_str(m.name) ? '待补姓名' : _str(m.name),
+      skeletonName: _str(m.name),
       placeholder,
       role: _str(m.role),
       age: _str(m.age),
