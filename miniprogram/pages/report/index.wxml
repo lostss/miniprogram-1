@@ -51,6 +51,11 @@
           <text class="title-qual-text">本报告为定性分析：家庭年收入未填写，未做缺口金额、回本年限等量化测算</text>
           <text class="title-qual-act pressable" wx:if="{{!isShared}}" data-mode="financials" data-id="" bindtap="onClarifyFix" aria-label="补充家庭年收入，重新生成量化报告">去补全</text>
         </view>
+        <!-- 2026-10-13 合规前置（报告结构 v2.0 评审第 4 条）：页头一行轻提示 + 页尾完整声明。
+             动机：免责是"以条款为准"的可追溯锚点，只放末页等于"没翻到就没有"；前置一行不打断叙事。
+             文案与页尾 DISCLAIMER_FALLBACK 同源（pages/report/index.js:22 静态常量，不依赖 AI 输出，
+             故 AI 未生成/生成失败时依然成立）。owner 与客户版都显示 —— 合规声明不应分版本。 -->
+        <view class="title-ai-note">AI 辅助生成 · 仅供参考 · 以保险公司条款为准</view>
       </view>
     </view>
     <!-- 标题区域与正文分隔线 -->
