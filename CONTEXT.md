@@ -78,6 +78,14 @@
 ```
 - `hero` 为规则版覆盖检查（结论先行警示列表），AI conclusion 仅供分享标题
 - 报告产物字段（families `last_*`）由 `report-fields.js` 单一契约：portrait / review / plan / suggestions / disclaimer / analysis / conclusion / summary + core_insights
+- **报告结构口径（2026-10-13 决策，易混淆，务必对齐）**：
+  - **目标态** = `specs/report-v2-20261013/design.md`（家庭保单检视报告 v2.0）；它**替代**了
+    `specs/checkup-report-explore-20261013`（阶段一"保单整理报告"）的结构口径。
+  - **现状（尚未实现目标态）** = 报告页正文主体仍是**保单整理视图**（`utils/checkup/organize.js`），
+    AI 报告区由 `showLegacyBody` **默认收起**。替代的实质动作（AI 层扶正为主体）**未做**，
+    且被"客户版是否含 AI 层"阻塞（见 v2.0 交接清单 §2）。
+  - 已定稿定义见 `specs/report-v2-review-20261013.md`：**不引入 0-100 评分**（改分档）、
+    **不新增 L0/L1/L2 术语**（映射 `readiness` 三态）、TOP-N 排序依据 = `gapPriority` + `blocked`。
 
 ## 交互模式
 
