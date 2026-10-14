@@ -329,6 +329,18 @@
         </block>
       </view>
     </view>
+    </block>
+    <!-- 2026-10-14 布局修复（P0，用户实报"保障汇总表这些内容折叠在 AI 内容里面了"）：
+         折叠区的 `</block>` 原本远在页尾（原 367 行）才闭合，把下面这些**一并**包进了
+         「展开保障分析（AI 解读）」：report-markdown（章节目录 + 全 7 章正文，即保单整理报告的正文主体）、
+         预览客户版/标记成交、反馈行、免责声明、转发/导出 footer。
+         而 showLegacyBody 默认 false（pages/report/index.js:81）→ 首屏只剩页头 + 汇总卡 + 按成员整理；
+         **正文与页尾（含合规免责声明、转发/导出按钮）全部不可见**。
+         现收敛到 AI 材料自然结束处：
+           折叠区 = 空态 + AI 摘要卡（保障摘要/覆盖检查/风险预警）+ 深度解读 + 事实观察
+           常驻   = 整理汇总卡 + 按成员整理 + 待完善 + 章节目录与正文 + 页尾
+         改法仅为「提前闭合」——折叠区内容一字未删，回退成本为 0。
+         守卫：tests/report-layout.test.js（断言正文/免责/页尾不在折叠区行范围内）。 -->
     <report-markdown wx:if="{{hasPolicy}}" chapters="{{chapters}}" readonly="{{isShared}}" bind:policytap="onPolicyTap" bind:statuschange="onStatusChange" bind:chapteredit="onChapterEdit" bind:riskcheck="onRiskCheck" bind:tocnav="onTocNav" />
     <!-- 2026-09-12 客户版预览入口（owner，有保单时才有意义）：不占 footer 主按钮位 -->
     <view class="preview-entry" wx:if="{{!isShared && hasPolicy}}">
@@ -364,7 +376,6 @@
         <view class="share-watermark">由保小秘生成 · 数据仅供参考</view>
       </block>
     </view>
-    </block>
   </scroll-view>
 
   <chat-panel id="chatpanel" wx:if="{{!loading && !loadError && !isShared}}" familyId="{{familyId}}" presetHints="{{presetHints}}" bindreportRefresh="onChatReportRefresh" bindcollapse="onChatCollapse" bindbusy="onChatBusy" />
