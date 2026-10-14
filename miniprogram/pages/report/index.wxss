@@ -20,6 +20,9 @@
 /* 覆盖检查区：与摘要数据分隔，卡内下半区（分隔线统一 --border-accent） */
 /* 审计·顾问视角：总保额下区分一年期短险（防保额虚高误导），弱化次级注记样式 */
 .summary-note { margin-top:var(--sp-3); font-size:var(--fs-tiny); color:var(--text-tertiary); letter-spacing:0.5rpx; }
+/* 分险种明细（2026-10-14：总保额改按保障类型统计）：流式胶囊，险种数不定 → 不设固定栅格 */
+.summary-cats { display:flex; flex-wrap:wrap; gap:var(--sp-2) var(--sp-2); }
+.cat-chip { font-size:var(--fs-tiny); color:var(--text-secondary); background:var(--bg-input); padding:2rpx 12rpx; border-radius:999rpx; }
 /* 审计 C1：AI 一句话结论（引语式金色竖线，置保障摘要数字与覆盖检查之间） */
 .hero-conclusion { margin-top:var(--sp-5); padding-left:var(--sp-4); border-left:4rpx solid var(--accent-deep); font-family:var(--font-serif); font-size:var(--fs-base); color:var(--text-primary); line-height:var(--lh-body); }
 /* P1-C（2026-09-05）：AI 结论来源徽标（与下方规则版覆盖检查区分，防客户误读 AI 为系统计算） */

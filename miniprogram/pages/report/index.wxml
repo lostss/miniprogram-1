@@ -157,9 +157,9 @@
           <text class="num-lbl">年保费</text>
         </view>
         <view class="num-cell">
-          <text class="num-val">{{summaryCards.coverage}}</text>
+          <text class="num-val">{{summaryCards.protection}}</text>
           <text class="num-unit">万</text>
-          <text class="num-lbl">总保额</text>
+          <text class="num-lbl">保障型保额</text>
         </view>
         <view class="num-cell">
           <text class="num-val">{{summaryCards.count}}</text>
@@ -167,8 +167,19 @@
           <text class="num-lbl">保障人数</text>
         </view>
       </view>
-      <!-- 审计·顾问视角（2026-09-04）：总保额区分一年期短险，防止保额虚高误导客户 -->
-      <view class="summary-note" wx:if="{{summaryCards.short}}">其中一年期短险 {{summaryCards.short}} 万</view>
+      <!-- 2026-10-14 用户决策：不再展示单一"总保额"，改按保障类型统计。
+           理由：医疗险 400 万报销年限额 + 重疾 30 万保险金额相加没有意义 ——
+           前者是报销上限、后者是给付金额，混算会让客户把报销额度当成"能拿到手的钱"。
+           主数字＝保障型保额（真正赔钱的那部分），明细按险种列出，储蓄型（年金/增额寿/终身寿）另计。 -->
+      <view class="summary-note summary-cats" wx:if="{{summaryCards.byCat.length}}">
+        <text class="cat-chip" wx:for="{{summaryCards.byCat}}" wx:key="cat">{{item.cat}} {{item.w}}万</text>
+      </view>
+      <view class="summary-note" wx:if="{{summaryCards.savings !== '0'}}">储蓄型（年金 / 增额寿 / 终身寿）合计 {{summaryCards.savings}} 万，与上述保障型保额分列</view>
+      <!-- 未标注险种的保额单列：不并入任何一类（并入会朝某一方向高估），同时是数据质量信号 -->
+      <view class="summary-note" wx:if="{{summaryCards.unknown !== '0'}}">{{summaryCards.unknown}} 万的保单未标注险种，未计入上述分类（补充险种后即自动归类）</view>
+      <!-- 审计·顾问视角（2026-09-04）：一年期短险单列（时效提醒，与"按险种拆"是两件事：
+           400 万医疗险即便单列出来，它的性质仍是"报销年限额 + 明年需续保"） -->
+      <view class="summary-note" wx:if="{{summaryCards.short}}">其中一年期短险 {{summaryCards.short}} 万（每年需续保）</view>
       <!-- 审计 C1（2026-09-02）：AI 一句话结论（此前死值）置于摘要卡内、覆盖检查前 -->
       <!-- P1-C（2026-09-05）：AI 结论与规则覆盖检查同卡并存，标注来源防止客户把 AI 解读误当系统计算 -->
       <!-- 2026-09-12：客户版不显示来源角标——「AI 解读」是 owner 侧的审计需要（防误当系统计算），

@@ -24,29 +24,47 @@ describe('buildSummaryMd', () => {
     expect(() => buildSummaryMd(null, {})).not.toThrow()
   })
 
-  test('active 保单累加年保费 + 总保额', () => {
+  test('active 保单累加年保费 + 保额按险种分列（2026-10-14：不再给单一总保额）', () => {
     const policies = [
-      { status: 'active', annual_premium: 5000, sum_assured: 500000 },
-      { status: 'active', annual_premium: 3000, sum_assured: 300000 },
-      { status: 'expired', annual_premium: 2000, sum_assured: 100000 }
+      { status: 'active', annual_premium: 5000, sum_assured: 500000, insurance_category: '重疾险' },
+      { status: 'active', annual_premium: 3000, sum_assured: 300000, insurance_category: '医疗险' },
+      { status: 'expired', annual_premium: 2000, sum_assured: 100000, insurance_category: '重疾险' }
     ]
     const md = buildSummaryMd(policies, { income: '20' })
     expect(md).toContain('年保费合计：8000元') // 5000+3000，不含 expired
     expect(md).toContain('占家庭年收入 4.0%') // 8000 / (20*10000) * 100 = 4.0
-    expect(md).toContain('有效保单总保额：80万') // (500000+300000)/10000
+    expect(md).toContain('保障型保额（重疾/医疗/意外/寿险合计）：80万') // (500000+300000)/10000
+    expect(md).toContain('重疾险 50万')
+    expect(md).toContain('医疗险 30万')
     expect(md).toContain('有效保单：2份 | 已失效/过期：1份')
+    // 明确禁止把不同险种相加成一个"总保额"（那是本次要消除的误导）
+    expect(md).not.toContain('有效保单总保额')
+    expect(md).toContain('禁止相加成一个"总保额"数字')
   })
 
-  // 2026-09-22（沿用 2026-09-04「一年期短险单独聚合」决策）：AI 上下文原先只给「总保额」，
-  // 而其中的一年期部分（百万医疗 400 万这类）每年需续保，模型会照抄成长期保障厚度。
+  test('储蓄型单列 + 未标注险种单列（不并入任何一类，两头都不猜）', () => {
+    const md = buildSummaryMd([
+      { status: 'active', annual_premium: 5000, sum_assured: 300000, insurance_category: '重疾险' },
+      { status: 'active', annual_premium: 100000, sum_assured: 500000, insurance_category: '年金' },
+      { status: 'active', annual_premium: 800, sum_assured: 200000 } // 无 insurance_category
+    ], {})
+    expect(md).toContain('保障型保额（重疾/医疗/意外/寿险合计）：30万')
+    expect(md).toContain('储蓄型保额（年金/增额寿/终身寿合计）：50万')
+    expect(md).toContain('与保障型**分列**')
+    expect(md).toContain('未标注险种的保额：20万')
+    expect(md).toContain('不要把它并入保障型或储蓄型')
+  })
+
+  // 2026-09-22（沿用 2026-09-04「一年期短险单独聚合」决策）：一年期部分（百万医疗 400 万这类）
+  // 每年需续保，模型会照抄成长期保障厚度。
   // 注：限额**是**保额的一部分（2026-09-22 决策：条款自身即称"保险金额=各项医疗费用保险金年限额之和"），
-  // 单列的理由是**期限**，不是类型。
+  // 单列的理由是**期限**，不是类型 —— 与 2026-10-14 的"按险种拆"是两件事，两者都要保留。
   test('一年期短险单列 + 明确引用口径', () => {
     const md = buildSummaryMd([
-      { status: 'active', annual_premium: 657, sum_assured: 4000000, insurance_period: '至2022年07月09日', effective_date: '2021-07-10' },
-      { status: 'active', annual_premium: 5000, sum_assured: 500000, insurance_period: '终身' }
+      { status: 'active', annual_premium: 657, sum_assured: 4000000, insurance_category: '医疗险', insurance_period: '至2022年07月09日', effective_date: '2021-07-10' },
+      { status: 'active', annual_premium: 5000, sum_assured: 500000, insurance_category: '寿险', insurance_period: '终身' }
     ], { income: '20' })
-    expect(md).toContain('有效保单总保额：450万')
+    expect(md).toContain('保障型保额（重疾/医疗/意外/寿险合计）：450万')
     expect(md).toContain('其中一年期短险：400万')
     expect(md).toContain('勿表述为长期保障厚度')
   })

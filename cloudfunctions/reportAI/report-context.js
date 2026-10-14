@@ -16,7 +16,8 @@ const { buildStructuredCoverage } = require('./report-coverage')
 const { yuanToWan } = require('./_shared/amount')
 const { evaluateCoverage } = require('./_shared/gap-core')
 // 2026-09-22：一年期判定的单一实现（短险单列用，与 reportPdf/页面同源）
-const { isOneYearPolicy } = require('./_shared/policy-status')
+// 保额按险种拆分（2026-10-14）：跨树契约，与报告页摘要卡 / PDF 保障摘要同源
+const { summarizeCoverage } = require('./_shared/coverage-summary')
 
 /**
  * 保单汇总数据预计算 Markdown（禁止 AI 自行推算）
@@ -31,7 +32,6 @@ function buildSummaryMd(policies, snap) {
   const income = s.income ? parseFloat(s.income) : 0
   // income 为万口径（finances 元 → yuanToWan 转万），保费元 → 元 = income × 10000
   const premiumRatio = income > 0 ? (totalPremium / (income * 10000) * 100).toFixed(1) : '-'
-  const totalSumAssured = activePolicies.reduce((s, p) => s + (p.sum_assured || 0), 0)
   const expiredCount = (policies || []).filter(p => p.status === 'expired').length
 
   const lines = ['## 保单汇总数据（系统预计算，直接引用）', '']
@@ -39,14 +39,22 @@ function buildSummaryMd(policies, snap) {
   lines.push(income > 0
     ? `- 年保费合计：${totalPremium}元（占家庭年收入 ${premiumRatio}%）`
     : `- 年保费合计：${totalPremium}元（家庭年收入未填写，不计算占收入比）`)
-  // 总保额含医疗险报销年限额（2026-09-22 决策：条款自身即称"保险金额=各项医疗费用保险金年限额之和"，
-  // 不按报销型/给付型拆分，详见 docs/data-model-v2.md「保额口径」）。需要注意的是**期限**而非类型。
-  lines.push(`- 有效保单总保额：${Number((totalSumAssured / 10000).toFixed(1))}万`)
-  // 2026-09-22（沿用 2026-09-04「一年期短险单独聚合」决策；该决策原先只落到报告页摘要卡，
-  // PDF 与 AI 上下文都没有）：总保额里混着一/年期报销型限额，直接引用会虚高保障感。
-  // 这里单列一行并**明确引用口径** —— 否则模型会照抄"总保额 2310 万"当作长期保障厚度。
-  const shortTermWan = Number((activePolicies.reduce((s, p) => s + (isOneYearPolicy(p) ? (p.sum_assured || 0) : 0), 0) / 10000).toFixed(1))
-  if (shortTermWan > 0) lines.push(`- 其中一年期短险：${shortTermWan}万（每年需续保；引用"总保额"时必须同时说明这一部分，勿表述为长期保障厚度）`)
+  // 2026-10-14 用户决策：**不再给单一"总保额"**，按保障类型分列。
+  // 为什么必须改这里：这一行是模型最容易照抄的输入 —— 此前它会把"总保额 2310 万"当作
+  // 长期保障厚度写进报告（医疗险 400 万报销年限额 + 重疾 30 万保险金额相加本就没有意义）。
+  // 聚合走跨树契约 coverage-summary.js（与报告页摘要卡、PDF 保障摘要同源）。
+  const cov = summarizeCoverage(activePolicies)
+  lines.push(`- 保障型保额（重疾/医疗/意外/寿险合计）：${cov.protectionW}万 —— 按险种拆分：${cov.byCat.filter(function(x) { return x.kind === 'protection' }).map(function(x) { return x.cat + ' ' + x.w + '万' }).join('、') || '无'}`)
+  if (cov.savingsW > 0) {
+    lines.push(`- 储蓄型保额（年金/增额寿/终身寿合计）：${cov.savingsW}万 —— 与保障型**分列**，不得相加成一个"总保额"`)
+  }
+  // 未标注险种的保额：单列（不并入任何一类 —— 两头猜都会错），同时是数据质量信号
+  if (cov.unknownW > 0) {
+    lines.push(`- 未标注险种的保额：${cov.unknownW}万（保单缺 insurance_category；不要把它并入保障型或储蓄型）`)
+  }
+  // 一年期短险单列（2026-09-04「防保额虚高误导」决策）：它是**时效**提醒，与按险种拆是两件事
+  if (cov.shortTermW > 0) lines.push(`- 其中一年期短险：${cov.shortTermW}万（每年需续保；引用保额时必须同时说明这一部分，勿表述为长期保障厚度）`)
+  lines.push('- ⚠️ 引用保额时**必须按险种分别表述**（如"重疾 30 万、医疗 400 万"），禁止相加成一个"总保额"数字——不同险种的保额含义不同（给付 vs 报销限额）')
   lines.push(`- 有效保单：${activePolicies.length}份 | 已失效/过期：${expiredCount}份`)
   if (s.debt) {
     const d = s.debt

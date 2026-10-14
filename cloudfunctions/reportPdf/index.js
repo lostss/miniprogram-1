@@ -21,6 +21,8 @@ const { parseExpiry } = require('./_shared/parse-expiry')
 const { STATUS_LABELS, listExpiredButActive, isOneYearPolicy, isLifetimeTerm, isSinglePayTerm } = require('./_shared/policy-status')
 // 保费现金流趋势：跨树契约（与页面缴费月历章同源，勿在本文件另写算法）
 const { buildPremiumTrend } = require('./_shared/premium-trend')
+// 保额按险种拆分：跨树契约（与报告页摘要卡、AI 上下文同源；2026-10-14 起不再展示单一总保额）
+const { summarizeCoverage } = require('./_shared/coverage-summary')
 // 现价/回本计算唯一事实源（与报告表格、前端时间轴共用）
 const { breakEvenYear } = require('./_shared/cash-value-math')
 // 导出文件登记（2026-09-20 复核批次 B）：云存储无列举 API，不登记就永远找不到这个文件
@@ -244,11 +246,14 @@ function buildPdf(ctx) {
   const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
   const act = policies.filter(p => p.status === 'active')
   const premiumW = yuanToWan(act.reduce((s, p) => s + (p.annual_premium || 0), 0))
-  // 总保额 = 全部 active 保单的 sum_assured 之和，**包含医疗险的报销年限额**（2026-09-22 决策，
-  // 依据是条款自身即称"保险金额为各项医疗费用保险金年限额之和"，详见 docs/data-model-v2.md「保额口径」）。
-  // 别按"报销型不算保额"去改这里 —— 真正需要提醒读者的是**期限**（一年期短险每年需续保），
-  // 那由 _shortNote 与 _expiryNote 承担。
-  const coverageW = yuanToWan(act.reduce((s, p) => s + (p.sum_assured || 0), 0))
+  // 保额汇总：2026-10-14 用户决策「不再展示单一总保额，按保障类型统计」——
+  // 主数字改为**保障型保额**（重疾/医疗/意外/寿险 = 发生风险时赔钱的那部分），储蓄型另计，
+  // 并列出分险种明细。聚合走跨树契约 coverage-summary.js（与报告页 / AI 上下文同源；
+  // 此前本文件自算 coverageW，是三份独立实现之一）。
+  // ⚠️ 金额口径本身**未变**（医疗险报销年限额仍计入其险种金额，见 docs/data-model-v2.md「保额口径」）；
+  // 变的是"把它们相加成一个数字"这件事 —— 那正是会误导的地方。
+  const covSum = summarizeCoverage(act)
+  const coverageW = covSum.protectionW
   const income = fin.income || 0
   const debtAmt = (fin.debt && fin.debt.amount) || 0
   // 兜底：financial_snapshot 未填但成员有个人收入（万）时，经济状况仍展示成员合计
@@ -276,7 +281,7 @@ function buildPdf(ctx) {
   // 算成同一个人（空串也是集合里的一个键）→ 3 张未挂到人的保单显示「保障人数 1」，与本页
   // 明细表里 3 行「—」自相矛盾。改为只数非空姓名；一个都数不出时如实写「待补」。
   const insuredCount = _insuredCount(act)
-  const sums = [['年保费(万)', String(premiumW || 0)], ['总保额(万)', String(coverageW || 0)], ['保障人数', insuredCount]]
+  const sums = [['年保费(万)', String(premiumW || 0)], ['保障型保额(万)', String(coverageW || 0)], ['保障人数', insuredCount]]
   let cx = M
   for (const it of sums) {
     _cn(9); doc.fillColor('#888888'); doc.text(it[0], cx, y, { width: colW - 8, lineBreak: false })
@@ -284,6 +289,16 @@ function buildPdf(ctx) {
     cx += colW
   }
   y += 40
+  // 分险种明细（与报告页摘要卡同源数据）：按保障类型列出，储蓄型另计
+  if (covSum.byCat.length) {
+    _para(covSum.byCat.map(function (x) { return x.cat + ' ' + x.w + ' 万' }).join('　·　'), 9, { color: '#555555' })
+  }
+  if (covSum.savingsW > 0) {
+    _para('储蓄型（年金 / 增额寿 / 终身寿）合计 ' + covSum.savingsW + ' 万，与上述保障型保额分列', 9, { color: '#777777' })
+  }
+  if (covSum.unknownW > 0) {
+    _para(covSum.unknownW + ' 万的保单未标注险种，未计入上述分类', 9, { color: '#999999' })
+  }
   // premiumW/income 均为万口径，占比 = 保费万 / 收入万 × 100
   if (income > 0) _para('保费占家庭年收入约 ' + (premiumW / income * 100).toFixed(1) + '%', 9, { color: '#777777' })
   // 2026-09-22：一年期短险单列（沿用 2026-09-04「防总保额虚高误导」决策，原先只到报告页摘要卡）。

@@ -56,8 +56,18 @@ function buildReportView(family, report, opts) {
   }
   const summaryCards = {
     premium: String(norm.annualPremiumW),
-    coverage: String(norm.totalCoverage),
-    // 审计·顾问视角（2026-09-04）：一年期短险单独标注（摘要卡 caption，防总保额虚高误导）
+    // 2026-10-14 用户决策：**不再展示单一"总保额"**，改为按保障类型统计。
+    // 主数字改为「保障型保额」（发生风险时真正赔钱的那部分：重疾/医疗/意外/寿险），
+    // 储蓄型（年金/增额寿/终身寿）另计 —— 两者混算会让客户把医疗险的报销年限额当成能拿到手的钱。
+    // 字段名从 coverage 改为 protection：语义变了就换名字，避免旧名被按老含义继续用。
+    protection: String(norm.protectionCoverage),
+    savings: String(norm.savingsCoverage),
+    // 未标注险种的保额（单列，不并入保障型/储蓄型 —— 两头都不猜）
+    unknown: String(norm.unknownCoverage || 0),
+    // 分险种明细（页面/PDF 同源数据；单位万）：[{ cat, w, kind }] 按金额降序
+    byCat: norm.coverageByCat || [],
+    // 一年期短险单列（2026-09-04「防保额虚高误导」决策）：拆分后仍需保留 —— 它是时效提醒，
+    // 与"按险种拆"是两件事（400 万医疗险即便单列也仍是报销限额）
     short: norm.shortTermCoverage > 0 ? String(Math.round(norm.shortTermCoverage * 10) / 10) : '',
     count: coveredIds.size
   }

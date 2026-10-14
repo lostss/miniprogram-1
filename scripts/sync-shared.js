@@ -71,7 +71,7 @@ const TARGET_FUNCTIONS = fs.readdirSync(CF_DIR, { withFileTypes: true })
 // coverage_term 数字兜底，105=终身、1=趸交）。此前该规则在前端 timeline-builder 与
 // reportPdf._termYear 各一份，本契约先把**前端那一份**收敛成唯一实现（timeline-builder /
 // gantt-builder / premium-trend 共用）；reportPdf 那份属遗留，见契约文件头注释。
-const CONTRACT_FILES = ['thresholds.js', 'amount.js', 'gap-core.js', 'policy-status.js', 'pii-rules.js', 'parse-expiry.js', 'ocr-confidence.js', 'injection-guard.js', 'readiness.js', 'calc-age.js', 'fact-vocab.js', 'cash-value-math.js', 'markers.js', 'write-tools.js', 'member-skeleton.js', 'policy-terms.js', 'premium-trend.js']
+const CONTRACT_FILES = ['thresholds.js', 'amount.js', 'gap-core.js', 'policy-status.js', 'pii-rules.js', 'parse-expiry.js', 'ocr-confidence.js', 'injection-guard.js', 'readiness.js', 'calc-age.js', 'fact-vocab.js', 'cash-value-math.js', 'markers.js', 'write-tools.js', 'member-skeleton.js', 'policy-terms.js', 'premium-trend.js', 'coverage-summary.js']
 
 // 扫描一个 .js 文件中、解析到 _shared/ 下的 require 目标（返回相对 _shared 的路径，'/' 分隔）
 // fileAbs 可能是：
