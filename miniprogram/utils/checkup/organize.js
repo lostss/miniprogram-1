@@ -17,6 +17,8 @@ const { fmtYuan } = require('../amount')
 const { STATUS_LABELS, isOneYearPolicy } = require('../policy-status')
 // 保额按保障类型拆分（2026-10-14）：跨树契约，与 AI 摘要卡 / PDF 保障摘要同源
 const { summarizeCoverage } = require('../coverage-summary')
+// 险种规范词（跨树契约）：'医疗'→'医疗险'、'年金险'→'年金' 等归一一处（勿在本文件另立映射）
+const { canonCat } = require('../thresholds')
 const { OCR_RELIABLE_THRESHOLD, CORE_FIELDS } = require('../ocr-confidence')
 // 跨树契约：骨架成员判定（建档按人数造的「成员N」占位）——与后端认领判定同源，勿自写第二份正则
 const { isSkeletonName } = require('../member-skeleton')
@@ -24,7 +26,9 @@ const { isSkeletonName } = require('../member-skeleton')
 const DASH = '—'
 
 // 展示顺序固定，避免同一份数据两次渲染顺序不同（同看时"刚才那张"要对得上）
-const CATEGORY_ORDER = ['寿险', '重疾险', '医疗险', '意外险', '年金险']
+// 规范词（与 thresholds.CANON_CAT 同口径）——原末位写作 '年金险' 非规范词，
+// 而契约把 '年金险' 映射为 '年金'（见 cloudfunctions/_shared/thresholds.js 注释"规范词定为 '年金'"）
+const CATEGORY_ORDER = ['寿险', '重疾险', '医疗险', '意外险', '年金']
 const CATEGORY_OTHER = '其他'
 
 // 整理报告需要的"关键字段"= OCR 核心字段 + 报告必需的期间/保费。
@@ -90,7 +94,11 @@ function toPolicyCard(p) {
 
 function _categoryList(policies) {
   const set = {}
-  policies.forEach((p) => { set[_str(p.insurance_category) || CATEGORY_OTHER] = true })
+  // 2026-10-14：改走契约 canonCat（原实现按原始串精确匹配）——
+  // 保单里可能存裸词（'医疗'）或反向拼写（'年金险'，契约规范词是 '年金'），
+  // 精确匹配会让它们掉进 unknown 分支：虽仍展示，但排在末尾、且与矩阵列名不一致
+  //（真机截图里「已覆盖险种」写"年金"、矩阵列头也是"年金"，两处本应同词）。
+  policies.forEach((p) => { set[canonCat(_str(p.insurance_category)) || CATEGORY_OTHER] = true })
   const known = CATEGORY_ORDER.filter((c) => set[c])
   const unknown = Object.keys(set).filter((c) => CATEGORY_ORDER.indexOf(c) === -1).sort()
   return known.concat(unknown)

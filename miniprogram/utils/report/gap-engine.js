@@ -9,7 +9,8 @@
  * 本文件只保留**展示层**：gaps 的筛选与排序、缺口矩阵、覆盖矩阵的形状。
  * 改算法请改 cloudfunctions/_shared/gap-core.js（改本文件副本 = 下次 sync 被覆盖）。
  */
-const { evaluateCoverage, neededCats } = require('../gap-core')
+// neededCats 已随 buildGapMatrix 删除而失去调用方（2026-10-14 清理，eslint no-unused-vars 提示）
+const { evaluateCoverage } = require('../gap-core')
 const { canonCat } = require('../thresholds')
 const { yuanToWan } = require('../amount')
 
@@ -64,38 +65,49 @@ function buildCoverageMatrix(members, policies) {
   var cats = MATRIX_CATS
   var rows = members.map(function(m) {
     var cells = {}
-    for (var ci = 0; ci < cats.length; ci++) cells[cats[ci]] = 0
+    // 2026-10-14：除保额外再统计「该格是否有保单」—— 真机截图暴露的自相矛盾：
+    // 「已覆盖险种」列了"年金"（organize._categoryList 按"有没有这类保单"判定），
+    // 而矩阵年金列全是"—"（按"保额>0"判定）→ 同一份数据两处说法相反。
+    // 两种事实都要能表达：无此类保单 = —；有保单但保额 0/未填 = 0。
+    var counts = {}
+    for (var ci = 0; ci < cats.length; ci++) { cells[cats[ci]] = 0; counts[cats[ci]] = 0 }
     var premium = 0
     for (var k = 0; k < active.length; k++) {
       var p = active[k]
       var n = (p.member_id && memberIdToName[p.member_id]) || p.insured_name
       if (n === m.name) {
         var c = canonCat(p.insurance_category || '其他')
-        if (cells[c] !== undefined) cells[c] += yuanToWan(p.sum_assured || 0)
+        if (cells[c] !== undefined) { cells[c] += yuanToWan(p.sum_assured || 0); counts[c]++ }
         premium += p.annual_premium || 0
       }
     }
-    return { name: m.name, cells: cells, premiumW: yuanToWan(premium) }
+    return { name: m.name, cells: cells, counts: counts, premiumW: yuanToWan(premium) }
   })
   var total = {}
-  for (var ci2 = 0; ci2 < cats.length; ci2++) total[cats[ci2]] = 0
+  var totalCounts = {}
+  for (var ci2 = 0; ci2 < cats.length; ci2++) { total[cats[ci2]] = 0; totalCounts[cats[ci2]] = 0 }
   var totalPremiumW = 0
   for (var r = 0; r < rows.length; r++) {
-    for (var c2 = 0; c2 < cats.length; c2++) total[cats[c2]] += rows[r].cells[cats[c2]]
+    for (var c2 = 0; c2 < cats.length; c2++) {
+      total[cats[c2]] += rows[r].cells[cats[c2]]
+      totalCounts[cats[c2]] += rows[r].counts[cats[c2]]
+    }
     totalPremiumW += rows[r].premiumW
   }
   function fmt(v) { var x = Math.round(v * 100) / 100; return x === Math.floor(x) ? String(x) : String(x) }
   // 单元格状态：保障险空 → missing（红）；年金空 → 中性（不标红，见函数头口径）；保费 → 恒中性
-  function cellOf(cat, v) {
+  // 值：保额>0 → 数字；有保单但保额为 0/未填 → '0'（区别于"无此类保单"的 '—'）
+  function cellOf(cat, v, n) {
     if (v > 0) return { v: fmt(v), s: 'ok' }
+    if (n > 0) return { v: '0', s: GAP_CATS.indexOf(cat) !== -1 ? 'missing' : '' }
     return { v: '—', s: GAP_CATS.indexOf(cat) !== -1 ? 'missing' : '' }
   }
   var out = rows.map(function(row) {
-    var cells = cats.map(function(c) { return cellOf(c, row.cells[c]) })
+    var cells = cats.map(function(c) { return cellOf(c, row.cells[c], row.counts[c]) })
     cells.push({ v: row.premiumW > 0 ? fmt(row.premiumW) : '—', s: '' })
     return { name: row.name, cells: cells }
   })
-  var grandCells = cats.map(function(c) { return cellOf(c, total[c]) })
+  var grandCells = cats.map(function(c) { return cellOf(c, total[c], totalCounts[c]) })
   grandCells.push({ v: totalPremiumW > 0 ? fmt(totalPremiumW) : '—', s: '' })
   out.push({ name: '合计', cells: grandCells })
   return { heads: ['成员'].concat(cats).concat(['年保费']), cats: cats.concat(['年保费']), rows: out }

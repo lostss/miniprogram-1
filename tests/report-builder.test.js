@@ -237,6 +237,29 @@ describe('assessDataCompleteness — 完整度透视', () => {
 })
 
 describe('buildCoverageMatrix — 保障覆盖矩阵（第 2 章数据源）', () => {
+  test('有保单但保额未填 → 显示 0 而非 —（真机截图矛盾：已覆盖险种列了年金、矩阵却是 —）', () => {
+    const c = baseCustomer()
+    c.policies = [
+      Object.assign({}, c.policies[0]), // 李阳勇 寿险 100 万
+      // 同一成员的年金保单：有这张保单，但保额没填（OCR 未识别到 / 用户未补）
+      { id: 'P2', insured_name: '李阳勇', insurance_category: '年金', sum_assured: 0, status: 'active' }
+    ]
+    const m = buildCoverageMatrix(c.members, c.policies)
+    const ly = m.rows.find(r => r.name === '李阳勇')
+    // 年金列：有保单 → '0' 且中性（储蓄型不标红）；不能是 '—'（那会读成"没有年金"）
+    expect(ly.cells[4]).toEqual({ v: '0', s: '' })
+    // 意外险列：确实没有这类保单 → 仍是 '—'
+    expect(ly.cells[2]).toEqual({ v: '—', s: 'missing' })
+  })
+
+  test('保障险有保单但保额为 0 → 显示 0 且标 missing（与缺口引擎 existing=0 一致）', () => {
+    const c = baseCustomer()
+    c.policies = [{ id: 'P1', insured_name: '李阳勇', insurance_category: '重疾险', sum_assured: 0, status: 'active' }]
+    const m = buildCoverageMatrix(c.members, c.policies)
+    const ly = m.rows.find(r => r.name === '李阳勇')
+    expect(ly.cells[0]).toEqual({ v: '0', s: 'missing' }) // 重疾险
+  })
+
   test('成员×险种矩阵：缺失格 missing / 覆盖格 ok / 底部险种合计（无行内合计列）', () => {
     const c = baseCustomer() // 李阳勇仅寿险100万
     const m = buildCoverageMatrix(c.members, c.policies)

@@ -137,6 +137,21 @@ describe('checkup/organize — 归集与汇总', () => {
     expect(r.summary.unknownSumAssuredText).toBe('20万')
   })
 
+  test('险种枚举走契约规范词：裸词/反向拼写归一（"年金险"→"年金"，与矩阵列名同词）', () => {
+    const r = buildCheckupReport({
+      family: {
+        members: [M()],
+        policies: [
+          P({ id: 'p1', insurance_category: '医疗', sum_assured: 1000000 }),   // 裸词
+          P({ id: 'p2', insurance_category: '年金险', sum_assured: 500000 }),  // 反向拼写（契约规范词为"年金"）
+          P({ id: 'p3', insurance_category: '寿险', sum_assured: 300000 })
+        ]
+      }
+    })
+    // 顺序按 CATEGORY_ORDER（规范词），且不出现 "年金险" 这种非规范写法
+    expect(r.summary.categories).toEqual(['寿险', '医疗险', '年金'])
+  })
+
   test('险种枚举只列「已覆盖」，不出现"缺/不足/建议"这类判断词', () => {
     const r = buildCheckupReport({ family: { members: [M()], policies: [P()] } })
     const text = JSON.stringify(r)
