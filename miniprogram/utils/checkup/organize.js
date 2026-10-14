@@ -15,6 +15,8 @@
  */
 const { fmtYuan } = require('../amount')
 const { STATUS_LABELS, isOneYearPolicy } = require('../policy-status')
+// 保额按保障类型拆分（2026-10-14）：跨树契约，与 AI 摘要卡 / PDF 保障摘要同源
+const { summarizeCoverage } = require('../coverage-summary')
 const { OCR_RELIABLE_THRESHOLD, CORE_FIELDS } = require('../ocr-confidence')
 // 跨树契约：骨架成员判定（建档按人数造的「成员N」占位）——与后端认领判定同源，勿自写第二份正则
 const { isSkeletonName } = require('../member-skeleton')
@@ -162,7 +164,12 @@ function buildCheckupReport(input) {
   })
 
   const shortTerm = policies.filter(isOneYearPolicy)
-  const totalSumAssured = policies.reduce((s, p) => s + _num(p.sum_assured), 0)
+  // 2026-10-14 用户决策：**不再展示单一"保额合计"**，按保障类型拆分。
+  // 这里（整理报告正文的汇总卡）是最容易被忽略的一处复现点 —— 线上实测的"保额合计 2310万"
+  // 里 2010万 是一年期短期报销限额，客户会当成"能拿到手的钱"。
+  // 聚合走跨树契约 coverage-summary.js（与 AI 摘要卡 / PDF 保障摘要同源），不再自行 reduce。
+  const cov = summarizeCoverage(policies)
+  const totalSumAssured = cov.totalW * 10000 // 仅供内部核对；**不再对外展示**
   // 合计里混入了非年交保单 → 金额口径不齐，必须提示（不静默相加）
   const nonAnnualCount = policies.filter((p) => ANNUAL_METHODS.indexOf(_str(p.payment_method)) === -1).length
   const summary = {
@@ -174,6 +181,14 @@ function buildCheckupReport(input) {
       : '',
     totalSumAssured,
     totalSumAssuredText: fmtYuan(totalSumAssured),
+    // 按保障类型拆分（展示用）：保障型为主数字，储蓄型/未标注分列，分险种明细给 tag
+    protectionSumAssured: cov.protectionW * 10000,
+    protectionSumAssuredText: fmtYuan(cov.protectionW * 10000),
+    savingsSumAssuredText: cov.savingsW > 0 ? fmtYuan(cov.savingsW * 10000) : '',
+    unknownSumAssuredText: cov.unknownW > 0 ? fmtYuan(cov.unknownW * 10000) : '',
+    coverageByCat: cov.byCat.map(function (x) {
+      return { cat: x.cat, text: fmtYuan(x.w * 10000), kind: x.kind }
+    }),
     shortTermCount: shortTerm.length,
     shortTermSumAssured: shortTerm.reduce((s, p) => s + _num(p.sum_assured), 0),
     shortTermSumAssuredText: fmtYuan(shortTerm.reduce((s, p) => s + _num(p.sum_assured), 0)),

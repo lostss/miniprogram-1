@@ -91,13 +91,24 @@ describe('保额拆分接线（防第四份实现 / 防只改一处）', () => {
   const path = require('path')
   const root = path.join(__dirname, '..')
 
-  test('三个消费面都引用同一契约', () => {
+  test('四个消费面都引用同一契约（含整理报告正文 —— 线上实测最易误导的那一处）', () => {
     const normalizer = fs.readFileSync(path.join(root, 'miniprogram', 'utils', 'report', 'data-normalizer.js'), 'utf8')
     const pdf = fs.readFileSync(path.join(root, 'cloudfunctions', 'reportPdf', 'index.js'), 'utf8')
     const ctx = fs.readFileSync(path.join(root, 'cloudfunctions', 'reportAI', 'report-context.js'), 'utf8')
+    const checkup = fs.readFileSync(path.join(root, 'miniprogram', 'utils', 'checkup', 'organize.js'), 'utf8')
     expect(normalizer).toContain("require('../coverage-summary')")
     expect(pdf).toContain("require('./_shared/coverage-summary')")
     expect(ctx).toContain("require('./_shared/coverage-summary')")
+    // organize.js（整理报告正文的汇总卡）：2026-10-14 真机截图暴露的漏网处 ——
+    // 它用的是"保额合计"文案，此前 grep「总保额」搜不到它，于是它继续展示 2310万（含 2010万 一年期）
+    expect(checkup).toContain("require('../coverage-summary')")
+  })
+
+  test('整理报告汇总卡不再展示单一"保额合计"，改为保障型 + 分险种 tag', () => {
+    const wxml = fs.readFileSync(path.join(root, 'miniprogram', 'pages', 'report', 'index.wxml'), 'utf8')
+    expect(wxml).not.toContain('>保额合计<')
+    expect(wxml).toContain('保障型保额合计')
+    expect(wxml).toContain('checkup.summary.coverageByCat')
   })
 
   test('报告页摘要卡不再渲染单一"总保额"，改为按类展示', () => {

@@ -95,7 +95,7 @@ describe('checkup/organize — 归集与汇总', () => {
     expect(r2.unassigned.length).toBe(1)
   })
 
-  test('汇总：总保额 / 一年期短险单列 / 年缴保费 / 已覆盖险种枚举', () => {
+  test('汇总：保障型保额拆分 / 一年期短险单列 / 年缴保费 / 已覆盖险种枚举', () => {
     const r = buildCheckupReport({
       family: {
         members: [M()],
@@ -106,12 +106,35 @@ describe('checkup/organize — 归集与汇总', () => {
       }
     })
     expect(r.summary.policyCount).toBe(2)
+    // 2026-10-14：不再展示单一"保额合计"（totalSumAssured 仅内部核对），改按保障类型拆分
     expect(r.summary.totalSumAssured).toBe(4500000)
-    expect(r.summary.totalSumAssuredText).toBe('450万')
+    expect(r.summary.protectionSumAssured).toBe(4500000)
+    expect(r.summary.protectionSumAssuredText).toBe('450万')
+    // 分险种明细（线上实测最易误导处：2310万 里 2010万 是一年期短期报销限额）
+    expect(r.summary.coverageByCat.map(x => x.cat + ':' + x.text)).toEqual(['医疗险:400万', '重疾险:50万'])
+    expect(r.summary.savingsSumAssuredText).toBe('')
+    expect(r.summary.unknownSumAssuredText).toBe('')
     expect(r.summary.shortTermCount).toBe(1)
     expect(r.summary.shortTermSumAssured).toBe(4000000)
     expect(r.summary.annualPremium).toBe(3030)
     expect(r.summary.categories).toEqual(['重疾险', '医疗险'])
+  })
+
+  test('储蓄型 / 未标注险种在汇总里分列，不并入保障型', () => {
+    const r = buildCheckupReport({
+      family: {
+        members: [M()],
+        policies: [
+          P({ id: 'p1', insurance_category: '重疾险', sum_assured: 300000 }),
+          P({ id: 'p2', insurance_category: '年金', sum_assured: 500000 }),
+          P({ id: 'p3', insurance_category: '', sum_assured: 200000 }) // 险种缺失（显式置空；P 的默认值会填重疾险）
+        ]
+      }
+    })
+    expect(r.summary.protectionSumAssured).toBe(300000)
+    expect(r.summary.protectionSumAssuredText).toBe('30万')
+    expect(r.summary.savingsSumAssuredText).toBe('50万')
+    expect(r.summary.unknownSumAssuredText).toBe('20万')
   })
 
   test('险种枚举只列「已覆盖」，不出现"缺/不足/建议"这类判断词', () => {

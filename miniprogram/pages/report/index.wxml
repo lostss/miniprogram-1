@@ -70,9 +70,16 @@
           <view class="sum-item"><view class="sum-label">年缴保费合计</view><view class="sum-value">{{checkup.summary.annualPremiumText}}</view></view>
         </view>
         <view class="sum-note" wx:if="{{checkup.summary.premiumNote}}">{{checkup.summary.premiumNote}}</view>
+        <!-- 2026-10-14 用户决策：不再给单一"保额合计"，按保障类型拆分。
+             这一处是线上实测最容易误导的地方（"保额合计 2310万"里 2010万 是一年期短期报销限额）。 -->
         <view class="sum-wide">
-          <view class="sum-label">保额合计</view>
-          <view class="sum-value-lg">{{checkup.summary.totalSumAssuredText}}</view>
+          <view class="sum-label">保障型保额合计</view>
+          <view class="sum-value-lg">{{checkup.summary.protectionSumAssuredText}}</view>
+          <view class="tags" wx:if="{{checkup.summary.coverageByCat.length}}">
+            <view class="tag" wx:for="{{checkup.summary.coverageByCat}}" wx:key="cat">{{item.cat}} {{item.text}}</view>
+          </view>
+          <view class="sum-note" wx:if="{{checkup.summary.savingsSumAssuredText}}">储蓄型（年金 / 增额寿 / 终身寿）合计 {{checkup.summary.savingsSumAssuredText}}，与上述保障型分列</view>
+          <view class="sum-note" wx:if="{{checkup.summary.unknownSumAssuredText}}">{{checkup.summary.unknownSumAssuredText}} 的保单未标注险种，未计入上述分类</view>
           <view class="sum-note" wx:if="{{checkup.summary.shortTermCount > 0}}">其中一年期 {{checkup.summary.shortTermCount}} 张 · {{checkup.summary.shortTermSumAssuredText}}（每年需续保）</view>
         </view>
         <view class="sum-wide">
