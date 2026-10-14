@@ -21,7 +21,8 @@
  * 这类年级精度文本），避免伪造月级精度。
  */
 const { isLifetimeTerm, isOneYearPolicy, isSinglePayTerm } = require('../policy-status')
-const { coverTermYear, payTermYear } = require('./timeline-builder')
+// 双字段期限口径：直接引用跨树契约（不再经 timeline-builder 转出 —— 2026-10-14 收敛）
+const { coverTermYear, payTermYear } = require('../policy-terms')
 
 // 极短保障期（如一年期）在整条时间轴上的可视宽度下限（%），否则会渲染成一条看不见的线
 const MIN_WIDTH_PCT = 3

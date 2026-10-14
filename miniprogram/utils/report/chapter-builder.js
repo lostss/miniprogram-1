@@ -22,6 +22,8 @@ var { buildCoverageMatrix } = require('./gap-engine')
 var { buildTimeline } = require('./timeline-builder')
 var { buildGantt } = require('./gantt-builder')
 var { canonCat, premiumRatioVerdict } = require('../thresholds')
+// 保费现金流趋势：跨树契约（与 reportPdf 缴费月历节同源）
+var { buildPremiumTrend } = require('../premium-trend')
 var { yuanToWan, fmtYuan } = require('../amount')
 // 现价取行唯一事实源（2026-09-27 起：保单年度也在此契约内，勿再自行写年差公式）
 var { policyYearAt, cashAtYear, coverScale } = require('../cash-value-math')
@@ -366,6 +368,24 @@ function buildChapters(family, report, gaps, opts) {
   // （7%/10% 属行业经验值、非监管标准 → 文案只写"常见参考区间"）。收入缺失时 premiumRatio 回落 0
   // → verdict.code='unknown' → text 为空 → 不输出（有依据才出结论）。
   var premiumNote = (!shared && totalIncome > 0) ? premiumRatioVerdict(premiumRatio).text : ''
+  // 保费现金流（2026-10-14 用户稿子）：下一期缴费（含第几期）+ 缴费期满释放的现金流。
+  // 口径走跨树契约 premium-trend.js（与 PDF 缴费月历节同源）；这两条都是**事实**，
+  // 客户版照样给（金额与期数不属"对客户隐藏的内部口径"），只有占收入比才是 owner 专属。
+  var trend = buildPremiumTrend(active, members)
+  var trendLines = []
+  if (trend.upcoming.length) {
+    var _u = trend.upcoming[0]
+    // 带保单名 + 第几期（与 PDF 同节同文案）：只写"1 笔"会让读者不知道是哪张保单的哪一期
+    var _names = _u.list.slice(0, 2).map(function(it) { return it.product + ' 第' + it.periodNo + ' 期' }).join('、')
+    if (_u.list.length > 2) _names += ' 等'
+    trendLines.push('下一期缴费：' + _u.y + '年' + _u.m + '月，合计 ' + _u.amountW + ' 万（' + _u.count + ' 笔' + (_names ? '：' + _names : '') + '）')
+  }
+  // 最多两级台阶：最近一次下降 + 最终归零（中间的逐个列没信息量）
+  var _stepIdx = trend.drops.length > 2 ? [0, trend.drops.length - 1] : trend.drops.map(function(_, i) { return i })
+  _stepIdx.forEach(function(i) {
+    var d = trend.drops[i]
+    trendLines.push(d.y + ' 年起年缴保费降至 ' + d.toW + ' 万（' + d.products.join('、') + ' 缴费期满），每年减少支出 ' + d.reducedW + ' 万')
+  })
   ch.push({
     key: 'premium_calendar', title: '缴费月历', num: '5',
     // V1.5（2026-09-12）：明细型章节默认折叠——首屏只保留结论/缺口，月历与附录按需展开（保留手动展开能力）
@@ -383,6 +403,7 @@ function buildChapters(family, report, gaps, opts) {
     content: '年总保费 ' + annualPremiumW + '万' + (!shared
       ? (totalIncome > 0 ? '（占收入 ' + premiumRatio + '%）' : '（家庭年收入未填写，暂不计算占比）')
       : '') + (premiumNote ? '<br>' + premiumNote : '')
+      + (trendLines.length ? '<br>' + trendLines.join('<br>') : '')
       + (peakMonth ? '<br>💡 ' + peakMonth + '缴费压力最大，请提前安排资金' : '')
   })
 

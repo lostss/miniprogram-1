@@ -67,7 +67,11 @@ const TARGET_FUNCTIONS = fs.readdirSync(CF_DIR, { withFileTypes: true })
 // 前端 utils/markers.cleanMarkers 各持一份正则、人工同步，且已漂移（前端缺 {TOOL_INTENT:} 规则）。
 // 2026-09-19 加入 write-tools.js：对话"写工具集合"的单一事实源。前端 chat-panel 曾自持手写镜像，
 // 漏了 deletePolicy/deleteMember/deleteFact → 确认删除后不通知报告刷新（流程审计 P2-5）。
-const CONTRACT_FILES = ['thresholds.js', 'amount.js', 'gap-core.js', 'policy-status.js', 'pii-rules.js', 'parse-expiry.js', 'ocr-confidence.js', 'injection-guard.js', 'readiness.js', 'calc-age.js', 'fact-vocab.js', 'cash-value-math.js', 'markers.js', 'write-tools.js', 'member-skeleton.js']
+// 2026-10-14 加入 policy-terms.js：保障期/缴费期的双字段口径（insurance_period 文本优先、
+// coverage_term 数字兜底，105=终身、1=趸交）。此前该规则在前端 timeline-builder 与
+// reportPdf._termYear 各一份，本契约先把**前端那一份**收敛成唯一实现（timeline-builder /
+// gantt-builder / premium-trend 共用）；reportPdf 那份属遗留，见契约文件头注释。
+const CONTRACT_FILES = ['thresholds.js', 'amount.js', 'gap-core.js', 'policy-status.js', 'pii-rules.js', 'parse-expiry.js', 'ocr-confidence.js', 'injection-guard.js', 'readiness.js', 'calc-age.js', 'fact-vocab.js', 'cash-value-math.js', 'markers.js', 'write-tools.js', 'member-skeleton.js', 'policy-terms.js', 'premium-trend.js']
 
 // 扫描一个 .js 文件中、解析到 _shared/ 下的 require 目标（返回相对 _shared 的路径，'/' 分隔）
 // fileAbs 可能是：

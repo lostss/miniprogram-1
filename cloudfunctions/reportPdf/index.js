@@ -19,6 +19,8 @@ const { parseExpiry } = require('./_shared/parse-expiry')
 // 2026-09-15 架构审查候选 2：状态文案改用单一事实源（原先自带 if-else，
 // 导致"退保/失效/理赔终止"在 PDF 上显示为"待确认"）
 const { STATUS_LABELS, listExpiredButActive, isOneYearPolicy, isLifetimeTerm, isSinglePayTerm } = require('./_shared/policy-status')
+// 保费现金流趋势：跨树契约（与页面缴费月历章同源，勿在本文件另写算法）
+const { buildPremiumTrend } = require('./_shared/premium-trend')
 // 现价/回本计算唯一事实源（与报告表格、前端时间轴共用）
 const { breakEvenYear } = require('./_shared/cash-value-math')
 // 导出文件登记（2026-09-20 复核批次 B）：云存储无列举 API，不登记就永远找不到这个文件
@@ -413,6 +415,25 @@ function buildPdf(ctx) {
       y = doc.y + 4
     }
   }
+  // 2026-10-14 保费现金流（用户稿子两处：关键节点的"下一期缴费"、年度趋势的"缴费期满释放现金流"）。
+  // ⚠️ 与页面同源：走跨树契约 _shared/premium-trend.js（不在本文件另写一份算法 —— 期限口径分裂
+  // 已经让 PDF 吃过一次亏，见 policy-terms.js 头注释）。
+  // ⚠️ 用本作用域内的 `act`（= policies.filter(active)，见 buildPdf 开头）。
+  // 首版写成 `activePolicies` —— 那是**另一个函数**（调用层）里的变量名，此处为 undefined
+  // → PDF 导出必 ReferenceError。测试没抓到（断言只查源码文本），是 eslint no-undef 抓的。
+  const trend = buildPremiumTrend(act, family.members || [])
+  if (trend.upcoming.length) {
+    const u = trend.upcoming[0]
+    _para('下一期缴费：' + u.y + ' 年 ' + u.m + ' 月，合计 ' + _fmtMoney(u.amountW * 10000) +
+      '（' + u.count + ' 笔' + (u.list.length ? '：' + u.list.map(function (it) { return it.product + ' 第' + it.periodNo + ' 期' }).join('、') : '') + '）', 9, { color: '#555555' })
+  }
+  // 最多两级台阶：最近一次下降 + 最终归零（中间台阶多时只报头尾，避免纸面啰嗦）
+  const stepIdx = trend.drops.length > 2 ? [0, trend.drops.length - 1] : trend.drops.map(function (_, i) { return i })
+  stepIdx.forEach(function (i) {
+    const d = trend.drops[i]
+    _para(d.y + ' 年起年缴保费降至 ' + d.toW + ' 万（' + d.products.join('、') + ' 缴费期满），每年减少支出 ' + d.reducedW + ' 万', 9, { color: '#555555' })
+  })
+  trend.notes.forEach(function (n) { _para('· ' + n, 8, { color: '#999999' }) })
   _rule()
 
   // 经济状况（financial_snapshot 万口径直显；收入缺省时用成员收入合计兜底）

@@ -13,6 +13,9 @@ function _loadExpiry() {
 const { breakEvenYear } = require('../cash-value-math')
 // 终身/趸交哨兵判定的单一事实源（2026-09-22 口径自查：原为各处内联比较，已因此漏过一次）
 const { isLifetimeTerm, isSinglePayTerm } = require('../policy-status')
+// 保障期/缴费期的双字段口径（2026-10-14 收敛）：本文件原先自带 _coverTermYear/_payTermYear，
+// 与 reportPdf._termYear 是第二份实现；现已改为引用跨树契约 policy-terms.js（本行下方不再实现该规则）
+const { coverTermYear, payTermYear } = require('../policy-terms')
 
 /**
  * 解析 insurance_period 为到期年份（null=无明确到期年/终身）
@@ -28,32 +31,13 @@ function parseExpiryYear(period, startY, age) {
 }
 
 /**
- * 保障到期年（双字段兼容）：OCR 文本（insurance_period）优先，兜底对话数字（coverage_term，105=终身，兼容旧 0→null）
+ * 保障到期年 / 缴费期满年：**已收敛到跨树契约** `policy-terms.js`（2026-10-14）。
+ * 本文件不再实现该规则 —— 原先这里的 `_coverTermYear/_payTermYear` 与 `reportPdf._termYear`
+ * 是同一规则的两份实现（PDF 那份曾漏判 coverage_term=105，纸上印出 ~2130 年"保障期满"）。
+ * 保留 `parseExpiryYear` 供 buildTimeline 内部复用（它就是契约 parseTermYear 的前身）。
  */
-function _coverTermYear(p, startY, age) {
-  if (p.insurance_period) return parseExpiryYear(p.insurance_period, startY, age)
-  var ct = p.coverage_term
-  if (isLifetimeTerm(ct)) return null // 终身，无到期节点
-  if (ct) {
-    var n = parseInt(ct, 10)
-    if (!isNaN(n) && n > 0) return startY + n
-  }
-  return null
-}
-
-/**
- * 缴费期满年（双字段兼容）：OCR 文本（payment_period）优先，兜底对话数字（premium_term，1=趸交，兼容旧 0→null）
- */
-function _payTermYear(p, startY, age) {
-  if (p.payment_period) return parseExpiryYear(p.payment_period, startY, age)
-  var pt = p.premium_term
-  if (isSinglePayTerm(pt)) return null // 趸交/终身缴费，无"缴完"节点
-  if (pt) {
-    var n = parseInt(pt, 10)
-    if (!isNaN(n) && n > 0) return startY + n
-  }
-  return null
-}
+function _coverTermYear(p, startY, age) { return coverTermYear(p, startY, age) }
+function _payTermYear(p, startY, age) { return payTermYear(p, startY, age) }
 
 /**
  * 现价=已缴保费的"回本"年份（保单年度 y），无现价表/永不回本返回 null
