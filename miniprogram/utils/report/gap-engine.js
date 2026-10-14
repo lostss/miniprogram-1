@@ -43,7 +43,17 @@ function buildGaps(family) {
  * 构建保障覆盖矩阵（设计稿第 2 章）：成员×险种 已有保额（万元），缺失格标红
  * 含底部险种合计行（各险种跨成员汇总）；右侧成员合计列已移除（单成员多险种相加无意义）。
  * 纯展示层，不参与缺口判断。
+ *
+ * 2026-10-14 扩列（用户稿子）：加「年金」列与「年保费」列。两条口径必须守住：
+ *   - **年金列不参与"缺失"标红**：年金是储蓄型，`neededCats` 里本就没有它；标红等于说
+ *     "你缺年金"＝推荐买年金 → 撞合规红线（不做产品价值判断 / 只出事实不出建议）。
+ *     故只有 `GAP_CATS`（需求模型里的四类保障险）才用 missing 状态。
+ *   - **年保费列只报事实**：按成员汇总 `annual_premium`，同样不标红（保费高低不是"缺失"）。
+ *     它服务稿子那句话——"钱花在人身上的结构对不对（是否全家保一人）"。
  */
+var GAP_CATS = ['重疾险', '医疗险', '意外险', '寿险']
+var MATRIX_CATS = GAP_CATS.concat(['年金'])
+
 function buildCoverageMatrix(members, policies) {
   var active = (policies || []).filter(function(p) { return p.status === 'active' })
   var memberIdToName = {}
@@ -51,39 +61,44 @@ function buildCoverageMatrix(members, policies) {
     var m = members[i]
     if (m.member_id) memberIdToName[m.member_id] = m.name
   }
-  var cats = ['重疾险', '医疗险', '意外险', '寿险']
+  var cats = MATRIX_CATS
   var rows = members.map(function(m) {
     var cells = {}
     for (var ci = 0; ci < cats.length; ci++) cells[cats[ci]] = 0
+    var premium = 0
     for (var k = 0; k < active.length; k++) {
       var p = active[k]
       var n = (p.member_id && memberIdToName[p.member_id]) || p.insured_name
       if (n === m.name) {
         var c = canonCat(p.insurance_category || '其他')
         if (cells[c] !== undefined) cells[c] += yuanToWan(p.sum_assured || 0)
+        premium += p.annual_premium || 0
       }
     }
-    return { name: m.name, cells: cells }
+    return { name: m.name, cells: cells, premiumW: yuanToWan(premium) }
   })
   var total = {}
   for (var ci2 = 0; ci2 < cats.length; ci2++) total[cats[ci2]] = 0
+  var totalPremiumW = 0
   for (var r = 0; r < rows.length; r++) {
     for (var c2 = 0; c2 < cats.length; c2++) total[cats[c2]] += rows[r].cells[cats[c2]]
+    totalPremiumW += rows[r].premiumW
   }
   function fmt(v) { var x = Math.round(v * 100) / 100; return x === Math.floor(x) ? String(x) : String(x) }
+  // 单元格状态：保障险空 → missing（红）；年金空 → 中性（不标红，见函数头口径）；保费 → 恒中性
+  function cellOf(cat, v) {
+    if (v > 0) return { v: fmt(v), s: 'ok' }
+    return { v: '—', s: GAP_CATS.indexOf(cat) !== -1 ? 'missing' : '' }
+  }
   var out = rows.map(function(row) {
-    var cells = cats.map(function(c) {
-      var v = row.cells[c]
-      return v > 0 ? { v: fmt(v), s: 'ok' } : { v: '—', s: 'missing' }
-    })
+    var cells = cats.map(function(c) { return cellOf(c, row.cells[c]) })
+    cells.push({ v: row.premiumW > 0 ? fmt(row.premiumW) : '—', s: '' })
     return { name: row.name, cells: cells }
   })
-  var grandCells = cats.map(function(c) {
-    var v = total[c]
-    return v > 0 ? { v: fmt(v), s: 'ok' } : { v: '—', s: 'missing' }
-  })
+  var grandCells = cats.map(function(c) { return cellOf(c, total[c]) })
+  grandCells.push({ v: totalPremiumW > 0 ? fmt(totalPremiumW) : '—', s: '' })
   out.push({ name: '合计', cells: grandCells })
-  return { heads: ['成员'].concat(cats), cats: cats, rows: out }
+  return { heads: ['成员'].concat(cats).concat(['年保费']), cats: cats.concat(['年保费']), rows: out }
 }
 
 module.exports = { buildGaps, buildCoverageMatrix }

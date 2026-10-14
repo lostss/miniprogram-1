@@ -311,6 +311,18 @@ describe('buildCoverageRows — 保障期间行（与页面甘特图同源数据
     expect(JSON.stringify(g)).not.toMatch(/断档|倒计时|重叠/)
   })
 
+  test('缴费期与到期年龄（2026-10-14 与页面甘特图同源：缴费至 X 年 / 止于 N 岁）', () => {
+    const thisYear = new Date().getFullYear()
+    const g = buildCoverageRows([
+      { product_name: '定期重疾', insured_name: '张三', effective_date: thisYear + '-01-01', insurance_period: '20年', payment_period: '10年', insurance_category: '重疾险' }
+    ], [{ name: '张三', age: 46 }])
+    const r = g.rows[0]
+    expect(r.payEndY).toBe(thisYear + 10)
+    expect(r.endY).toBe(thisYear + 20)
+    expect(r.endAge).toBe(66)
+    expect(r.singlePay).toBe(false)
+  })
+
   test('行按成员档案顺序排序（同一被保人相邻）', () => {
     const g = buildCoverageRows([
       { product_name: '李四的', insured_name: '李四', effective_date: '2020-01-01', insurance_period: '终身' },

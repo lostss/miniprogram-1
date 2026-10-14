@@ -19,7 +19,9 @@
  *  - finance:      { income, debt }
  *  - risk_alerts:  { items: [{name, issue}] }
  *  - policy_cards: { groups: [{name(被保人), subgroups: [{name(保司), policies: [...]}]}] }  二级分组；组内按保单号排序（同号主险+附加险相邻）
- *  - gantt:        { rows: [{rowKey, name, product, cat, sumAssured, startY, endY, startPct, widthPct, lifetime, oneYear}], ticks: [{y, pct}], startYear, endYear, notes }  条宽/位置为百分比，渲染侧不做时间计算
+ *  - gantt:        { rows: [{rowKey, name, product, cat, sumAssured, startY, endY, startPct, widthPct, payRatio, endAge, lifetime, oneYear, singlePay}], ticks: [{y, pct}], startYear, endYear, nowPct, nowYear, notes }
+ *                  条位置/宽度为**占时间轴**的百分比；payRatio 为**占本条自身宽度**的百分比（条内斜纹段=缴费期）；
+ *                  nowPct 为"今天"竖线位置（越界时为 null）。渲染侧不做任何时间计算。
  *
  * 已下线类型（清理审计）：overview / urgent_list / insight_cards / dashboard（无生成端）
  */
@@ -56,7 +58,7 @@ const BLOCK_REGISTRY = {
   },
   gantt: {
     required: ['rows'],
-    defaults: { rows: [], ticks: [], startYear: 0, endYear: 0, notes: [] }
+    defaults: { rows: [], ticks: [], startYear: 0, endYear: 0, nowPct: null, nowYear: 0, notes: [] }
   }
 }
 

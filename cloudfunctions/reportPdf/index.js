@@ -356,10 +356,15 @@ function buildPdf(ctx) {
   } else {
     for (const r of cov.rows) {
       _ensure(16)
-      const span = r.startY + ' → ' + (r.lifetime ? '终身' : (r.endY + '年'))
+      // 到期年补"止于多少岁"（与页面甘特图同行信息同源）：回答"60 岁时还剩什么"
+      const span = r.startY + ' → ' + (r.lifetime ? '终身' : (r.endY + '年' + (r.endAge ? '（止于' + r.endAge + '岁）' : '')))
       const tail = []
       if (r.cat) tail.push(r.cat)
       if (r.oneYear) tail.push('一年期·续保')
+      // 缴费期与保障期分开写（与页面甘特图"斜纹=缴费期/实色=保障期"同语义）：
+      // 纸面上用"缴费至 XXXX 年"承担，于是"钱交完了但保障还在"同样一眼可见
+      if (r.singlePay) tail.push('趸交')
+      else if (r.payEndY) tail.push('缴费至' + r.payEndY + '年')
       if (r.sumAssured) tail.push(_fmtMoney(r.sumAssured))
       _cn(9.5); doc.fillColor('#1a1a1a')
       doc.text('· ' + r.name + ' ｜ ' + r.product + ' ｜ ' + span + (tail.length ? ' ｜ ' + tail.join(' ｜ ') : ''), M, y, { width: W })
@@ -759,9 +764,13 @@ function buildCoverageRows(policies, members) {
     const startY = eff ? new Date(eff).getFullYear() : NaN
     if (!eff || isNaN(startY)) { missStart++; continue }
     const name = p.insured_name || '未指定被保人'
+    const age = ageByName[name] || 0
     const lifetime = isLifetimeTerm(p.coverage_term) || /终身|长期/.test(String(p.insurance_period || ''))
-    const endY = lifetime ? null : _termYear(p.insurance_period, p.coverage_term, startY, ageByName[name] || 0)
+    const endY = lifetime ? null : _termYear(p.insurance_period, p.coverage_term, startY, age)
     if (!lifetime && !endY) { missTerm++; continue }
+    // 缴费期满年（与页面甘特图的"缴费期/保障期"两段语义同源）：趸交不单列，无缴费期信息则为 null
+    const singlePay = isSinglePayTerm(p.premium_term)
+    const payEndY = singlePay ? null : _termYear(p.payment_period, p.premium_term, startY, age)
     rows.push({
       name: name,
       product: p.product_name || '未命名保单',
@@ -771,6 +780,10 @@ function buildCoverageRows(policies, members) {
       endY: endY,
       lifetime: lifetime,
       oneYear: isOneYearPolicy(p),
+      singlePay: singlePay,
+      payEndY: payEndY,
+      // 到期时被保人年龄（回答"60 岁时还剩什么"）：当前年龄 + 距到期年数；年龄未知不显示
+      endAge: (!lifetime && endY && age > 0) ? (age + (endY - thisYear)) : null,
       // 排序键（视图不消费）：同一被保人的保单相邻
       _startY: startY
     })

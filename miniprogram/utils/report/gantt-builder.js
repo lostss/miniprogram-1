@@ -20,8 +20,8 @@
  * 时间粒度取**年**：与 `timeline-builder` 一致（OCR 的 `insurance_period` 多为"至N岁/20年/终身"
  * 这类年级精度文本），避免伪造月级精度。
  */
-const { isLifetimeTerm, isOneYearPolicy } = require('../policy-status')
-const { coverTermYear } = require('./timeline-builder')
+const { isLifetimeTerm, isOneYearPolicy, isSinglePayTerm } = require('../policy-status')
+const { coverTermYear, payTermYear } = require('./timeline-builder')
 
 // 极短保障期（如一年期）在整条时间轴上的可视宽度下限（%），否则会渲染成一条看不见的线
 const MIN_WIDTH_PCT = 3
@@ -75,9 +75,17 @@ function buildGantt(policies, members) {
     if (!eff || isNaN(startY)) { missStart++; continue }
 
     const name = p.insured_name || '未指定被保人'
+    const age = ageByName[name] || 0
     const lifetime = _isLifetimePolicy(p)
-    const endY = lifetime ? null : coverTermYear(p, startY, ageByName[name] || 0)
+    const endY = lifetime ? null : coverTermYear(p, startY, age)
     if (!lifetime && !endY) { missTerm++; continue }
+
+    // 缴费期满年（2026-10-13 稿子建议：甘特图要区分"缴费期/保障期"两种语义，
+    // 否则一条实色带看不出"钱交完了但保障还在"）：
+    //   - 趸交（premium_term=1 / 0 哨兵）→ 缴费期只有 1 年 → 标 singlePay，不画斜纹段
+    //   - 无缴费期信息 → payPct=null，不画（不猜"缴到多久"，红线 3）
+    const singlePay = isSinglePayTerm(p.premium_term)
+    const payEndY = singlePay ? null : payTermYear(p, startY, age)
 
     const product = p.product_name || '未命名保单'
     rows.push({
@@ -90,6 +98,11 @@ function buildGantt(policies, members) {
       endY: endY,
       lifetime: lifetime,
       oneYear: isOneYearPolicy(p),
+      singlePay: singlePay,
+      payEndY: payEndY,
+      // 到期时被保人年龄（回答稿子那句"60 岁时还剩什么"）：当前年龄 + 距到期年数
+      // 终身险无到期年 → null；年龄未知（未匹配到成员/未填出生日期）→ null（不猜）
+      endAge: (!lifetime && endY && age > 0) ? (age + (endY - thisYear)) : null,
       _order: orderByName[name] === undefined ? 999 : orderByName[name]
     })
   }
@@ -126,6 +139,17 @@ function buildGantt(policies, members) {
       const w = (r.endY - r.startY) / span * 100
       r.widthPct = _round1(Math.max(MIN_WIDTH_PCT, Math.min(w, 100 - r.startPct)))
     }
+    // 缴费段长度 = **占本条自身宽度的百分比**（不是占时间轴的）—— 渲染层把它放在条内做绝对定位，
+    // 用轴百分比会算错（条宽本身已小于轴宽）。语义：条 = 保障期，条内斜纹段 = 缴费期，
+    // 于是"钱交完了但保障还在"一眼可见（2026-10-13 稿子对甘特图的核心要求）。
+    // 分母取本条的实际右端：终身条右端是轴末（endYear），定期条右端是 endY。
+    const barEndY = r.lifetime ? endYear : r.endY
+    if (r.payEndY && r.payEndY > r.startY && barEndY > r.startY) {
+      const ratio = (r.payEndY - r.startY) / (barEndY - r.startY) * 100
+      r.payRatio = _round1(Math.max(0, Math.min(ratio, 100)))
+    } else {
+      r.payRatio = null
+    }
     delete r._order
   })
 
@@ -143,7 +167,17 @@ function buildGantt(policies, members) {
   if (rows.some(function(r) { return r.oneYear })) notes.push('一年期短险每年需续保，条形表示当前保单年度')
   if (rows.some(function(r) { return r.lifetime })) notes.push('"终身"保单无固定到期日，条形画至右端')
 
-  return { rows: rows, ticks: ticks, startYear: startYear, endYear: endYear, notes: notes }
+  return {
+    rows: rows,
+    ticks: ticks,
+    startYear: startYear,
+    endYear: endYear,
+    // "今天"竖线位置（稿子：让客户看到当前处在哪）：当前年在轴上；保单尚未生效（未来生效日）
+    // 时落在轴左侧 → 给 null，不画（画在 0% 会被误读成"已生效"）
+    nowPct: (thisYear >= startYear && thisYear <= endYear) ? _round1((thisYear - startYear) / span * 100) : null,
+    nowYear: thisYear,
+    notes: notes
+  }
 }
 
 module.exports = { buildGantt }

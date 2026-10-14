@@ -240,12 +240,14 @@ describe('buildCoverageMatrix — 保障覆盖矩阵（第 2 章数据源）', (
   test('成员×险种矩阵：缺失格 missing / 覆盖格 ok / 底部险种合计（无行内合计列）', () => {
     const c = baseCustomer() // 李阳勇仅寿险100万
     const m = buildCoverageMatrix(c.members, c.policies)
-    expect(m.heads).toEqual(['成员', '重疾险', '医疗险', '意外险', '寿险'])
+    // 2026-10-14：加「年金」列与「年保费」列（年金不参与缺失标红 —— 储蓄型，标红＝推荐买年金）
+    expect(m.heads).toEqual(['成员', '重疾险', '医疗险', '意外险', '寿险', '年金', '年保费'])
     expect(m.rows.length).toBe(4) // 3 成员 + 底部合计行
     const ly = m.rows.find(r => r.name === '李阳勇')
     expect(ly.cells[0].s).toBe('missing') // 重疾险缺失
     expect(ly.cells[3]).toEqual({ v: '100', s: 'ok' }) // 寿险
-    expect(ly.cells.length).toBe(4) // 无行内合计列
+    expect(ly.cells[4].s).toBe('') // 年金空缺：中性，不标 missing
+    expect(ly.cells.length).toBe(6) // 5 险种 + 年保费（仍无"成员合计保额"列）
     const total = m.rows[3]
     expect(total.name).toBe('合计')
     expect(total.cells[3].v).toBe('100') // 寿险列合计
@@ -402,7 +404,7 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     const cs = ch[2]
     const pano = cs.customBlocks.find(b => b.t === 'panorama')
     expect(pano).toBeDefined()
-    expect(pano.heads).toEqual(['成员', '重疾险', '医疗险', '意外险', '寿险'])
+    expect(pano.heads).toEqual(['成员', '重疾险', '医疗险', '意外险', '寿险', '年金', '年保费'])
     expect(pano.rows.length).toBe(4) // 3 成员 + 底部险种合计行
     const ly = pano.rows.find(r => r.name === '李阳勇')
     const life = ly.cells.find(c => c.s === 'ok')

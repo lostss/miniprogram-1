@@ -176,6 +176,7 @@ function buildTimeline(policies, members, cashValues) {
   })
 }
 
-// coverTermYear 供 gantt-builder 复用：保障到期年的双字段口径（insurance_period 文本 / coverage_term 数字）
+// coverTermYear / payTermYear 供 gantt-builder 复用：保障到期年与缴费期满年的双字段口径
+// （insurance_period / payment_period 文本优先，coverage_term / premium_term 数字兜底）。
 // 必须只有一份实现 —— 甘特图与保障节点章若各算一套，"同一张保单到期年不同"就会漂移。
-module.exports = { buildTimeline, findBreakEvenYear, coverTermYear: _coverTermYear }
+module.exports = { buildTimeline, findBreakEvenYear, coverTermYear: _coverTermYear, payTermYear: _payTermYear }

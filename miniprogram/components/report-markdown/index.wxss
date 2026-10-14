@@ -111,6 +111,14 @@
 .gt-tick--first { transform:none; }
 .gt-tick--last { transform:translateX(-100%); }
 .gt-bar { position:absolute; top:8rpx; height:20rpx; min-width:6rpx; border-radius:999rpx; background:var(--accent-deep); }
+/* 缴费期斜纹段（2026-10-14）：条 = 保障期，条内斜纹 = 缴费期 → "钱交完了但保障还在"一眼可见。
+   用 repeating-linear-gradient（纯 CSS，不引图表库 —— 小程序里 ECharts/G2 要接 canvas 适配与分包）。 */
+.gt-pay { position:absolute; left:0; top:0; bottom:0; border-radius:999rpx 0 0 999rpx;
+  background-image:repeating-linear-gradient(45deg, rgba(255,255,255,0.55) 0, rgba(255,255,255,0.55) 3rpx, transparent 3rpx, transparent 8rpx); }
+/* "今天"竖线：每行一条（虚线感，弱于时间条本身）；轴上一枚"今天"标签 */
+.gt-now { position:absolute; top:0; bottom:0; width:0; border-left:1rpx dashed var(--text-tertiary); opacity:0.55; }
+.gt-now-label { position:absolute; bottom:0; transform:translateX(-50%); font-size:var(--fs-tiny); color:var(--text-tertiary); white-space:nowrap; }
+.gt-age { font-size:var(--fs-tiny); color:var(--text-tertiary); }
 /* 终身：右端渐隐示意"无固定到期日"（不做 2130 年那种假终点） */
 .gt-bar--life { background:linear-gradient(90deg, var(--accent-deep) 0%, var(--accent-deep) 55%, var(--border-accent) 100%); }
 /* 一年期短险：琥珀色（每年需续保，与长期险区分；沿用项目"琥珀 = 需留意"的语义） */

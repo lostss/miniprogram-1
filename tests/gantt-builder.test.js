@@ -74,6 +74,66 @@ describe('gantt-builder — 时间条几何', function () {
   })
 })
 
+describe('gantt-builder — 今天竖线 / 缴费期 / 到期年龄（2026-10-14 稿子）', function () {
+  test('nowPct 落在轴上：当前年位置（终身险不把轴拉长，所以 today 总在区间内）', function () {
+    const g = buildGantt([pol({ insurance_period: '20年', effective_date: '2000-01-01' })], [{ name: '张三' }])
+    expect(g.nowYear).toBe(new Date().getFullYear())
+    expect(g.nowPct).toBeGreaterThan(0)
+    expect(g.nowPct).toBeLessThanOrEqual(100)
+  })
+
+  test('保单尚未生效（未来生效日）→ nowPct 为 null，不画"今天"线（画在 0% 会被读成已生效）', function () {
+    const future = (new Date().getFullYear() + 2) + '-01-01'
+    const g = buildGantt([pol({ insurance_period: '20年', effective_date: future })], [{ name: '张三' }])
+    expect(g.nowPct).toBeNull()
+  })
+
+  test('缴费期：payRatio 是**占本条宽度**的百分比（10 年缴 / 20 年保障 ≈ 50%）', function () {
+    const g = buildGantt([pol({ insurance_period: '20年', effective_date: '2020-01-01', payment_period: '10年' })], [{ name: '张三' }])
+    const r = g.rows[0]
+    expect(r.payEndY).toBe(2030)
+    expect(r.payRatio).toBeCloseTo(50, 0)
+  })
+
+  test('无缴费期信息 → payRatio 为 null（不猜"缴到多久"，红线 3）', function () {
+    const g = buildGantt([pol({ insurance_period: '20年', effective_date: '2020-01-01', payment_period: '', premium_term: null })], [{ name: '张三' }])
+    expect(g.rows[0].payRatio).toBeNull()
+    expect(g.rows[0].payEndY).toBeNull()
+  })
+
+  test('趸交 → singlePay=true 且不画缴费段（premium_term=1）', function () {
+    const g = buildGantt([pol({ insurance_period: '终身', coverage_term: 105, premium_term: 1 })], [{ name: '张三' }])
+    const r = g.rows[0]
+    expect(r.singlePay).toBe(true)
+    expect(r.payRatio).toBeNull()
+  })
+
+  test('脏数据防御：缴费期长于保障期时 payRatio 夹在 100 内（不画出条外）', function () {
+    const g = buildGantt([pol({ insurance_period: '5年', effective_date: '2020-01-01', payment_period: '20年' })], [{ name: '张三' }])
+    expect(g.rows[0].payRatio).toBeLessThanOrEqual(100)
+  })
+
+  test('到期年龄：当前年龄 + 距到期年数（回答"60 岁时还剩什么"）', function () {
+    const thisYear = new Date().getFullYear()
+    const g = buildGantt(
+      [pol({ insurance_period: '20年', effective_date: thisYear + '-01-01' })],
+      [{ name: '张三', age: 46 }]
+    )
+    expect(g.rows[0].endAge).toBe(66)
+  })
+
+  test('年龄未知（未匹配到成员）→ endAge 为 null，不编年龄', function () {
+    const g = buildGantt([pol({ insurance_period: '20年' })], [{ name: '别的名字', age: 30 }])
+    expect(g.rows[0].endAge).toBeNull()
+  })
+
+  test('终身险无到期年 → endAge 也为 null（"终身"不换算成某个岁数）', function () {
+    const g = buildGantt([pol({ insurance_period: '终身' })], [{ name: '张三', age: 46 }])
+    expect(g.rows[0].endAge).toBeNull()
+    expect(g.rows[0].lifetime).toBe(true)
+  })
+})
+
 describe('gantt-builder — 标注语义（红线 3：不确定就标出来）', function () {
   test('缺生效日期 → 不入图，计入 notes', function () {
     const g = buildGantt([pol({ effective_date: '', contract_effective_date: '' })], [{ name: '张三' }])
@@ -104,8 +164,9 @@ describe('gantt-builder — 标注语义（红线 3：不确定就标出来）',
 })
 
 describe('gantt-builder — 守卫：不做无字段支撑的判定（v2.0 评审必改②）', function () {
-  const ALLOWED_BLOCK_KEYS = ['rows', 'ticks', 'startYear', 'endYear', 'notes']
-  const ALLOWED_ROW_KEYS = ['rowKey', 'name', 'product', 'cat', 'sumAssured', 'startY', 'endY', 'startPct', 'widthPct', 'lifetime', 'oneYear']
+  // 2026-10-14 扩字段（今天竖线 / 缴费期 / 到期年龄）：白名单**显式**列入，新增字段必须先想清楚再改这里
+  const ALLOWED_BLOCK_KEYS = ['rows', 'ticks', 'startYear', 'endYear', 'nowPct', 'nowYear', 'notes']
+  const ALLOWED_ROW_KEYS = ['rowKey', 'name', 'product', 'cat', 'sumAssured', 'startY', 'endY', 'startPct', 'widthPct', 'payEndY', 'payRatio', 'endAge', 'lifetime', 'oneYear', 'singlePay']
 
   test('block 与 row 只暴露白名单字段（将来误加"空白期/重叠"字段会在此处红）', function () {
     const g = buildGantt([pol({}), pol({ insurance_period: '1年', coverage_term: 1, insured_name: '李四' })], [{ name: '张三' }, { name: '李四' }])
