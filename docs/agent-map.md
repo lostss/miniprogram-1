@@ -106,5 +106,9 @@
    必须改 `cloudfunctions/_shared/` 下的源，然后 `node scripts/sync-shared.js`。
    **改 `miniprogram/utils/` 里的副本会被 sync 反向覆盖**（我改完 → 跑 sync → 改动消失、测试变红）。
    判据：`sync-shared --check` 报 `[update] miniprogram/utils/xxx.js` 就说明那份是产物。
-5. **`wx:elif` 链必须紧邻**：中间夹一个独立 `wx:if` 会把链断掉（踩过）。
+5. **WXSS 语法错误 = 整页白屏，且 jest 看不见**（2026-10-17 真机踩过）：
+   给一行 CSS 追加属性时若原行末已有分号 → `;;` → 编译器报 `unexpected token ';'`。
+   守卫：`tests/wxss-syntax.test.js`（双分号 / 块首分号 / 花括号平衡）。
+   改 wxss 后**必须**跑它 —— 单测全绿 + lint 全绿 + pre-commit 全过，用户打开仍是白屏。
+6. **`wx:elif` 链必须紧邻**：中间夹一个独立 `wx:if` 会把链断掉（踩过）。
 6. **`_fmt` 类相对时间**：`≥1 天直接返回 M/D` 会丢掉"多久没动"，改前想清楚语义。

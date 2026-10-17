@@ -107,7 +107,7 @@
 .gt-track { position:relative; flex:1; min-width:0; height:36rpx; }
 .gt-track--axis { height:28rpx; border-bottom:1rpx solid var(--border); }
 /* 刻度：中间刻度以自身中心对齐位置；首尾刻度贴边（transform 翻转），避免被卡片裁掉 */
-.gt-tick { position:absolute; bottom:0; transform:translateX(-50%); font-size:var(--fs-tiny); color:var(--text-tertiary); white-space:nowrap;; font-variant-numeric:tabular-nums; }
+.gt-tick { position:absolute; bottom:0; transform:translateX(-50%); font-size:var(--fs-tiny); color:var(--text-tertiary); white-space:nowrap; font-variant-numeric:tabular-nums; }
 .gt-tick--first { transform:none; }
 .gt-tick--last { transform:translateX(-100%); }
 .gt-bar { position:absolute; top:8rpx; height:20rpx; min-width:6rpx; border-radius:999rpx; background:var(--accent-deep); }
