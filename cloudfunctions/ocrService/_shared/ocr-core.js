@@ -69,6 +69,68 @@ function buildPolicyFromExtract(products, contractBasic, conf) {
   }))
 }
 
+/**
+ * 数值可对齐校验（2026-10-17）
+ *
+ * 动机：`calcConfidence` 在 OCR 字符置信度 ≥0.95 时算出的字段分是 `0.7*ocr + 0.3*ai`，
+ * 必然 ≥0.965 —— **必过 0.9 的待核对阈值**。也就是说：OCR 文本明明写着"保额 30 万"，
+ * 而 AI 输出成 3000000 时，置信度体系**不会报警**，错值直接静默入库。
+ * 金额错一位 → 缺口、保费占比、建议全部错，这是整条链路里最贵的错误类型。
+ *
+ * 做法：把 AI 给出的金额（元）换算成"原文可能出现的写法"（元 / 万 / 千），
+ * 在 OCR 文本里按**数字边界**查找；一个都对不上 → 把该字段置信度压到 0.5，
+ * 让既有机制把它送进「待核对」（`lowFields` 会显示具体字段名）。
+ *
+ * 为什么不用"AI 自评 + 权重"继续加固：自评是模型的主观分，这里校验的是**事实一致性**
+ * （这个数字在原文里到底有没有）。前者救不了模型抄错，后者能。
+ *
+ * 误判取舍：宁可偶尔多标一条"待核对"，也不让错金额静默入库（错误不对称原则）。
+ * 因此只在"确实找不到任何写法"时才降分，找不到文本 / 值非正数时直接放行。
+ */
+function _normNumText(s) {
+  return String(s || '')
+    .replace(/[０-９]/g, function(d) { return String.fromCharCode(d.charCodeAt(0) - 0xFEE0) }) // 全角数字
+    .replace(/[，,、\s]/g, '') // 千分位与空白：300,000 / 30 万 都能对上
+}
+
+/** OCR 文本里是否能找到该金额（yuan）的任一写法 */
+function _hasNumericEvidence(ocrText, yuan) {
+  const t = _normNumText(ocrText)
+  if (!t) return true // 空文本由 ocr_empty 统一拦截，这里不重复判
+  const n = Number(yuan)
+  if (!isFinite(n) || n <= 0) return true // 缺值/异常值不归这里管（completeness 负责）
+
+  const cands = [String(n)]
+  // 万元写法（含小数）：1.2 万 / 30 万 —— 保单原文普遍用"万"，只比"元"会大面积误判
+  if (n >= 10000) cands.push((Math.round((n / 10000) * 100) / 100).toString())
+  // 千元写法：30 千
+  if (n % 1000 === 0) cands.push(String(n / 1000))
+  for (let i = 0; i < cands.length; i++) {
+    // 数字边界：避免 30 命中 300 / 3000
+    const re = new RegExp('(^|[^0-9])' + cands[i].replace(/\./g, '\\.') + '($|[^0-9])')
+    if (re.test(t)) return true
+  }
+  return false
+}
+
+/** 对产品的金额类字段做原文对齐；对不上的压分并返回字段名 */
+function applyNumericEvidence(products, fieldConf, ocrText) {
+  const NUMERIC_FIELDS = ['sum_assured', 'annual_premium']
+  const out = Object.assign({}, fieldConf)
+  const flagged = []
+  ;(products || []).forEach(function(p) {
+    NUMERIC_FIELDS.forEach(function(f) {
+      const v = _toNum(p && p[f])
+      if (!(v > 0)) return
+      if (_hasNumericEvidence(ocrText, v)) return
+      const cur = Number(out[f] == null ? 1 : out[f])
+      out[f] = Math.min(isFinite(cur) ? cur : 1, 0.5)
+      if (flagged.indexOf(f) === -1) flagged.push(f)
+    })
+  })
+  return { fieldConf: out, flagged: flagged }
+}
+
 // 现价表片段拦截（2026-09-09）：单独上传的现价表需年度自 1 起连续且行数达标，
 // 否则视为截图残留片段不提取（提示词第零步的确定性兜底）
 const CASH_VALUE_MIN_ROWS = 5
@@ -142,8 +204,15 @@ function extractOne(extractRes, ocrConfInfo, ocrText) {
         ? Object.values(aiFieldConf).reduce((s, v) => s + v, 0) / Object.keys(aiFieldConf).length
         : 0.7)
 
-  const { fieldConf, overallConf, ocrReliable, autoConfirmed } = calcConfidence(ocrConfInfo, aiFieldConf, aiOverall)
+  const base = calcConfidence(ocrConfInfo, aiFieldConf, aiOverall)
   const products = data.products || []
+  // 2026-10-17：金额类字段做"原文可对齐"校验，对不上的压分 → 进待核对。
+  // 同时取消 auto_confirmed（不能一边说"字段不可信"一边自动入库）。
+  const ev = applyNumericEvidence(products, base.fieldConf, ocrText)
+  const fieldConf = ev.fieldConf
+  const overallConf = base.overallConf
+  const ocrReliable = base.ocrReliable
+  const autoConfirmed = base.autoConfirmed && ev.flagged.length === 0
   // 保留 AI 原始判定：mixed 需同时走"保单构建"与"现价表提取"两条路，
   // 而 docType 最终要降级为 policy（同图以保单主体为主），故先存原始值
   const rawDocType = extractRes.document_type || 'policy'
@@ -192,7 +261,8 @@ function extractOne(extractRes, ocrConfInfo, ocrText) {
   }
   // mixed：同图以保单主体为主 → docType 降级为 policy（影响下游分组与展示，保持历史行为）
   const docType = rawDocType === 'mixed' ? 'policy' : rawDocType
-  return { success: true, policies: policies, cashValueData: cashValueData, cashValueRejected: cashValueRejected, docType: docType, autoConfirmed: autoConfirmed, overallConf: overallConf }
+  // evidenceFlagged：金额字段在原文里找不到对应数字的字段名（供 opLog 观测，不落库）
+  return { success: true, policies: policies, cashValueData: cashValueData, cashValueRejected: cashValueRejected, docType: docType, autoConfirmed: autoConfirmed, overallConf: overallConf, evidenceFlagged: ev.flagged }
 }
 
 /**
@@ -283,7 +353,7 @@ async function aiPhase({ ocrText, ocrConfInfo, ocrErrorCode, fileId, t0, t1, t2,
   opLog(db, {
     action: 'ocr_recognize', openid, familyId,
     result: { status: 'ok', summary: '识别' + newPolicies.length + '个产品，类型:' + docType },
-    meta: { total: newPolicies.length, docType, hasCashValue: !!cashValueData, cashValueRejected: ex.cashValueRejected || null, autoConfirmed, durations, tokens: tokens || {} }
+    meta: { total: newPolicies.length, docType, hasCashValue: !!cashValueData, cashValueRejected: ex.cashValueRejected || null, autoConfirmed, evidenceFlagged: ex.evidenceFlagged || [], durations, tokens: tokens || {} }
   }).catch(() => {})
 
   return { success: true, policiesCount: newPolicies.length, policies: newPolicies, document_type: docType, cashValueData, tokens: tokens || {} }
@@ -293,4 +363,4 @@ async function aiPhase({ ocrText, ocrConfInfo, ocrErrorCode, fileId, t0, t1, t2,
 // aiExtractBatch 单图路径统一走 aiPhase（DeepSeek 直连），批量拼接编排（_callBatchAI/aiExtractBatchPhase）已删除。
 // 备份文件已随 docs 归档清理（2026-09-04）；原实现见 git 历史。
 
-module.exports = { ocrPhase, aiPhase, matchPoliciesToMembers, buildPolicyFromExtract, extractOne, _toNum, _isCashValueFooterResidue, _cashValueTitleRatio }
+module.exports = { ocrPhase, aiPhase, matchPoliciesToMembers, buildPolicyFromExtract, extractOne, applyNumericEvidence, _hasNumericEvidence, _toNum, _isCashValueFooterResidue, _cashValueTitleRatio }

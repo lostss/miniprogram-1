@@ -314,12 +314,48 @@ Component({
       this._renderProc(this._procPolicies, this._procCash, this._procFamilyId, this._procErrors, thumbMap)
     },
 
-    // ============ 重试 / 录入 / 预览 ============
-    // 2026-10-13 产品决策（识别结果弹窗只留「取消 / 保存」）：以下四项交互全部移除——
-    //   onProcRetryOne / onProcRetryAll（失败项重试，含复用内存 ocrText 的省钱路径）
-    //   onProcManualAdd（失败项手动录入）、onProcPreview（点缩略图看大图）
-    // 失败项改为保存时跳过（保存前弹窗已显式告知张数）。对应私有实现 `_ocrRetryOne`
-    // 暂时保留但**已无调用方**（重试能力本身仍是完整的，留待需要时接回或按 YAGNI 删除）。
+    // ============ 重试 ============
+    // 2026-10-13 曾把失败项的重试/移除/手动录入/预览整组删掉（弹窗只留「取消 / 保存」）。
+    // 2026-10-17 复核后**只补回"重试"**：删掉后一图失败 = 用户只能重拍整批，而 OCR 费用已付；
+    // `_ocrRetryOne` 里"复用已识别文本、只重跑 AI"的省钱路径一直还在，只是接线断了。
+    // 编辑/移除/预览仍保持删除（那部分是刻意后移到报告页的）。
+    async onProcRetryOne(e) {
+      var fileId = (e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.fileid) || ''
+      var mask = this.data.ocrMask
+      if (!fileId || mask.procBusy || mask.confirming) return
+      var self = this
+      var err = null
+      ;(this._procErrors || []).forEach(function(x) { if (x.fileId === fileId) err = x })
+      if (!err) return
+
+      err.retrying = true
+      this.setData({ 'ocrMask.procBusy': true })
+      this._procRefresh()
+
+      var r = await this._ocrRetryOne(fileId, err.thumb)
+      if (this._disposed) return
+
+      // 重传会生成新 fileId（旧图仍在云存储）；只清新生成的那个 ——
+      // 若沿用原 fileId（复用缓存文本那条路径），绝不能删，否则下一次重试就拿不到缓存了。
+      if (r.newFileId && r.newFileId !== fileId) {
+        try { flow.cleanupTempFiles([r.newFileId]) } catch (e2) {}
+      }
+
+      if (r.policies && r.policies.length) {
+        ;(r.policies).forEach(function(p) { self._procPolicies.push(p) })
+        ;(r.cashValues || []).forEach(function(cv) { self._procCash.push(cv) })
+        this._procErrors = (this._procErrors || []).filter(function(x) { return x.fileId !== fileId })
+      } else {
+        // 仍失败：留在异常组，更新原因（不新开条目，避免列表膨胀）
+        err.retrying = false
+        err.error = r.error || '识别失败'
+      }
+
+      this.setData({ 'ocrMask.procBusy': false })
+      this._procRefresh()
+      this._persistBatch()
+    },
+
     // UI 审计 交互 S1：宿主页 onBackPress 委托入口（report/index 两页共用）
     // 返回键行为：saving 阶段不可中断 → 其余阶段确认放弃
     // （2026-10-13：原「先关编辑 sheet」分支随弹窗内编辑能力移除）

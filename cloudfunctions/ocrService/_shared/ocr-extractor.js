@@ -170,9 +170,12 @@ async function aiExtract(ocrText, ocrConfInfo, deps) {
       {
         // DeepSeek JSON Output 模式有概率返回空 content（官方已知问题）
         // DeepSeek 并发 2500，重试无 429 风险，对 ai_empty 启用 1 次重试
+        // 2026-10-17：`ai_format` 也纳入重试 —— 解析失败通常是截断/多包一层 markdown，
+        // 温度 0 下重跑一次基本就对；而原实现直接判死，等于整张图作废（用户只能重拍，
+        // OCR 费用已付）。cost = 1 次调用，收益 = 免掉一张图重来。
         maxAttempts: 2,
         delayMs: 500,
-        retryOn: function(e) { return e.code === 'ai_empty' },
+        retryOn: function(e) { return e.code === 'ai_empty' || e.code === 'ai_format' },
         label: 'ocr-extractor aiExtract'
       }
     )

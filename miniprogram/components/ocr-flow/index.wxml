@@ -77,6 +77,12 @@
                 <text class="proc-err">{{item.error}}</text>
               </scroll-view>
             </view>
+            <!-- 2026-10-17：失败项补回「重试」这一个动作（其余编辑/移除仍保持删除）。
+                 原来失败只能保存时跳过 → 图白拍、OCR 费用已付；_ocrRetryOne 本就有
+                 "复用已识别文本只重跑 AI" 的省钱路径，只是接线被删了。 -->
+            <view class="proc-side">
+              <text class="proc-retry-btn pressable {{item.retrying ? 'is-busy' : ''}}" data-fileid="{{item.fileId}}" catchtap="onProcRetryOne">{{item.retrying ? '重试中' : '重试'}}</text>
+            </view>
           </view>
         </block>
       </scroll-view>

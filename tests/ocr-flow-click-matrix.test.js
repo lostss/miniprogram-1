@@ -233,3 +233,55 @@ describe('ocr-flow 点击矩阵：保存失败重试', function () {
     expect(spy).toHaveBeenCalled()
   })
 })
+
+// 2026-10-17：失败项"单张重试"接线（2026-10-13 曾整组删除，导致失败只能跳过、OCR 已付费浪费）。
+// 只补回重试，不加编辑/移除/预览。
+describe('ocr-flow 点击矩阵：失败项单张重试', function () {
+  function errCtx(cfg, over) {
+    const inst = makeInstance(cfg)
+    inst.data.ocrMask = Object.assign({ procBusy: false, confirming: false }, over && over.mask)
+    inst._procPolicies = (over && over.policies) || []
+    inst._procCash = []
+    inst._procErrors = [{ fileId: 'f1', thumb: '/tmp/a.jpg', error: '识别失败', retrying: false }]
+    inst._procRefresh = jest.fn()
+    inst._persistBatch = jest.fn()
+    return inst
+  }
+  const ev = { currentTarget: { dataset: { fileid: 'f1' } } }
+
+  test('成功：结果并入待保存列表、失败项移除、procBusy 复位、持久化一次', async () => {
+    const inst = errCtx(loadComponent())
+    inst._ocrRetryOne = jest.fn().mockResolvedValue({
+      policies: [{ product_name: '重试得到的保单' }], cashValues: [], newFileId: 'f1'
+    })
+    await inst.onProcRetryOne(ev)
+    expect(inst._ocrRetryOne).toHaveBeenCalledWith('f1', '/tmp/a.jpg')
+    expect(inst._procPolicies.length).toBe(1)
+    expect(inst._procErrors.length).toBe(0)
+    expect(inst.data.ocrMask.procBusy).toBe(false)
+    expect(inst._persistBatch).toHaveBeenCalled()
+  })
+
+  test('仍失败：不清空失败项，只更新原因并复位 retrying', async () => {
+    const inst = errCtx(loadComponent())
+    inst._ocrRetryOne = jest.fn().mockResolvedValue({ policies: [], cashValues: [], error: 'AI服务繁忙，请稍后重试' })
+    await inst.onProcRetryOne(ev)
+    expect(inst._procErrors.length).toBe(1)
+    expect(inst._procErrors[0].error).toBe('AI服务繁忙，请稍后重试')
+    expect(inst._procErrors[0].retrying).toBe(false)
+    expect(inst.data.ocrMask.procBusy).toBe(false)
+  })
+
+  test('procBusy / confirming / 未知 fileId：一律不触发重试（防并发覆盖与误触）', async () => {
+    for (const over of [{ mask: { procBusy: true } }, { mask: { confirming: true } }]) {
+      const inst = errCtx(loadComponent(), over)
+      inst._ocrRetryOne = jest.fn()
+      await inst.onProcRetryOne(ev)
+      expect(inst._ocrRetryOne).not.toHaveBeenCalled()
+    }
+    const inst2 = errCtx(loadComponent())
+    inst2._ocrRetryOne = jest.fn()
+    await inst2.onProcRetryOne({ currentTarget: { dataset: { fileid: 'other' } } })
+    expect(inst2._ocrRetryOne).not.toHaveBeenCalled()
+  })
+})
