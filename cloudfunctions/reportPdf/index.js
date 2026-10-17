@@ -253,7 +253,7 @@ function buildPdf(ctx) {
   // ⚠️ 金额口径本身**未变**（医疗险报销年限额仍计入其险种金额，见 docs/data-model-v2.md「保额口径」）；
   // 变的是"把它们相加成一个数字"这件事 —— 那正是会误导的地方。
   const covSum = summarizeCoverage(act)
-  const coverageW = covSum.protectionW
+  // coverageW（protectionW 合计）自 2026-10-17 起不再展示：报销上限与赔付款相加会误导。
   const income = fin.income || 0
   const debtAmt = (fin.debt && fin.debt.amount) || 0
   // 兜底：financial_snapshot 未填但成员有个人收入（万）时，经济状况仍展示成员合计
@@ -281,7 +281,10 @@ function buildPdf(ctx) {
   // 算成同一个人（空串也是集合里的一个键）→ 3 张未挂到人的保单显示「保障人数 1」，与本页
   // 明细表里 3 行「—」自相矛盾。改为只数非空姓名；一个都数不出时如实写「待补」。
   const insuredCount = _insuredCount(act)
-  const sums = [['年保费(万)', String(premiumW || 0)], ['保障型保额(万)', String(coverageW || 0)], ['保障人数', insuredCount]]
+  // 2026-10-17：与报告页/摘要卡同口径 —— 主数字改「给付型保额」（寿险+重疾），
+  // 报销额度单列成一行（医疗+意外）。仍保留 3 格布局（colW 按 3 等分算），
+  // 不把 2310 万这种"报销上限 + 赔付款"的合计再印到纸上。
+  const sums = [['年保费(万)', String(premiumW || 0)], ['给付型保额(万)', String(covSum.payoutW || 0)], ['保障人数', insuredCount]]
   let cx = M
   for (const it of sums) {
     _cn(9); doc.fillColor('#888888'); doc.text(it[0], cx, y, { width: colW - 8, lineBreak: false })
@@ -293,8 +296,11 @@ function buildPdf(ctx) {
   if (covSum.byCat.length) {
     _para(covSum.byCat.map(function (x) { return x.cat + ' ' + x.w + ' 万' }).join('　·　'), 9, { color: '#555555' })
   }
+  if (covSum.quotaW > 0) {
+    _para('报销额度（医疗 / 意外）' + covSum.quotaW + ' 万，每年需续保，与上述给付型保额不可相加', 9, { color: '#777777' })
+  }
   if (covSum.savingsW > 0) {
-    _para('储蓄型（年金 / 增额寿 / 终身寿）合计 ' + covSum.savingsW + ' 万，与上述保障型保额分列', 9, { color: '#777777' })
+    _para('储蓄型（年金 / 增额寿 / 终身寿）合计 ' + covSum.savingsW + ' 万，与上述给付型分列', 9, { color: '#777777' })
   }
   if (covSum.unknownW > 0) {
     _para(covSum.unknownW + ' 万的保单未标注险种，未计入上述分类', 9, { color: '#999999' })

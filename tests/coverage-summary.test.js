@@ -127,7 +127,10 @@ describe('保额拆分接线（防第四份实现 / 防只改一处）', () => {
   test('PDF 摘要不再输出"总保额"字样', () => {
     const pdf = fs.readFileSync(path.join(root, 'cloudfunctions', 'reportPdf', 'index.js'), 'utf8')
     expect(pdf).not.toContain("'总保额(万)'")
-    expect(pdf).toContain('保障型保额(万)')
+    // 2026-10-17：PDF 与报告页同口径 —— 主数字给付型，报销额度单列一行，不再印"保障型保额合计"
+    expect(pdf).toContain('给付型保额(万)')
+    expect(pdf).not.toContain('保障型保额(万)')
+    expect(pdf).toContain('报销额度（医疗 / 意外）')
   })
 
   test('AI 提示词明确禁止把不同险种保额相加成"总保额"', () => {

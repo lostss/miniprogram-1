@@ -44,7 +44,11 @@ function buildSummaryMd(policies, snap) {
   // 长期保障厚度写进报告（医疗险 400 万报销年限额 + 重疾 30 万保险金额相加本就没有意义）。
   // 聚合走跨树契约 coverage-summary.js（与报告页摘要卡、PDF 保障摘要同源）。
   const cov = summarizeCoverage(activePolicies)
-  lines.push(`- 保障型保额（重疾/医疗/意外/寿险合计）：${cov.protectionW}万 —— 按险种拆分：${cov.byCat.filter(function(x) { return x.kind === 'protection' }).map(function(x) { return x.cat + ' ' + x.w + '万' }).join('、') || '无'}`)
+  // 2026-10-17：口径与报告页摘要卡对齐 —— 拆成**按险种**的两组（给付型 / 报销额度），
+  // 不再给"保障型保额合计"。原实现让模型照抄 2310 万当"长期保障厚度"，
+  // 而报告页已改成"给付型 310 / 报销额度 2000"，两边不一致时客户会看到两套数字。
+  lines.push(`- 给付型保额（寿险+重疾）：${cov.payoutW}万 ｜ 报销额度（医疗+意外）：${cov.quotaW}万 —— 两者**不可相加**（前者是赔付款、后者是报销上限）`)
+  lines.push(`  按险种明细：${cov.byCat.filter(function(x) { return x.kind === 'protection' }).map(function(x) { return x.cat + ' ' + x.w + '万' }).join('、') || '无'}`)
   if (cov.savingsW > 0) {
     lines.push(`- 储蓄型保额（年金/增额寿/终身寿合计）：${cov.savingsW}万 —— 与保障型**分列**，不得相加成一个"总保额"`)
   }

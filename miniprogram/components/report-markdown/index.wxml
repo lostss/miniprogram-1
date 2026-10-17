@@ -41,27 +41,31 @@
             </view>
             <view class="gt-side"></view>
           </view>
-          <view class="gt-row" wx:for="{{block.rows}}" wx:for-item="r" wx:key="rowKey">
-            <view class="gt-label">
-              <text class="gt-name">{{r.name}}</text>
-              <!-- 一年期标记放在产品行尾（该行本就 ellipsis，窄屏自动省略），
-                   不放到右侧到期列 —— 到期列只留"年份/终身"，宽度才压得下来 -->
-              <text class="gt-prod">{{r.product}}{{r.cat ? ' · ' + r.cat : ''}}{{r.oneYear ? ' · 1年期' : ''}}{{r.singlePay ? ' · 趸交' : ''}}</text>
-            </view>
-            <view class="gt-track">
-              <view class="gt-now" wx:if="{{block.nowPct !== null}}" style="left:{{block.nowPct}}%"></view>
-              <!-- 条内斜纹段 = 缴费期；剩余实色 = 已交完但保障仍在（两类语义一眼可分） -->
-              <view class="gt-bar {{r.lifetime ? 'gt-bar--life' : ''}} {{r.oneYear ? 'gt-bar--short' : ''}}" style="left:{{r.startPct}}%;width:{{r.widthPct}}%">
-                <view class="gt-pay" wx:if="{{r.payRatio}}" style="width:{{r.payRatio}}%"></view>
+          <!-- 2026-10-17：按成员分组 —— 成员名只在组头出现一次（原实现逐行重复，
+               把产品名挤到第二行且只能 tiny 字号）。 -->
+          <block wx:for="{{block.rows}}" wx:for-item="r" wx:key="rowKey">
+            <view class="gt-group" wx:if="{{r.firstOfMember}}"><text class="gt-name">{{r.name}}</text></view>
+            <view class="gt-row">
+              <view class="gt-label">
+                <!-- 一年期标记放在产品行尾（该行本就 ellipsis，窄屏自动省略），
+                     不放到右侧到期列 —— 到期列只留"年份/终身"，宽度才压得下来 -->
+                <text class="gt-prod">{{r.product}}{{r.cat ? ' · ' + r.cat : ''}}{{r.oneYear ? ' · 1年期' : ''}}{{r.singlePay ? ' · 趸交' : ''}}</text>
+              </view>
+              <view class="gt-track">
+                <view class="gt-now" wx:if="{{block.nowPct !== null}}" style="left:{{block.nowPct}}%"></view>
+                <!-- 条内斜纹段 = 缴费期；剩余实色 = 已交完但保障仍在（两类语义一眼可分） -->
+                <view class="gt-bar {{r.lifetime ? 'gt-bar--life' : ''}} {{r.oneYear ? 'gt-bar--short' : ''}}" style="left:{{r.startPct}}%;width:{{r.widthPct}}%">
+                  <view class="gt-pay" wx:if="{{r.payRatio}}" style="width:{{r.payRatio}}%"></view>
+                </view>
+              </view>
+              <view class="gt-side">
+                <text class="gt-end {{r.lifetime ? 'gt-end--life' : ''}}">{{r.lifetime ? '终身' : r.endY + '年'}}</text>
+                <text class="gt-amt" wx:if="{{r.sumAssured}}">{{r.sumAssured}}万</text>
+                <!-- 到期时被保人年龄：回答"60 岁时还剩什么"（终身险/年龄未知时 endAge 为 null，不显示） -->
+                <text class="gt-age" wx:if="{{r.endAge}}">止于{{r.endAge}}岁</text>
               </view>
             </view>
-            <view class="gt-side">
-              <text class="gt-end {{r.lifetime ? 'gt-end--life' : ''}}">{{r.lifetime ? '终身' : r.endY + '年'}}</text>
-              <text class="gt-amt" wx:if="{{r.sumAssured}}">{{r.sumAssured}}万</text>
-              <!-- 到期时被保人年龄：回答"60 岁时还剩什么"（终身险/年龄未知时 endAge 为 null，不显示） -->
-              <text class="gt-age" wx:if="{{r.endAge}}">止于{{r.endAge}}岁</text>
-            </view>
-          </view>
+          </block>
           <view class="gt-note" wx:for="{{block.notes}}" wx:key="*this">· {{item}}</view>
         </view>
         <view wx:if="{{block.t==='timeline'}}" class="tl-wrap">

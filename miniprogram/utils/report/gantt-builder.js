@@ -115,6 +115,15 @@ function buildGantt(policies, members) {
     return a._order - b._order || a.startY - b.startY || String(a.product).localeCompare(String(b.product))
   })
 
+  // 2026-10-17：分组标记。排序已保证同一成员的保单相邻，但渲染时每行都重复成员名 ——
+  // 真机截图里"李阳勇"连出 6 行，把产品名挤到第二行且只能 tiny 字号。
+  // 现在只在成员第一行渲染成员名（组头），其余行只显示产品。
+  let prevName = null
+  rows.forEach(function(r) {
+    r.firstOfMember = r.name !== prevName
+    prevName = r.name
+  })
+
   if (!rows.length) {
     const notes0 = []
     if (missStart) notes0.push(missStart + ' 张保单缺少生效日期，未在时间轴上显示')

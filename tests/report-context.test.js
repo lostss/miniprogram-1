@@ -33,7 +33,11 @@ describe('buildSummaryMd', () => {
     const md = buildSummaryMd(policies, { income: '20' })
     expect(md).toContain('年保费合计：8000元') // 5000+3000，不含 expired
     expect(md).toContain('占家庭年收入 4.0%') // 8000 / (20*10000) * 100 = 4.0
-    expect(md).toContain('保障型保额（重疾/医疗/意外/寿险合计）：80万') // (500000+300000)/10000
+    // 2026-10-17：与报告页摘要卡同口径 —— 按**险种**拆成给付型 / 报销额度，不再给合计
+    expect(md).toContain('给付型保额（寿险+重疾）：50万') // 重疾 500000
+    expect(md).toContain('报销额度（医疗+意外）：30万') // 医疗 300000
+    expect(md).toContain('两者**不可相加**')
+    expect(md).not.toContain('保障型保额（重疾/医疗/意外/寿险合计）')
     expect(md).toContain('重疾险 50万')
     expect(md).toContain('医疗险 30万')
     expect(md).toContain('有效保单：2份 | 已失效/过期：1份')
@@ -48,7 +52,7 @@ describe('buildSummaryMd', () => {
       { status: 'active', annual_premium: 100000, sum_assured: 500000, insurance_category: '年金' },
       { status: 'active', annual_premium: 800, sum_assured: 200000 } // 无 insurance_category
     ], {})
-    expect(md).toContain('保障型保额（重疾/医疗/意外/寿险合计）：30万')
+    expect(md).toContain('给付型保额（寿险+重疾）：30万') // 重疾 300000；医疗/意外为 0
     expect(md).toContain('储蓄型保额（年金/增额寿/终身寿合计）：50万')
     expect(md).toContain('与保障型**分列**')
     expect(md).toContain('未标注险种的保额：20万')
@@ -64,7 +68,9 @@ describe('buildSummaryMd', () => {
       { status: 'active', annual_premium: 657, sum_assured: 4000000, insurance_category: '医疗险', insurance_period: '至2022年07月09日', effective_date: '2021-07-10' },
       { status: 'active', annual_premium: 5000, sum_assured: 500000, insurance_category: '寿险', insurance_period: '终身' }
     ], { income: '20' })
-    expect(md).toContain('保障型保额（重疾/医疗/意外/寿险合计）：450万')
+    // 2026-10-17：按险种拆两组（寿险→给付型；医疗→报销额度），时效信息仍单独一行
+    expect(md).toContain('给付型保额（寿险+重疾）：50万')
+    expect(md).toContain('报销额度（医疗+意外）：400万')
     expect(md).toContain('其中一年期短险：400万')
     expect(md).toContain('勿表述为长期保障厚度')
   })

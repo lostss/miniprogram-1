@@ -101,6 +101,10 @@
    窄屏（375pt ≈ 750rpx）里留给时间条的只剩 ~330rpx → 条短、刻度挤。
    现各 160rpx；代价是左侧产品名更早省略号 —— 该行本就 ellipsis，属可接受的降级。
    右侧"到期"列只显示"年份/终身"（一年期标记移到左侧产品行尾），故 160rpx 足够。 */
+/* 2026-10-17：成员组头（成员名只出现一次）。上间距比行距大，形成"分组"的视觉断点；
+   首个组头不加上间距，避免甘特图顶部多出一块空白。 */
+.gt-group { margin-top:var(--sp-3); padding-bottom:2rpx; }
+.gt-group:first-child { margin-top:0; }
 .gt-label { flex:0 0 160rpx; min-width:0; display:flex; flex-direction:column; gap:2rpx; }
 .gt-name { font-size:var(--fs-caption); font-weight:var(--fw-semi); color:var(--text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .gt-prod { font-size:var(--fs-tiny); color:var(--text-tertiary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

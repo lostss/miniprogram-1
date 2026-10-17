@@ -163,10 +163,25 @@ describe('gantt-builder — 标注语义（红线 3：不确定就标出来）',
   })
 })
 
+describe('gantt-builder — 按成员分组（成员名只出现一次）', function () {
+  test('同一成员多张保单：只有首行 firstOfMember，产品行不再重复成员名', function () {
+    const g = buildGantt([
+      pol({ product_name: 'A 重疾', effective_date: '2020-01-01' }),
+      pol({ product_name: 'B 医疗', insurance_category: '医疗险', effective_date: '2021-01-01' }),
+      pol({ product_name: 'C 定寿', insurance_category: '寿险', insured_name: '李四', effective_date: '2019-01-01' })
+    ], [{ name: '张三', age: 40 }, { name: '李四', age: 35 }])
+    // 张三的两张相邻，只有第一张带组头标记
+    expect(g.rows.map(r => [r.name, r.firstOfMember])).toEqual([
+      ['张三', true], ['张三', false], ['李四', true]
+    ])
+  })
+})
+
 describe('gantt-builder — 守卫：不做无字段支撑的判定（v2.0 评审必改②）', function () {
   // 2026-10-14 扩字段（今天竖线 / 缴费期 / 到期年龄）：白名单**显式**列入，新增字段必须先想清楚再改这里
   const ALLOWED_BLOCK_KEYS = ['rows', 'ticks', 'startYear', 'endYear', 'nowPct', 'nowYear', 'notes']
-  const ALLOWED_ROW_KEYS = ['rowKey', 'name', 'product', 'cat', 'sumAssured', 'startY', 'endY', 'startPct', 'widthPct', 'payEndY', 'payRatio', 'endAge', 'lifetime', 'oneYear', 'singlePay']
+  // 2026-10-17 加 firstOfMember：纯渲染分组标记（同一成员的第一行），不属于"空白期/重叠"那类判定字段
+  const ALLOWED_ROW_KEYS = ['rowKey', 'name', 'product', 'cat', 'sumAssured', 'startY', 'endY', 'startPct', 'widthPct', 'payEndY', 'payRatio', 'endAge', 'lifetime', 'oneYear', 'singlePay', 'firstOfMember']
 
   test('block 与 row 只暴露白名单字段（将来误加"空白期/重叠"字段会在此处红）', function () {
     const g = buildGantt([pol({}), pol({ insurance_period: '1年', coverage_term: 1, insured_name: '李四' })], [{ name: '张三' }, { name: '李四' }])
