@@ -44,7 +44,10 @@ function confirmDeleteFamily(opts) {
     success: (r) => {
       if (r.tapIndex !== 0) return
       wx.showModal({
-        title: '删除家庭',
+        // 2026-10-17：标题由「删除家庭」改为「删除客户」——用户在列表里长按的是**客户**，
+      // 确认框突然说"家庭"会顿一下（术语两层：客户=列表/档案，家庭=报告里的分析单位）。
+      // 后果说明保留"及其所有数据"，因为删除确实连带成员/保单/报告。
+      title: '删除客户',
         content: '确定删除「' + displayName + '」及其所有数据吗？此操作不可恢复。',
         confirmText: '删除',
         confirmColor: '#B85450',

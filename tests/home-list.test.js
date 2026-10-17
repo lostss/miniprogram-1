@@ -138,3 +138,17 @@ describe('首页布局与入口', () => {
     expect(readWxss('pages/index/index.wxss')).not.toMatch(/\.sk-ring/)
   })
 })
+
+describe('术语两层：客户 = 列表/档案，家庭 = 报告里的分析单位', () => {
+  test('建档弹窗问的是"家里几口人"（不是生硬的"家庭成员"，与上一步"客户名称"衔接）', () => {
+    expect(readWxml('pages/index/index.wxml')).toContain('家里几口人')
+  })
+
+  test('删除确认说"客户"（用户在列表里长按的是客户，突然说"家庭"会顿一下）', () => {
+    const src = fs.readFileSync(path.join(ROOT, 'utils', 'family-actions.js'), 'utf8')
+    expect(src).toContain("title: '删除客户'")
+    expect(src).not.toMatch(/title:\s*'删除家庭'/)
+    // 后果说明必须保留（删客户会连带成员/保单/报告）
+    expect(src).toContain('及其所有数据')
+  })
+})

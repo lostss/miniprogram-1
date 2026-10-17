@@ -101,7 +101,9 @@
     <view class="cf-error" wx:if="{{createModal.error}}">{{createModal.error}}</view>
 
     <view class="cf-row">
-      <text class="cf-label">家庭成员</text>
+      <!-- 2026-10-17：口语化桥接 —— 上一行刚填"客户名称"，这里问"家里几口人"才不自相矛盾
+           （两层术语：客户=档案，家庭=档案里的人）。 -->
+      <text class="cf-label">家里几口人</text>
       <view class="cf-stepper">
         <view class="cf-step pressable {{createModal.count <= 0 || createModal.submitting ? 'is-off' : ''}}" bindtap="onCountMinus" aria-label="减少一位家庭成员">−</view>
         <text class="cf-count {{createModal.count === 0 ? 'is-empty' : ''}}">{{createModal.count > 0 ? createModal.count + ' 人' : '暂不填'}}</text>
