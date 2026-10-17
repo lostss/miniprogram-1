@@ -59,7 +59,7 @@ function normalizeFamilyData(family) {
     active, debt, totalIncome, annualPremium, annualPremiumW, premiumRatio,
     totalCoverage, shortTermCoverage, policyCount,
     // 2026-10-14：按保障类型拆分（摘要卡与 AI 上下文的展示口径）
-    coverageByCat: cov.byCat, protectionCoverage: cov.protectionW, savingsCoverage: cov.savingsW,
+    coverageByCat: cov.byCat, protectionCoverage: cov.protectionW, savingsCoverage: cov.savingsW, payoutCoverage: cov.payoutW, quotaCoverage: cov.quotaW,
     unknownCoverage: cov.unknownW,
     memberIdToName, memberMap, members, policies
   }

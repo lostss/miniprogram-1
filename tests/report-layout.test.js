@@ -74,11 +74,13 @@ describe('报告页布局：AI 折叠区不得吞掉正文与页尾', () => {
     const wxml = src.replace(/<!--[\s\S]*?-->/g, '')
     // 整理汇总卡：两颗数字并列，合计不再出现
     expect(wxml).not.toContain('保障型保额合计')
-    expect(wxml).toContain('checkup.summary.longTermSumAssuredText')
-    expect(wxml).toContain('checkup.summary.shortTermSumAssuredText')
-    expect(wxml).toContain('长期给付')
+    // ⚠️ 划分口径必须是**险种**（给付型 / 报销额度）。第一版用"保障型 − 一年期"，
+    // 真机立刻自相矛盾：卡片 300 万，而险种明细 寿险100+重疾210=310 万。
+    expect(wxml).toContain('checkup.summary.payoutSumAssuredText')
+    expect(wxml).toContain('checkup.summary.quotaSumAssuredText')
+    expect(wxml).toContain('给付型 · 寿险 / 重疾')
     // AI 摘要卡主数字同口径（两卡相邻，口径不一致会比单卡错更明显）
-    expect(wxml).toContain('{{summaryCards.longTerm}}')
+    expect(wxml).toContain('{{summaryCards.payout}}')
     expect(wxml).not.toContain('{{summaryCards.protection}}')
   })
 

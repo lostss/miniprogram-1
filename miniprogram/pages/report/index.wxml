@@ -84,14 +84,16 @@
           <view class="sum-label">保额构成</view>
           <view class="sum-pair">
             <view class="sum-pair-item">
-              <view class="sum-pair-val">{{checkup.summary.longTermSumAssuredText}}</view>
-              <view class="sum-pair-lbl">长期给付 · 寿险 / 重疾</view>
+              <view class="sum-pair-val">{{checkup.summary.payoutSumAssuredText}}</view>
+              <view class="sum-pair-lbl">给付型 · 寿险 / 重疾</view>
             </view>
             <view class="sum-pair-item">
-              <view class="sum-pair-val">{{checkup.summary.shortTermSumAssuredText}}</view>
-              <view class="sum-pair-lbl">一年期额度 · 医疗 / 意外，每年续保</view>
+              <view class="sum-pair-val">{{checkup.summary.quotaSumAssuredText}}</view>
+              <view class="sum-pair-lbl">报销额度 · 医疗 / 意外</view>
             </view>
           </view>
+          <!-- 一年期是"时效"信息，与上面按险种的划分是两个维度 → 单独一行，不再混进数字标签 -->
+          <view class="sum-note" wx:if="{{checkup.summary.shortTermCount > 0}}">其中 {{checkup.summary.shortTermCount}} 张为一年期保单，每年需续保</view>
           <view class="tags" wx:if="{{checkup.summary.coverageByCat.length}}">
             <view class="tag" wx:for="{{checkup.summary.coverageByCat}}" wx:key="cat">{{item.cat}} {{item.text}}</view>
           </view>
@@ -187,9 +189,9 @@
         <!-- 2026-10-17：与整理汇总卡同一口径 —— 主数字改「长期给付」，一年期额度另行标注。
              原"保障型保额 2310 万"里含 2010 万报销额度，两张卡又在相邻位置各显示一次。 -->
         <view class="num-cell">
-          <text class="num-val">{{summaryCards.longTerm}}</text>
+          <text class="num-val">{{summaryCards.payout}}</text>
           <text class="num-unit">万</text>
-          <text class="num-lbl">长期给付</text>
+          <text class="num-lbl">给付型保额</text>
         </view>
         <view class="num-cell">
           <text class="num-val">{{summaryCards.count}}</text>
@@ -201,7 +203,7 @@
            理由：医疗险 400 万报销年限额 + 重疾 30 万保险金额相加没有意义 ——
            前者是报销上限、后者是给付金额，混算会让客户把报销额度当成"能拿到手的钱"。
            2026-10-17 再进一步：主数字＝**长期给付**（保障型 − 一年期），一年期额度在这一行标注。 -->
-      <view class="summary-note" wx:if="{{summaryCards.short}}">另有 {{summaryCards.short}} 万为一年期额度（医疗 / 意外，每年需续保），与上述长期给付分列</view>
+      <view class="summary-note" wx:if="{{summaryCards.quota !== '0'}}">另有 {{summaryCards.quota}} 万为报销额度（医疗 / 意外），与上述给付型分列</view>
       <view class="summary-note summary-cats" wx:if="{{summaryCards.byCat.length}}">
         <text class="cat-chip" wx:for="{{summaryCards.byCat}}" wx:key="cat">{{item.cat}} {{item.w}}万</text>
       </view>

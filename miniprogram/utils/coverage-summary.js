@@ -67,13 +67,19 @@ function summarizeCoverage(policies) {
   let protectionYuan = 0
   let savingsYuan = 0
   let unknownYuan = 0
+  // 报销/意外额度（按**险种**归集，与"是否一年期"无关）：医疗险是报销上限、意外险是意外额度。
+  // 其余保障型（寿险 / 重疾 / 护理等）都算给付型 → 两者相加恰好等于 protectionW。
+  const QUOTA_CATS = ['医疗险', '意外险']
+  let quotaYuan = 0
   const byCat = Object.keys(map).map(function(cat) {
     // 险种未标注（canonCat 的 '其他' 兜底）**单列第三桶**，不计入保障型也不计入储蓄型：
     // 计进保障型会在它其实是储蓄型时**高估**保障厚度，计进储蓄型反之 —— 两头都不该猜（红线 3）。
     const kind = cat === '其他' ? 'unknown' : (isSavingsCat(cat) ? 'savings' : 'protection')
     if (kind === 'savings') savingsYuan += map[cat]
-    else if (kind === 'protection') protectionYuan += map[cat]
-    else unknownYuan += map[cat]
+    else if (kind === 'protection') {
+      protectionYuan += map[cat]
+      if (QUOTA_CATS.indexOf(cat) !== -1) quotaYuan += map[cat]
+    } else unknownYuan += map[cat]
     return { cat: cat, w: toWan(map[cat]), kind: kind }
   }).filter(function(x) { return x.w > 0 })
     .sort(function(a, b) { return b.w - a.w || String(a.cat).localeCompare(String(b.cat)) })
@@ -86,13 +92,17 @@ function summarizeCoverage(policies) {
     unknownW: toWan(unknownYuan),
     totalW: toWan(totalYuan),
     shortTermW: toWan(shortTermYuan),
-    // 2026-10-17（报告结构 v2.0 评审遗留项）：**长期给付** = 保障型里去掉一年期那部分。
-    // 动机：原对外只有一个"保障型保额合计"，而 2310 万里 2010 万是一年期报销/意外额度 ——
-    // 报销上限与给付金额相加本身没有意义（v2.0 明确禁止），客户会把额度当成"能拿到手的钱"。
-    // 现在两个数并列：长期给付（寿险/重疾，真正赔钱）+ 短期额度（每年续保），不再给合计。
-    // ⚠️ 本文件是**契约源**：改这里后必须 `node scripts/sync-shared.js`（会同步到
-    //    miniprogram/utils/ 与各云函数的 _shared/ 副本；直接改副本会被覆盖）。
-    longTermW: toWan(Math.max(0, protectionYuan - shortTermYuan)),
+    // 2026-10-17（报告结构 v2.0 评审遗留项）：取消"保障型保额合计"，拆成两组**按险种**的数：
+    //   payoutW   = 给付型（寿险 + 重疾）—— 发生风险时真正赔钱的部分
+    //   quotaW    = 报销/意外额度（医疗 + 意外）—— 报销上限，每年需续保
+    // ⚠️ 划分口径必须是**险种**，不能是"是否一年期"：第一版用 `protection − shortTermW`，
+    //    真机立刻自相矛盾（长期给付 300 万，而险种明细 寿险100+重疾210=310 万，
+    //    差额来自一张一年期重疾保单）—— 标签写"寿险/重疾"、算法按"一年期"，两个口径混用。
+    // payoutW 用减法兜底（含护理险等少数非医疗/意外险种），保证 payoutW + quotaW === protectionW。
+    // ⚠️ 本文件是**契约源**：改这里后必须 `node scripts/sync-shared.js`（同步到 miniprogram/utils/
+    //    与各云函数的 _shared/ 副本；直接改副本会被覆盖）。
+    payoutW: toWan(Math.max(0, protectionYuan - quotaYuan)),
+    quotaW: toWan(quotaYuan),
     policyCount: active.length
   }
 }

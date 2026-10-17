@@ -61,11 +61,12 @@ function buildReportView(family, report, opts) {
     // 储蓄型（年金/增额寿/终身寿）另计 —— 两者混算会让客户把医疗险的报销年限额当成能拿到手的钱。
     // 字段名从 coverage 改为 protection：语义变了就换名字，避免旧名被按老含义继续用。
     protection: String(norm.protectionCoverage),
-    // 2026-10-17（v2.0 评审遗留）：**长期给付 = 保障型 − 一年期**。
-    // 真机截图里"2310 万"与"其中一年期 2010 万"并排时，眼球只记住 2310 万 ——
-    // 而那 2010 万是报销上限/意外额度，与给付金额相加本身没有意义。
-    // 现在两颗数字并列（长期给付 / 一年期额度），不再对外给合计。
-    longTerm: String(Math.round(Math.max(0, norm.protectionCoverage - norm.shortTermCoverage) * 10) / 10),
+    // 2026-10-17（v2.0 评审遗留）：**按险种**拆成给付型 / 报销额度两组，不再给合计。
+    // ⚠️ 第一版用 `保护型 − 一年期` 算"长期给付"，真机立刻自相矛盾：
+    //    卡片写 300 万，而险种明细 寿险100+重疾210=310 万（差额来自一张一年期重疾保单）——
+    //    标签按险种、算法按时效，两个口径混用。现在统一按险种，payout + quota === protection。
+    payout: String(norm.payoutCoverage),
+    quota: String(norm.quotaCoverage),
     savings: String(norm.savingsCoverage),
     // 未标注险种的保额（单列，不并入保障型/储蓄型 —— 两头都不猜）
     unknown: String(norm.unknownCoverage || 0),

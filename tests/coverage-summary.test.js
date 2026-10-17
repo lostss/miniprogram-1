@@ -66,8 +66,11 @@ describe('coverage-summary — 边界', () => {
       pol('重疾险', 30)
     ])
     expect(r.shortTermW).toBe(400)
-    // 2026-10-17：长期给付 = 保障型 − 一年期（不再对外给"合计"）
-    expect(r.longTermW).toBe(30)
+    // 2026-10-17：按**险种**拆两组（给付型 / 报销额度），两者相加 === protectionW。
+    // 不用"保障型 − 一年期"：那会让卡片写 300 万、险种明细 310 万（一张一年期重疾保单造成差额）。
+    expect(r.payoutW).toBe(30) // 给付型：重疾 30（寿险 0）
+    expect(r.quotaW).toBe(400) // 报销额度：医疗 400（意外 0）
+    expect(r.payoutW + r.quotaW).toBe(r.protectionW)
     expect(r.protectionW).toBe(430)
   })
 

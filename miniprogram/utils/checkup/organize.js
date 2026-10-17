@@ -192,9 +192,12 @@ function buildCheckupReport(input) {
     // 按保障类型拆分（展示用）：保障型为主数字，储蓄型/未标注分列，分险种明细给 tag
     protectionSumAssured: cov.protectionW * 10000,
     protectionSumAssuredText: fmtYuan(cov.protectionW * 10000),
-    // 2026-10-17：长期给付 vs 一年期额度分列（不再给"合计"——报销上限与给付金额相加无意义）
-    longTermSumAssured: cov.longTermW * 10000,
-    longTermSumAssuredText: fmtYuan(cov.longTermW * 10000),
+    // 2026-10-17：按**险种**分两组（不再给"合计"——报销上限与给付金额相加无意义）
+    //   给付型 = 寿险 + 重疾；报销/意外额度 = 医疗 + 意外。两者相加 === protectionW。
+    payoutSumAssured: cov.payoutW * 10000,
+    payoutSumAssuredText: fmtYuan(cov.payoutW * 10000),
+    quotaSumAssured: cov.quotaW * 10000,
+    quotaSumAssuredText: fmtYuan(cov.quotaW * 10000),
     savingsSumAssuredText: cov.savingsW > 0 ? fmtYuan(cov.savingsW * 10000) : '',
     unknownSumAssuredText: cov.unknownW > 0 ? fmtYuan(cov.unknownW * 10000) : '',
     coverageByCat: cov.byCat.map(function (x) {
