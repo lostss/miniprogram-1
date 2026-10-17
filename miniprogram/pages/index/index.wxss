@@ -46,6 +46,38 @@
 .load-error-text { font-size:var(--fs-caption); color:var(--text-tertiary) }
 .load-error-retry { font-size:var(--fs-caption); color:var(--accent-deep); padding:var(--sp-2) var(--sp-5); border:1rpx solid var(--border-accent); border-radius:var(--r-full) }
 
+/* ========== 新建客户弹窗（2026-10-17）========== */
+/* 遮罩：点遮罩不关闭（JS 里 onCreateMaskTap 为空实现）—— 表单类弹窗防误触丢输入。
+   层级 300 高于吸底条（--z-panel:100），否则按钮会浮在遮罩上被误点。 */
+.cf-mask { position:fixed; inset:0; z-index:300; background:var(--overlay-inner); display:flex; align-items:center; justify-content:center; padding:0 var(--sp-7) }
+/* 弹窗不设固定高度：键盘弹起时 adjust-position 会把整卡上推，写死高度会裁掉底部按钮 */
+.cf-card { width:100%; max-width:600rpx; background:var(--bg-card); border-radius:var(--r-xl); padding:var(--sp-8) var(--sp-7) var(--sp-7); box-shadow:0 16rpx 48rpx rgba(0,0,0,0.16) }
+.cf-title { font-family:var(--font-serif); font-size:var(--fs-lg); font-weight:var(--fw-semi); color:var(--text-primary); letter-spacing:var(--ls-wide); margin-bottom:var(--sp-6) }
+
+/* 名称输入：72rpx 输入框与搜索框同高（同一页面的两种输入不该有不同手感） */
+.cf-input { width:100%; height:80rpx; box-sizing:border-box; padding:0 var(--sp-5); background:var(--bg-input); border:1rpx solid transparent; border-radius:var(--r-md); font-size:var(--fs-body); color:var(--text-primary) }
+/* 错误态用边框 + 文案双重标记：只改边框时，色弱用户看不出区别 */
+.cf-input.is-error { border-color:#B00020 }
+.cf-ph { color:var(--text-tertiary) }
+.cf-error { margin-top:var(--sp-2); font-size:var(--fs-caption); color:#B00020 }
+
+.cf-row { display:flex; align-items:center; justify-content:space-between; margin-top:var(--sp-6) }
+.cf-label { font-size:var(--fs-base); color:var(--text-primary) }
+.cf-stepper { display:flex; align-items:center; gap:var(--sp-4); background:var(--bg-input); border-radius:var(--r-full); padding:var(--sp-1) var(--sp-2) }
+/* 步进器按钮 56rpx 视觉 + 内边距凑够 88rpx 热区（与全站最小触点一致） */
+.cf-step { width:56rpx; height:56rpx; display:flex; align-items:center; justify-content:center; border-radius:50%; background:var(--bg-card); color:var(--accent-deep); font-size:var(--fs-lg); line-height:1 }
+.cf-step.is-off { color:var(--text-tertiary); opacity:0.5 }
+.cf-count { min-width:120rpx; text-align:center; font-size:var(--fs-base); color:var(--text-primary); font-variant-numeric:tabular-nums }
+.cf-count.is-empty { color:var(--text-tertiary); font-size:var(--fs-caption) }
+.cf-hint { margin-top:var(--sp-3); font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-snug) }
+
+/* 按钮行：取消弱化（左）、创建为主（右）—— 与报告页各弹窗的操作区顺序一致 */
+.cf-actions { display:flex; gap:var(--sp-4); margin-top:var(--sp-8) }
+.cf-btn { flex:1; height:88rpx; display:flex; align-items:center; justify-content:center; border-radius:var(--r-full); font-size:var(--fs-base); font-weight:var(--fw-semi); letter-spacing:var(--ls-wide) }
+.cf-btn--ghost { background:transparent; color:var(--text-secondary); border:1rpx solid var(--border) }
+.cf-btn--primary { background:var(--accent); color:var(--btn-text-on-accent) }
+.cf-btn.is-disabled, .cf-btn.is-loading { opacity:0.55 }
+
 /* ========== 吸底「新建客户」按钮条（2026-10-17 替代右下角 FAB）========== */
 /* 底衬用自上而下的渐变收边（不是实色块）：列表滚到底时卡片从按钮条后透出，
    既保证文字对比度，又不切出一条生硬的白色横条。 */

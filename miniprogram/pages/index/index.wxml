@@ -82,6 +82,39 @@
   </view>
 </view>
 
+<!-- 新建客户弹窗（2026-10-17：名称 + 人数一次性录入）
+     为什么不用 wx.showModal(editable)：① 它一次只能收一个字段 → 名称/人数必须拆成两步；
+     ② 它**先关弹窗再回调**，名称为空时只剩一个 toast，输入框连同已打的字一起消失
+     （用户实报的正是这个）。自定义弹窗把校验留在原地：空名称标红、输入不丢、人数由步进器限死。
+     ⚠️ 必须在 .page 之外：.page-view 的常驻 transform 会为 position:fixed 后代建立包含块。 -->
+<view class="cf-mask" wx:if="{{createModal.visible}}" catchtouchmove="onNoop" bindtap="onCreateMaskTap">
+  <view class="cf-card" catchtap="onNoop">
+    <view class="cf-title">新建客户</view>
+
+    <input class="cf-input {{createModal.error ? 'is-error' : ''}}" value="{{createModal.name}}"
+           placeholder="客户名称，如：李姐-转介绍" placeholder-class="cf-ph"
+           maxlength="20" focus="{{createModal.visible}}" disabled="{{createModal.submitting}}"
+           cursor-spacing="32" bindinput="onCreateNameInput" aria-label="客户名称" />
+    <!-- 校验就地报错：不用 toast（toast 不指向具体字段，也没有"改哪"的提示） -->
+    <view class="cf-error" wx:if="{{createModal.error}}">{{createModal.error}}</view>
+
+    <view class="cf-row">
+      <text class="cf-label">家庭成员</text>
+      <view class="cf-stepper">
+        <view class="cf-step pressable {{createModal.count <= 0 || createModal.submitting ? 'is-off' : ''}}" bindtap="onCountMinus" aria-label="减少一位家庭成员">−</view>
+        <text class="cf-count {{createModal.count === 0 ? 'is-empty' : ''}}">{{createModal.count > 0 ? createModal.count + ' 人' : '暂不填'}}</text>
+        <view class="cf-step pressable {{createModal.count >= 10 || createModal.submitting ? 'is-off' : ''}}" bindtap="onCountPlus" aria-label="增加一位家庭成员">+</view>
+      </view>
+    </view>
+    <view class="cf-hint">人数用于先建占位成员（成员1、成员2…），姓名与角色可在客户页补充；不确定就留空。</view>
+
+    <view class="cf-actions">
+      <view class="cf-btn cf-btn--ghost pressable {{createModal.submitting ? 'is-disabled' : ''}}" bindtap="onCreateCancel">取消</view>
+      <view class="cf-btn cf-btn--primary pressable {{createModal.submitting ? 'is-loading' : ''}}" bindtap="onCreateSubmit">{{createModal.submitting ? '创建中...' : '创建'}}</view>
+    </view>
+  </view>
+</view>
+
 <!-- 吸底「新建客户」按钮（2026-10-17 用户决策，替代右下角 FAB）：
      ① 带文字 → 消除「＋」在新客户 / 上传保单 / 新报告之间的语义歧义；
      ② 吸底一行比悬浮圆点更符合"列表为主体、动作为辅"的层级（原 FAB 是页面上唯一的强调色元素）。

@@ -23,7 +23,9 @@ const CACHE_TTL = 60 * 1000
 
 Page({
   data: {
-    families: [], keyword: '', loading: false, removingId: '', loadError: false, truncated: false, ocrBusy: false
+    families: [], keyword: '', loading: false, removingId: '', loadError: false, truncated: false, ocrBusy: false,
+    // 新建客户弹窗（2026-10-17：名称 + 人数一次性录入，替代原两步 wx.showModal）
+    createModal: { visible: false, name: '', count: 0, error: '', submitting: false }
   },
 
   onShow() {
@@ -167,41 +169,49 @@ Page({
   // ============ 建档 ============
   // 2026-09-12 显式建档入口：此前只能"上传保单"隐式建档（家庭名取投保人姓名），
   // 第一次见面、还没拿到保单时无处建档；且家庭名不可自定义（用不了"李姐-转介绍"这类记忆标签）。
-  // 现在支持无保单建档 + 自定义名称（服务端 createFamily 已放开成员校验）。
+  //
+  // 2026-10-17 改造（用户实报 + 决策）：
+  //   ① 名称与人数**一次性录入**（原为两步 wx.showModal：先名称、再人数 —— 中间还要等一个弹窗，
+  //      而两件事在"第一次见面"场景里总是同时知道的）；
+  //   ② 修 UX bug：wx.showModal 的确认**先关闭弹窗再回调**，名称留空时只弹了个 toast，
+  //      输入框连同已打的字一起消失，用户得重开重打（真机实测）。
+  //      自定义弹窗把校验结果留在原地 —— 名称为空只标红并保持输入，人数由步进器限死范围，
+  //      不再需要"人数请填 0-10 的整数"这类靠 toast 纠错的路径。
+  //   ③ 遮罩点击**不关闭**（表单类弹窗的通用做法：防误触丢失已填名称），退出只走「取消」。
   onCreateFamily() {
     if (this._creating) return
-    const self = this
-    wx.showModal({
-      title: '新建客户',
-      editable: true,
-      placeholderText: '如：李姐-转介绍',
-      confirmText: '下一步',
-      success: function(r) {
-        if (!r.confirm) return
-        const name = (r.content || '').trim()
-        if (!name) { wx.showToast({ title: '请输入客户名称', icon: 'none' }); return }
-        // 2026-10-13 流程补齐：建档要收"人数"（第一次见面常只知人数、还拿不到成员明细）。
-        // 服务端 createFamily 已接受 members，故按人数建 N 个**占位成员**（无名无角色），
-        // 成员明细到家庭页再补 —— 这样 family_structure.member_count 立刻反映人数，
-        // 且 readiness 会把它们当"未命名成员"给出 warn 级补全引导（不会 block 报告）。
-        wx.showModal({
-          title: '家庭成员人数',
-          editable: true,
-          placeholderText: '如：3（可留空，之后在家庭页补成员）',
-          confirmText: '创建',
-          success: function(r2) {
-            if (!r2.confirm) return
-            const raw = (r2.content || '').trim()
-            const n = raw === '' ? 0 : Number(raw)
-            if (!Number.isInteger(n) || n < 0 || n > 10) {
-              wx.showToast({ title: '人数请填 0-10 的整数', icon: 'none' })
-              return
-            }
-            self._doCreateFamily(name, n)
-          }
-        })
-      }
-    })
+    this.setData({ createModal: { visible: true, name: '', count: 0, error: '', submitting: false } })
+  },
+  // 阻止事件冒泡到遮罩（catchtap 需要一个已定义的方法名）
+  onNoop() {},
+  // 点遮罩不关：表单未提交前任何"意外关闭"都等于丢输入
+  onCreateMaskTap() {},
+  onCreateNameInput(e) {
+    // 一输入就清错误：留住红色提示会让用户以为继续输入也没用
+    this.setData({ 'createModal.name': (e.detail || {}).value || '', 'createModal.error': '' })
+  },
+  onCountMinus() {
+    const c = this.data.createModal.count
+    if (c > 0) this.setData({ 'createModal.count': c - 1 })
+  },
+  onCountPlus() {
+    const c = this.data.createModal.count
+    // 上限 10 与服务端/readiness 的合理家庭规模一致；超过 10 个占位成员没有业务意义
+    if (c < 10) this.setData({ 'createModal.count': c + 1 })
+  },
+  onCreateCancel() {
+    if (this.data.createModal.submitting) return
+    this.setData({ 'createModal.visible': false })
+  },
+  onCreateSubmit() {
+    if (this._creating || this.data.createModal.submitting) return
+    const name = String(this.data.createModal.name || '').trim()
+    if (!name) {
+      // 就地报错：弹窗不关、输入保留（这是本次改造要修的那个 bug）
+      this.setData({ 'createModal.error': '请填写客户名称' })
+      return Promise.resolve()
+    }
+    return this._doCreateFamily(name, this.data.createModal.count)
   },
 
   _doCreateFamily(name, memberCount) {
@@ -211,14 +221,21 @@ Page({
     // （member-matcher「未匹配上的人一律建档」前置的骨架认领）——空名会让认领失效、变成新建成员。
     for (let i = 0; i < (memberCount || 0); i++) members.push({ name: skeletonName(i) })
     self._creating = true
-    wx.showLoading({ title: '创建中...', mask: true })
-    api('createFamily', { family_name: name, family_structure: [], members: members })
+    // 2026-10-17：创建中用按钮自身的"创建中..."承担 loading（取代 wx.showLoading）——
+    // 弹窗已自带遮罩+禁用态，再叠一个系统 loading 是两层等待提示，且 hide 时机会与弹窗状态打架。
+    self.setData({ 'createModal.submitting': true, 'createModal.error': '' })
+    // 返回 promise 供测试 await（不改变运行行为：调用方本就不依赖返回值）
+    return api('createFamily', { family_name: name, family_structure: [], members: members })
       .then(function(res) {
-        wx.hideLoading()
         self._creating = false
         if (self._disposed) return
-        if (!res || !res.ok) { wx.showToast({ title: (res && res.msg) || '创建失败，请重试', icon: 'none' }); return }
+        if (!res || !res.ok) {
+          // 失败**留在弹窗里**报错（名称不丢），不再关窗 toast
+          self.setData({ 'createModal.submitting': false, 'createModal.error': (res && res.msg) || '创建失败，请重试' })
+          return
+        }
         const id = res.data && res.data._id
+        self.setData({ 'createModal.visible': false, 'createModal.submitting': false })
         // 2026-09-22 全面审计（前端 P3）：新建客户后必须作废 SWR 缓存，否则 60s TTL 内
         // 新客户不出现（缓存键与列表读写同一常量，此处清的就是本页那个键）。
         try { wx.removeStorageSync(HOME_CACHE_KEY) } catch (e) { /* 存储异常：下次 TTL 到期自然刷新 */ }
@@ -228,9 +245,8 @@ Page({
         else self._fetch(true)
       })
       .catch(function() {
-        wx.hideLoading()
         self._creating = false
-        if (!self._disposed) wx.showToast({ title: '创建失败，请重试', icon: 'none' })
+        if (!self._disposed) self.setData({ 'createModal.submitting': false, 'createModal.error': '创建失败，请重试' })
       })
   }
 })
