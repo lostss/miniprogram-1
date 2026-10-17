@@ -143,6 +143,12 @@
 .tag { margin:0 12rpx 12rpx 0; padding:6rpx 18rpx; border-radius:999rpx; background:var(--accent-dim, rgba(201,169,110,0.12)); color:var(--accent-deep, #8B6F3C); font-size:var(--fs-caption, 28rpx); }
 .tag-empty { font-size:var(--fs-caption, 28rpx); color:var(--text-tertiary, #857256); }
 .sec-title { margin:0 var(--sp-5) 14rpx; font-size:var(--fs-caption, 28rpx); color:var(--text-tertiary, #857256); letter-spacing:var(--ls-wide, 1rpx); }
+/* 2026-10-17：成员概览（替代逐单卡片）。分隔线代替卡片描边 —— 3~5 位成员时
+   一堆描边卡片会显得比数据本身更重；这里用行分隔，密度接近表格。 */
+.mem-card { margin:0 var(--sp-5); padding:var(--sp-5) 0; border-bottom:1rpx solid var(--border); }
+.mem-card:last-child { border-bottom:none; }
+/* 章节标题右侧的辅助说明（"逐单明细见文末附录"）：与标题同基线、弱化一档 */
+.sec-hint { margin-left:var(--sp-3); font-size:var(--fs-tiny); color:var(--text-tertiary); letter-spacing:0; }
 .mem-hd { display:flex; align-items:baseline; }
 .mem-name { font-size:var(--fs-lg, 36rpx); font-weight:var(--fw-semi, 600); color:var(--text-primary, #1A1A2E); }
 .mem-role { margin-left:12rpx; font-size:var(--fs-caption, 28rpx); color:var(--text-secondary, #6E5A3E); }

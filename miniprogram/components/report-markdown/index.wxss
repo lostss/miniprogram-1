@@ -107,7 +107,7 @@
 .gt-track { position:relative; flex:1; min-width:0; height:36rpx; }
 .gt-track--axis { height:28rpx; border-bottom:1rpx solid var(--border); }
 /* 刻度：中间刻度以自身中心对齐位置；首尾刻度贴边（transform 翻转），避免被卡片裁掉 */
-.gt-tick { position:absolute; bottom:0; transform:translateX(-50%); font-size:var(--fs-tiny); color:var(--text-tertiary); font-variant-numeric:tabular-nums; }
+.gt-tick { position:absolute; bottom:0; transform:translateX(-50%); font-size:var(--fs-tiny); color:var(--text-tertiary); white-space:nowrap;; font-variant-numeric:tabular-nums; }
 .gt-tick--first { transform:none; }
 .gt-tick--last { transform:translateX(-100%); }
 .gt-bar { position:absolute; top:8rpx; height:20rpx; min-width:6rpx; border-radius:999rpx; background:var(--accent-deep); }
@@ -139,11 +139,16 @@
    加 min-width:132rpx：空间充足时仍按 flex-grow 等分（3 险种不横滑），列多时撑开容器触发横滑。
    ⚠️ 表头与数据行必须同宽，.pano-hd-cell 与 .pano-cell 需同步改。 */
 .pano-hd-cell { flex:1; min-width:148rpx; padding:var(--sp-4) var(--sp-2); font-size:var(--fs-caption); color:var(--accent-deep); font-weight:var(--fw-semi); text-align:center; letter-spacing:var(--ls-wide); }
-.pano-hd-first { flex:0 0 84rpx; }
+/* 2026-10-17：成员列（首列）left 冻结。7 列（5 险种 + 年金 + 年保费）在 375pt 屏必然横滑，
+   而横滑后成员名滚出视野 → 剩下几个数字不知道是谁的（真机截图里就是这个观感）。
+   sticky 在 overflow-x 容器内可用；不支持时退化为普通单元格，无副作用。
+   首列必须有不透明底色，否则滚动时数字会从底下透出来（偶数行另有底色，单独覆盖）。 */
+.pano-hd-first { flex:0 0 84rpx; position:sticky; left:0; z-index:2; background:var(--accent-dim); }
 .pano-row { display:flex; }
 .pano-row:nth-child(even) { background:var(--bg-input); }
 .pano-cell { flex:1; min-width:148rpx; padding:var(--sp-3) var(--sp-2); font-size:var(--fs-caption); text-align:center; display:flex; align-items:center; justify-content:center; }
-.pano-name { flex:0 0 84rpx; font-weight:var(--fw-semi); color:var(--text-primary); }
+.pano-name { flex:0 0 84rpx; font-weight:var(--fw-semi); color:var(--text-primary); position:sticky; left:0; z-index:2; background:var(--bg-card); }
+.pano-row:nth-child(even) .pano-name { background:var(--bg-input); }
 .pano-name-total { color:var(--accent-deep); }
 .pano-status { min-height:56rpx; border-radius:var(--r-sm); margin:var(--sp-1); font-weight:var(--fw-semi); }
 .pano-val { font-size:var(--fs-caption); line-height:var(--lh-tight); font-variant-numeric:tabular-nums; }

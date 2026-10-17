@@ -172,15 +172,24 @@ describe('checkup/organize — 归集与汇总', () => {
 })
 
 describe('checkup/organize — 待完善（不确定就标出来）', () => {
+  // 2026-10-17：pending 由"按问题平铺"改为"按保单聚合"（一张保单一行，details 挂多个问题点）。
+  // 真机截图里同一张保单因"缺字段 + 缴费未年化"占了两行，被读成重复条目。
+  const findKind = (r, k) => r.pending.find((x) => (x.kinds || []).includes(k))
+  const detailOf = (r, k) => {
+    const it = findKind(r, k)
+    return it ? it.details.join('\n') : ''
+  }
+
   test('关键字段缺失 → pending.missing_field，逐字段点名', () => {
     const r = buildCheckupReport({
       family: { members: [M({ member_id: 'm2', name: '张小某' })], policies: [P({ sum_assured: 0, annual_premium: 0, insurance_period: '' })] }
     })
-    const item = r.pending.find(x => x.kind === 'missing_field')
+    const item = findKind(r, 'missing_field')
     expect(item.policyId).toBe('p1')
-    expect(item.detail).toContain('保额')
-    expect(item.detail).toContain('年缴保费')
-    expect(item.detail).toContain('保障期间')
+    const d = detailOf(r, 'missing_field')
+    expect(d).toContain('保额')
+    expect(d).toContain('年缴保费')
+    expect(d).toContain('保障期间')
   })
 
   test('低置信字段（< 0.95）→ pending.low_confidence，且保单卡带标记', () => {
@@ -190,10 +199,10 @@ describe('checkup/organize — 待完善（不确定就标出来）', () => {
         policies: [P({ field_confidence: { product_name: 0.99, sum_assured: 0.8, insured_name: 0.5 } })]
       }
     })
-    const item = r.pending.find(x => x.kind === 'low_confidence')
-    expect(item.detail).toContain('保额')
-    expect(item.detail).toContain('被保人')
-    expect(item.detail).not.toContain('产品名') // 0.99 达标，不进来
+    const d = detailOf(r, 'low_confidence')
+    expect(d).toContain('保额')
+    expect(d).toContain('被保人')
+    expect(d).not.toContain('产品名') // 0.99 达标，不进来
     expect(r.groups[0].policies[0].lowConfidence).toBe(true)
   })
 
@@ -208,9 +217,22 @@ describe('checkup/organize — 待完善（不确定就标出来）', () => {
     expect(card.premiumLabel).toBe('每期保费（月交）')
     expect(card.premiumIsAnnual).toBe(false)
     expect(r.summary.premiumNote).toContain('1 张非年交保单')
-    const item = r.pending.find(x => x.kind === 'premium_basis')
-    expect(item.detail).toContain('月交')
-    expect(item.detail).toContain('未年化')
+    const d = detailOf(r, 'premium_basis')
+    expect(d).toContain('月交')
+    expect(d).toContain('未年化')
+  })
+
+  test('同一张保单的多个问题聚合为一条（截图里"同一保单出现两次"的回归）', () => {
+    const r = buildCheckupReport({
+      family: {
+        members: [M({ member_id: 'm2', name: '张小某' })],
+        // 同时缺保额 + 非年交 → 旧实现占两行
+        policies: [P({ sum_assured: 0, payment_method: '月交', annual_premium: 500 })]
+      }
+    })
+    expect(r.pending.length).toBe(1) // 一张保单 = 一条
+    expect(r.pending[0].details.length).toBeGreaterThanOrEqual(2)
+    expect(r.pending[0].kinds).toEqual(expect.arrayContaining(['missing_field', 'premium_basis']))
   })
 
   test('年交/趸交/未填：按年缴口径展示，不进 pending（不制造噪音）', () => {
@@ -225,16 +247,16 @@ describe('checkup/organize — 待完善（不确定就标出来）', () => {
       expect(c.premiumIsAnnual).toBe(true)
     })
     expect(r.summary.premiumNote).toBe('')
-    expect(r.pending.filter(x => x.kind === 'premium_basis').length).toBe(0)
+    expect(r.pending.filter((x) => (x.kinds || []).includes('premium_basis')).length).toBe(0)
   })
 
   test('被保人未匹配 → 不归入任何成员，进 unassigned 与 pending', () => {
     const r = buildCheckupReport({ family: { members: [M()], policies: [P({ member_id: '', insured_name: '陌生人' })] } })
     expect(r.groups[0].policyCount).toBe(0)
     expect(r.unassigned.length).toBe(1)
-    const item = r.pending.find(x => x.kind === 'unassigned')
-    expect(item.detail).toContain('陌生人')
-    expect(item.detail).toContain('不在成员名单')
+    const d = detailOf(r, 'unassigned')
+    expect(d).toContain('陌生人')
+    expect(d).toContain('不在成员名单')
   })
 })
 

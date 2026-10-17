@@ -27,7 +27,9 @@ const { coverTermYear, payTermYear } = require('../policy-terms')
 // 极短保障期（如一年期）在整条时间轴上的可视宽度下限（%），否则会渲染成一条看不见的线
 const MIN_WIDTH_PCT = 3
 // 横轴刻度数量上限（含首尾）：小程序窄屏，超过 6 个标签会互相压叠
-const MAX_TICKS = 6
+// 2026-10-17：6 → 4。真机截图（iPhone 12/13）里 6 个刻度在窄轨道上压叠成两行数字，
+// 完全不可读（.gt-tick 是 absolute 定位、无 nowrap，挤到就换行）。4 个锚点 + "今天"竖线足够定位。
+const MAX_TICKS = 4
 
 function _round1(n) { return Math.round(n * 10) / 10 }
 

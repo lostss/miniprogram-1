@@ -610,3 +610,50 @@ function chapterCashDisplay(c) {
   const first = pc.groups[0].subgroups[0].policies[0]
   return first.cash_display || ''
 }
+
+// ===== 2026-10-17 真机评审修的两处口径 =====
+describe('保障汇总提示：区分「缺少」与「保额不足」', () => {
+  test('有保单但低于需求 → 写「保额不足（缺口 N 万）」，不得写「缺少」', () => {
+    const c = baseCustomer()
+    // 本人（经济支柱）有重疾 20 万，低于 50 万参考值 → gap > 0 但并非"没有"
+    c.policies = [
+      { id: 'P1', insured_name: '李阳勇', insurance_category: '重疾险', sum_assured: 200000, annual_premium: 3000, effective_date: '2020-01-01', insurance_period: '终身', status: 'active' }
+    ]
+    const cs = buildChapters(c, {}).find(x => x.key === 'coverage_summary')
+    // 措辞走 _shortCat（'重疾险' → '重疾'），与缺口章、矩阵列头同一套简称
+    expect(cs.pre).toContain('重疾保额不足')
+    expect(cs.pre).toContain('缺口 30 万')
+    expect(cs.pre).not.toContain('缺少重疾')
+    // 确实没有的险种仍然写"缺少"
+    expect(cs.pre).toContain('缺少寿险')
+  })
+
+  test('客户版仍走中性措辞（只报"待完善"，不报金额）', () => {
+    const c = baseCustomer()
+    c.policies = [
+      { id: 'P1', insured_name: '李阳勇', insurance_category: '重疾险', sum_assured: 200000, annual_premium: 3000, effective_date: '2020-01-01', insurance_period: '终身', status: 'active' }
+    ]
+    // buildChapters(family, report, gaps, opts)；opts.view === 'shared' 才是客户版
+    const cs = buildChapters(c, {}, null, { view: 'shared' }).find(x => x.key === 'coverage_summary')
+    expect(cs.pre).toContain('保障待完善')
+    expect(cs.pre).not.toContain('缺口')
+    expect(cs.pre).not.toContain('缺少')
+  })
+})
+
+describe('保障期间甘特图：刻度数量上限（真机 6 个刻度压叠成两行）', () => {
+  const { buildGantt } = require('../miniprogram/utils/report/gantt-builder')
+  test('跨 50 年也只出 ≤4 个刻度', () => {
+    const members = [{ name: '李阳勇', role: '本人' }]
+    const policies = [
+      { id: 'a', insured_name: '李阳勇', insurance_category: '寿险', sum_assured: 1000000, effective_date: '2019-09-28', insurance_period: '至2070年12月31日', status: 'active' }
+    ]
+    // 签名是 buildGantt(policies, members) —— 参数顺序反过来会得到空 rows（第一次写这条断言时就错了）
+    const g = buildGantt(policies, members)
+    expect(g.ticks.length).toBeLessThanOrEqual(4)
+    expect(g.ticks.length).toBeGreaterThanOrEqual(2)
+    // 首尾必须贴着轴两端，否则刻度失去定位意义
+    expect(g.ticks[0].pct).toBe(0)
+    expect(g.ticks[g.ticks.length - 1].pct).toBe(100)
+  })
+})

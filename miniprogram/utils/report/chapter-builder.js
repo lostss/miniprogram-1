@@ -215,12 +215,27 @@ function buildChapters(family, report, gaps, opts) {
 
   // ======== ③ 保障汇总 ========
   // 客户版中性措辞："已有XX保障待完善"，不写"缺少XX"式恐吓文案（数据不变，换视角）
+  // 2026-10-17 修：原实现把 `gap > 0` 一律写成"缺少"——**有保单但低于需求也是 gap > 0**
+  // （真机截图里矩阵写着"李阳勇 重疾险 20万"，红条却写"缺少…重疾"，代理人当场被问住）。
+  // 现在区分两种事实：无此类保单 → "缺少X"；有但不足 → "X保额不足（缺口 N 万）"。
   var missingLines = (function() {
     var lines = []
     for (var i = 0; i < members.length; i++) {
       var m = members[i]
-      var missing = gaps.filter(function(g) { return g.member === m.name && g.gap > 0 }).map(function(g) { return _shortCat(g.category) })
-      if (missing.length > 0) lines.push(shared ? (m.name + '的' + missing.join('、') + '保障待完善') : (m.name + '缺少' + missing.join('、')))
+      var mg = gaps.filter(function(g) { return g.member === m.name && g.gap > 0 })
+      if (mg.length === 0) continue
+      if (shared) {
+        // 客户版不报缺口金额（金额在缺口章统一给），只给"待完善"
+        lines.push(m.name + '的' + mg.map(function(g) { return _shortCat(g.category) }).join('、') + '保障待完善')
+        continue
+      }
+      var absent = mg.filter(function(g) { return !(Number(g.existing) > 0) }).map(function(g) { return _shortCat(g.category) })
+      var short = mg.filter(function(g) { return Number(g.existing) > 0 })
+        .map(function(g) { return _shortCat(g.category) + '保额不足（缺口 ' + _numW(g.gap) + ' 万）' })
+      var segs = []
+      if (absent.length) segs.push('缺少' + absent.join('、'))
+      if (short.length) segs.push(short.join('；'))
+      lines.push(m.name + segs.join('；'))
     }
     return lines
   })()
@@ -329,7 +344,10 @@ function buildChapters(family, report, gaps, opts) {
         if (bCats.indexOf(bg.category) === -1) bCats.push(bg.category)
         if (bMems.indexOf(bg.member) === -1) bMems.push(bg.member)
       }
-      gapLines.push('\n\n' + bMems.join('、') + ' 的' + bCats.join('、') + '缺口因年收入等信息缺失暂无法计算；补齐家庭年收入等信息后即可计算。')
+      // 2026-10-17 修：原文案写"因年收入等信息缺失暂无法计算" —— 但第 2 章明明显示"年收入 30 万"，
+      // 用户会认为系统读不到已有数据。真实原因见 gap-core.js:128：
+      // **家庭年收入只兜底给经济支柱**，非支柱没有个人收入 → 寿险/意外走 blocked（刻意口径，不是缺数据）。
+      gapLines.push('\n\n' + bMems.join('、') + ' 的' + bCats.join('、') + '缺口需按个人收入测算：家庭年收入仅用于测算经济支柱，未拆分到其他成员；补充成员收入后即可计算。')
     }
     // 活报告模型（2026-09）：客户版 blocked 克制说明（正向、不示弱、不泄公式）
     if (blockedGaps.length > 0 && shared) {

@@ -215,23 +215,33 @@ function buildCheckupReport(input) {
   }
 
   // 待完善：缺字段 / 低置信 / 未匹配（逐条可定位到具体保单）
-  const pending = []
+  // 2026-10-17：改为**按保单聚合**。原实现按"问题"平铺 —— 同一张保单缺字段 + 缴费未年化
+  // 会占两行（真机截图里"附加住院补贴A款""卓越优选"各出现两次，用户读成重复条目，
+  // 且第 6 条文案被挤断）。现在一张保单一行，下面挂它自己的全部问题点。
+  const pendingMap = {}
+  const pushPending = (policyId, productName, kind, detail) => {
+    const key = policyId || productName
+    if (!pendingMap[key]) pendingMap[key] = { policyId: policyId || '', productName: productName || '', kinds: [], details: [] }
+    pendingMap[key].kinds.push(kind)
+    pendingMap[key].details.push(detail)
+  }
   policies.forEach((p) => {
     const card = toPolicyCard(p)
     const missing = missingRequiredFields(p)
     if (missing.length) {
-      pending.push({ kind: 'missing_field', policyId: card.id, productName: card.productName, detail: '缺：' + missing.map((k) => FIELD_ZH[k] || k).join('、') })
+      pushPending(card.id, card.productName, 'missing_field', '缺：' + missing.map((k) => FIELD_ZH[k] || k).join('、'))
     }
     if (card.lowConfidenceFields.length) {
-      pending.push({ kind: 'low_confidence', policyId: card.id, productName: card.productName, detail: '待核对：' + card.lowConfidenceFields.map((k) => FIELD_ZH[k] || k).join('、') })
+      pushPending(card.id, card.productName, 'low_confidence', '待核对：' + card.lowConfidenceFields.map((k) => FIELD_ZH[k] || k).join('、'))
     }
     if (!card.premiumIsAnnual) {
-      pending.push({ kind: 'premium_basis', policyId: card.id, productName: card.productName, detail: '缴费方式为「' + card.paymentMethod + '」，该金额是每期保费、未年化，需核对' })
+      pushPending(card.id, card.productName, 'premium_basis', '缴费方式为「' + card.paymentMethod + '」，该金额是每期保费、未年化，需核对')
     }
   })
   unassigned.forEach((c) => {
-    pending.push({ kind: 'unassigned', policyId: c.id, productName: c.productName, detail: '被保人「' + c.insuredName + '」不在成员名单，未归入任何成员' })
+    pushPending(c.id, c.productName, 'unassigned', '被保人「' + c.insuredName + '」不在成员名单，未归入任何成员')
   })
+  const pending = Object.keys(pendingMap).map((k) => pendingMap[k])
 
   return {
     header: {
