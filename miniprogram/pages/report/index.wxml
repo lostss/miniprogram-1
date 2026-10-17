@@ -36,7 +36,8 @@
         <text class="title-name">{{family.name}}</text>
         <!-- 副标题行：标题与报告更新时间两端对齐（2026-09-12：familyTag 已移除，分析时间不占主 meta 位） -->
         <view class="title-subrow">
-          <text class="title-sub">家庭保障检视报告</text>
+          <!-- 2026-10-17：无保单时报告还不存在，标题点明"待生成"，避免"有报告但空的"错觉 -->
+        <text class="title-sub">{{hasPolicy ? '家庭保障检视报告' : '家庭保障检视报告 · 待生成'}}</text>
           <!-- 2026-09-18 报告页审计：`dataAt` 早在 report-share.js L38 构造（注释自述"页头时效标识"）
                却从未被渲染 → 页头只有一个无标签的时间戳。此处接线给出语义（updated_at = 数据更新；
                AI 分析新鲜度由 deep 区的 analysisAt 承担，两个时间不再语义打架）。 -->
@@ -55,7 +56,10 @@
              动机：免责是"以条款为准"的可追溯锚点，只放末页等于"没翻到就没有"；前置一行不打断叙事。
              文案与页尾 DISCLAIMER_FALLBACK 同源（pages/report/index.js:22 静态常量，不依赖 AI 输出，
              故 AI 未生成/生成失败时依然成立）。owner 与客户版都显示 —— 合规声明不应分版本。 -->
-        <view class="title-ai-note">AI 辅助生成 · 仅供参考 · 以保险公司条款为准</view>
+        <!-- 2026-10-17：空报告没有 AI 内容 → 前置声明无对象可指（页尾完整声明仍常驻，合规不缺口）。
+             ⚠️ 条件只允许 hasPolicy：**不得按 isShared 分支** —— 合规声明不分 owner/客户版。
+             守卫：tests/report-disclaimer.test.js。 -->
+        <view class="title-ai-note" wx:if="{{hasPolicy}}">AI 辅助生成 · 仅供参考 · 以保险公司条款为准</view>
       </view>
     </view>
     <!-- 标题区域与正文分隔线 -->
@@ -146,10 +150,21 @@
     <!-- 全链路审计 UC4：无保单空状态（引导上传，替代零值数字+红色告警） -->
     <view class="empty-report" wx:if="{{!hasPolicy}}">
       <view class="empty-report-icon">📄</view>
-      <view class="empty-report-title">暂无保单</view>
-      <!-- 2026-09-18 报告页审计 布局P2-1：客户版（isShared）下方无金色上传按钮（FAB 条件含 !isShared，
-           wxml:303），原文案指向一个不存在的控件 → 按视角分文案 -->
-      <view class="empty-report-desc">{{isShared ? '请联系您的保险顾问上传保单，生成后即可查看保障检视报告' : '点击下方金色按钮上传保单，小秘自动识别并生成保障检视报告'}}</view>
+      <view class="empty-report-title">{{isShared ? '暂无保单' : '还没有保单，先传第一张'}}</view>
+      <!-- 2026-09-18 报告页审计 布局P2-1：客户版（isShared）下方无上传按钮，原文案指向一个不存在的控件 → 按视角分文案
+           2026-10-17：owner 侧去掉"点击下方金色按钮"这种**空间指代**（页面一滚就失效），
+           改为描述动作本身，并把真正的按钮放进卡片里（见下方 .empty-report-cta）。 -->
+      <view class="empty-report-desc">{{isShared ? '请联系您的保险顾问上传保单，生成后即可查看保障检视报告' : '拍照或从相册选保单，小秘自动识别，整理成保障检视报告'}}</view>
+      <!-- 主 CTA（2026-10-17）：上传是"新建客户后第一次进来"的唯一任务，不能再只靠底栏那个 88rpx 图标。
+           复用同一个 onUploadFab（= _startFlow），不新增上传链路。 -->
+      <view class="empty-report-cta" wx:if="{{!isShared}}">
+        <button class="empty-report-upload pressable" bindtap="onUploadFab" aria-label="上传保单">上传保单</button>
+      </view>
+      <!-- 建档填的人数必须有可见结果：无保单时正文全空，占位成员（成员1/成员2…）本来无处显示 -->
+      <view class="empty-report-members" wx:if="{{!isShared && emptyMemberEcho.text}}">
+        <text class="empty-report-members-text">{{emptyMemberEcho.text}}</text>
+        <text class="empty-report-members-act pressable" bindtap="onEmptyEditMembers" aria-label="补充成员姓名">去补充</text>
+      </view>
     </view>
     <!-- 保障摘要 + 保障覆盖检查融合卡：数据在上，覆盖检查在下（同卡分层） -->
     <view class="summary-card" wx:if="{{hasPolicy}}">
@@ -361,11 +376,14 @@
     <!-- 2026-09-19（流程审计 UX4）：分享链接有效期可见（owner）。此前 owner 端完全看不到到期时间，
          客户过期后只看到"链接已失效"，代理人无法提前重发。复用免责声明的小字样式（同属页末小字，
          且该类已在校验过的宽屏 720px 名单内），避免为此新增 WXSS。 -->
-    <view class="report-disclaimer" wx:if="{{!isShared && shareExpireHint}}">{{shareExpireHint}}</view>
+    <!-- 2026-10-17：加 hasPolicy —— 报告还没生成时，"分享链接剩余 7 天"会被读成"报告已就绪、7 天后过期" -->
+    <view class="report-disclaimer" wx:if="{{!isShared && hasPolicy && shareExpireHint}}">{{shareExpireHint}}</view>
     <!-- 2026-09-18 报告页审计：仅客户版补底部安全区（owner 模式下方 FAB 条已承担，见 wxss 说明） -->
     <view class="report-footer {{isShared ? 'report-footer--shared' : ''}}">
-      <block wx:if="{{!isShared}}">
-        <button class="footer-share pressable" open-type="share" aria-label="转发客户">转发报告给客户</button>
+      <!-- 2026-10-17：加 hasPolicy —— 空报告转发给客户是**负资产**（客户点开只见"暂无保单"），
+           导出 PDF 同理会得到一张空页。有第一张保单后再出现，这两个动作才有对象。 -->
+      <block wx:if="{{!isShared && hasPolicy}}">
+        <button class="footer-share pressable" open-type="share" aria-label="转发客户">转发给客户</button>
         <button class="footer-export pressable" bindtap="onExportPdf" aria-label="导出 PDF">导出 PDF</button>
       </block>
       <block wx:if="{{isShared}}">
@@ -456,7 +474,9 @@
   <view class="fab-wrap" wx:if="{{!loading && !isShared}}">
     <view class="fab-bar">
       <view class="fab-inner" catchtap="onFabTap">
-        <view class="fab-upload pressable" catchtap="onUploadFab" aria-label="上传保单"><image class="fab-upload-icon" src="/images/upload.svg" mode="aspectFit" /></view>
+        <!-- 2026-10-17：空态时上传主入口已提到空态卡内（带文字的大按钮），这里不再重复；
+             任何时刻**只保留一个上传入口**，避免"两个都能点、但一个更像装饰"的分裂。 -->
+        <view class="fab-upload pressable" wx:if="{{hasPolicy}}" catchtap="onUploadFab" aria-label="上传保单"><image class="fab-upload-icon" src="/images/upload.svg" mode="aspectFit" /></view>
         <view class="fab-input">
           <input class="fab-real-input" value="{{fabText}}" placeholder="问小秘..." bindinput="onFabInput" bindconfirm="onFabSend" confirm-type="send" bindfocus="onFabFocus" aria-label="输入消息" />
         </view>

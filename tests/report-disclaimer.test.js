@@ -6,7 +6,8 @@
  * 本守卫钉住三条不变式：
  *   ① 页尾声明的唯一来源是**静态常量**，不取 AI 输出的字段；
  *   ② 页头轻提示（合规前置）与页尾完整声明**同时存在**；
- *   ③ 页头轻提示**不挂 wx:if** —— 合规声明不分 owner/客户版，必须常驻。
+ *   ③ 页头轻提示**不得按视角分支**（owner / 客户版）—— 2026-10-17 起允许 `hasPolicy`：
+ *      空报告没有 AI 内容，前置声明无对象可指；但页尾完整声明仍常驻，合规不缺口。
  */
 const fs = require('fs')
 const path = require('path')
@@ -28,9 +29,21 @@ describe('报告免责声明契约', () => {
     expect(wxml).toContain('report-disclaimer')
   })
 
-  test('页头轻提示不挂 wx:if（合规声明不分 owner/客户版，必须常驻）', () => {
-    const line = wxml.split(/\r?\n/).find(l => l.includes('title-ai-note'))
+  test('页头轻提示不得按视角分支（空报告可隐藏，但不分 owner / 客户版）', () => {
+    const lines = wxml.split(/\r?\n/)
+    const i = lines.findIndex(l => l.includes('title-ai-note') && l.includes('<view'))
+    expect(i).toBeGreaterThan(-1)
+    const line = lines[i]
+    expect(line).not.toMatch(/isShared/) // 视角分支：明确禁止
+    if (line.includes('wx:if')) {
+      // 唯一允许的隐藏理由是"没有报告内容"，且必须只依赖 hasPolicy
+      expect(line).toMatch(/wx:if="\{\{hasPolicy\}\}"/)
+    }
+  })
+
+  test('页尾完整声明常驻：不挂 hasPolicy / isShared（空报告时唯一还站着的合规锚点）', () => {
+    const line = wxml.split(/\r?\n/).find(l => l.includes('report-disclaimer') && l.includes('{{disclaimer}}'))
     expect(line).toBeTruthy()
-    expect(line).not.toContain('wx:if')
+    expect(line).not.toMatch(/hasPolicy|isShared/)
   })
 })

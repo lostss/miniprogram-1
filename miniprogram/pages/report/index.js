@@ -17,6 +17,8 @@ const { track } = require('../../utils/track')
 const { evaluateReadiness } = require('../../utils/readiness')
 // 客户档案视图（2026-09-14）：纯函数，按"信息稳定性"分四档；依赖 fact-vocab（同为契约文件）
 const { buildFactsView } = require('../../utils/facts-view')
+// 空态成员回显（2026-10-17）：新建客户填的"人数"要有可见结果，否则用户怀疑白填
+const { buildMemberEcho } = require('../../utils/member-echo')
 
 // 免责声明：报告底部静态合规小字（reportAI 未产出时兜底，见 _applyReportData）
 const DISCLAIMER_FALLBACK = '本报告基于OCR识别结果自动生成，数据仅供参考，不构成投保建议。请以保单原件为准。'
@@ -55,6 +57,8 @@ Page({
     staleTag: '', clarifications: [],
     // 定性模式（tier=degraded）：报告不含量化测算，页头常驻披露（2026-09-18 报告页审计）
     qualitativeMode: false,
+    // 空态成员回显（2026-10-17）：{ total, skeleton, text }，text 为空则不渲染
+    emptyMemberEcho: { total: 0, skeleton: 0, text: '' },
     // 2026-09-11：孤儿现价表（自动匹配未中）→ 「待关联」入口数据源（owner 展示）
     unmatchedCashValues: [],
     disclaimer: '',
@@ -174,6 +178,10 @@ Page({
       this._openMemberEdit(memberId)
     }
   },
+  // 空态「去补充」成员：复用章节 [编辑] 的同一入口（家庭结构 → 成员管理 Sheet），
+  // 不另写一套成员列表构建，避免两处漂移（占位成员在 Sheet 里删/改立刻生效）。
+  onEmptyEditMembers() { this.onChapterEdit({ detail: { mode: 'family' } }) },
+
   // 风险提示 [核对]：打开对应保单编辑 Sheet（低置信字段带底色，设计稿 v4）
   onRiskCheck(e) {
     const detail = e.detail || {}
@@ -541,6 +549,9 @@ Page({
       disclaimer: DISCLAIMER_FALLBACK,
       // 全链路审计 UC4：无保单时走空状态（buildReportView 对空 policies 产生零值+红色告警，需引导而非报错）
       hasPolicy: !!(c.policies && c.policies.length > 0),
+      // 2026-10-17 空态闭环：把"建档填的人数 → 占位成员"回显出来（无保单时报告正文全空，
+      // 用户看不到它生效）。客户版不渲染（与 clarifications 同口径：owner 侧的状态信息）。
+      emptyMemberEcho: this.data.isShared ? { total: 0, skeleton: 0, text: '' } : buildMemberEcho(c.members || []),
       // 2026-09-12 MVP 验证：成交标记回显（owner 手动登记；客户版不渲染开关）
       dealStatus: this.data.isShared ? '' : (c.deal_status || ''),
       // 对话空态预埋问题（"您可能想问"）：基于本次缺口引擎数据生成

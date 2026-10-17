@@ -75,6 +75,22 @@
 .empty-report-icon { font-size:var(--fs-3xl); margin-bottom:var(--sp-4); opacity:0.6; }
 .empty-report-title { font-size:var(--fs-xl); font-weight:var(--fw-semi); color:var(--text-primary); font-family:var(--font-serif); margin-bottom:var(--sp-3); letter-spacing:var(--ls-wide); }
 .empty-report-desc { font-size:var(--fs-base); color:var(--text-secondary); line-height:var(--lh-body); max-width:480rpx; }
+/* 2026-10-17：主 CTA 放进卡内。此前上传只有底栏那个 88rpx 图标（与聊天输入同格），
+   而文案还写着"点击下方金色按钮"—— 主任务入口是三个可点元素里最小的那个，且靠空间指代。
+   这里的按钮与底栏图标复用同一个 onUploadFab，不新增链路。 */
+.empty-report-cta { margin-top:var(--sp-8); width:100%; display:flex; justify-content:center; }
+.empty-report-upload { width:100%; max-width:480rpx; height:88rpx; display:flex; align-items:center; justify-content:center;
+  background:linear-gradient(135deg, var(--accent-deep) 0%, #6A5425 100%); color:var(--color-on-accent, #FFFFFF);
+  font-size:var(--fs-base); font-weight:var(--fw-semi); letter-spacing:var(--ls-wide);
+  border:none; border-radius:var(--r-full); box-shadow:0 6rpx 20rpx var(--accent-glow); line-height:1 }
+/* 原生 button 的 ::after 默认画边框，必须清掉 */
+.empty-report-upload::after { border:none }
+.empty-report-upload:active { opacity:0.9; transform:scale(0.985) }
+
+/* 建档人数的可见结果（占位成员在没有保单时本来无处显示） */
+.empty-report-members { margin-top:var(--sp-5); display:flex; align-items:center; gap:var(--sp-3); }
+.empty-report-members-text { font-size:var(--fs-caption); color:var(--text-tertiary); }
+.empty-report-members-act { font-size:var(--fs-caption); color:var(--accent-deep); padding:var(--sp-1) var(--sp-2); }
 
 .title-bar { display:flex; align-items:flex-start; padding:0 var(--sp-5); }
 .report-title { flex:1; min-width:0; padding:var(--sp-7) 0 var(--sp-5); display:flex; flex-direction:column; gap:var(--sp-2); }
