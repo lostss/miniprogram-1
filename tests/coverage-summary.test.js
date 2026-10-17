@@ -66,6 +66,8 @@ describe('coverage-summary — 边界', () => {
       pol('重疾险', 30)
     ])
     expect(r.shortTermW).toBe(400)
+    // 2026-10-17：长期给付 = 保障型 − 一年期（不再对外给"合计"）
+    expect(r.longTermW).toBe(30)
     expect(r.protectionW).toBe(430)
   })
 

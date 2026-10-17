@@ -102,6 +102,9 @@
 1. **`.page-view` 有常驻 transform** → `position:fixed` 的后代（OCR 遮罩、吸底按钮、弹窗）**必须放 `.page` 之外**，否则定位错乱。
 2. **结构/文案断言前必须剥注释**：本仓习惯在注释里写"X 已移除（原 Y）"，直接扫原文会被注释命中（踩过 3 次）。
 3. **PowerShell + `node -e`** 转义失效 → 脚本落文件。
-4. **`_shared` 是副本**，改副本不跑 sync = 白改（已发生 3 次历史事故）。
+4. **`_shared` 是同步源，其余全是副本**（2026-10-17 亲测）：`coverage-summary` 这类契约文件，
+   必须改 `cloudfunctions/_shared/` 下的源，然后 `node scripts/sync-shared.js`。
+   **改 `miniprogram/utils/` 里的副本会被 sync 反向覆盖**（我改完 → 跑 sync → 改动消失、测试变红）。
+   判据：`sync-shared --check` 报 `[update] miniprogram/utils/xxx.js` 就说明那份是产物。
 5. **`wx:elif` 链必须紧邻**：中间夹一个独立 `wx:if` 会把链断掉（踩过）。
 6. **`_fmt` 类相对时间**：`≥1 天直接返回 M/D` 会丢掉"多久没动"，改前想清楚语义。

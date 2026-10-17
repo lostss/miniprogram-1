@@ -70,6 +70,18 @@ describe('报告页布局：AI 折叠区不得吞掉正文与页尾', () => {
     }
   })
 
+  test('保额口径：不给「报销额度 + 给付金额」的合计', () => {
+    const wxml = src.replace(/<!--[\s\S]*?-->/g, '')
+    // 整理汇总卡：两颗数字并列，合计不再出现
+    expect(wxml).not.toContain('保障型保额合计')
+    expect(wxml).toContain('checkup.summary.longTermSumAssuredText')
+    expect(wxml).toContain('checkup.summary.shortTermSumAssuredText')
+    expect(wxml).toContain('长期给付')
+    // AI 摘要卡主数字同口径（两卡相邻，口径不一致会比单卡错更明显）
+    expect(wxml).toContain('{{summaryCards.longTerm}}')
+    expect(wxml).not.toContain('{{summaryCards.protection}}')
+  })
+
   test('wxml 标签计数平衡（提前/延后闭合会立即失衡）', () => {
     // ⚠️ 必须先剥掉 HTML 注释：本文件的注释里出现了 `<block>` 字面文本（讲"用 <block> 拆开"），
     // 不剥注释会数出 14/13 的假失衡 —— 第一次写这条断言时就踩到了。

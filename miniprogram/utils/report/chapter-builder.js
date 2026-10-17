@@ -555,13 +555,25 @@ function buildChapters(family, report, gaps, opts) {
     unit: '有效 ' + policyCount + ' 份 / 共 ' + displayPolicies.length + ' 份'
   })
 
+  // 章序（2026-10-17）：缺口紧跟保障汇总，保障期间（时间维）后置。
+  // 依据 v2.0 诊断优先级「有没有（覆盖）→ 够不够（保额/缺口）→ 贵不贵（结构）」：
+  // 缺口是诊断核心，原先排在"保障期间"这层时间信息之后，读者要越过一张甘特图才看到最该看的东西。
+  // 用显式序列而非就地搬代码块：① diff 小、可回退 ② 未列出的章节按原顺序兜底追加（未来新增章不丢）。
+  // ⚠️ 必须列全：漏掉的章节会走下方"兜底追加"被推到附录之后（next_steps 第一次就漏了）
+  var CHAPTER_SEQ = ['family_structure', 'family_finance', 'coverage_summary', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'risk_alerts', 'next_steps', 'appendix_policies']
+  var ordered = []
+  CHAPTER_SEQ.forEach(function(k) {
+    ch.forEach(function(c) { if (c.key === k) ordered.push(c) })
+  })
+  ch.forEach(function(c) { if (CHAPTER_SEQ.indexOf(c.key) === -1) ordered.push(c) })
+
   // 统一章节编号：正式章按渲染顺序重排 1..N（附录不编号）——客户版跳过①②后序号依然连续，
   // 缺口/收口/告警章按是否存在动态插入后编号自动顺延
   var seq = 0
-  for (var ci = 0; ci < ch.length; ci++) {
-    if (ch[ci].key !== 'appendix_policies') { seq++; ch[ci].num = String(seq) }
+  for (var ci = 0; ci < ordered.length; ci++) {
+    if (ordered[ci].key !== 'appendix_policies') { seq++; ordered[ci].num = String(seq) }
   }
-  return ch
+  return ordered
 }
 
 module.exports = { buildChapters, buildConfidenceAlerts, _currentCashValue }

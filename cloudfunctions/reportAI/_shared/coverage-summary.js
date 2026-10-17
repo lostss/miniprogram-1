@@ -86,6 +86,13 @@ function summarizeCoverage(policies) {
     unknownW: toWan(unknownYuan),
     totalW: toWan(totalYuan),
     shortTermW: toWan(shortTermYuan),
+    // 2026-10-17（报告结构 v2.0 评审遗留项）：**长期给付** = 保障型里去掉一年期那部分。
+    // 动机：原对外只有一个"保障型保额合计"，而 2310 万里 2010 万是一年期报销/意外额度 ——
+    // 报销上限与给付金额相加本身没有意义（v2.0 明确禁止），客户会把额度当成"能拿到手的钱"。
+    // 现在两个数并列：长期给付（寿险/重疾，真正赔钱）+ 短期额度（每年续保），不再给合计。
+    // ⚠️ 本文件是**契约源**：改这里后必须 `node scripts/sync-shared.js`（会同步到
+    //    miniprogram/utils/ 与各云函数的 _shared/ 副本；直接改副本会被覆盖）。
+    longTermW: toWan(Math.max(0, protectionYuan - shortTermYuan)),
     policyCount: active.length
   }
 }
