@@ -1,22 +1,19 @@
 <!-- catchtap/catchlongpress：阻止原生 tap 冒泡到页面 bindtap（原 bindtap 导致页面 onClientTap 被调用两次：
      ① triggerEvent('tap',{_id}) 跳转 ✅ ② 原生冒泡 detail 为空 → dataset 无 id → 误弹"客户数据异常"toast。
      triggerEvent 主动派发不受 catch 影响） -->
+<!-- 2026-10-17 用户决策：卡面只留「家庭名称 + 多久没更新」（+ 已成交标记）。
+     移除项：右侧资料完整度圆环（completeness_score）—— 它是全卡唯一强调色元素却无标签，
+     又被误读成"保障评分"（与报告里的分档口径冲突）；且 70% 对顾问没有行动语义。
+     也不加成员数/经济支柱行 —— 列表只按家庭名称区分。 -->
 <view class="card stage-{{client.engagement_stage || 'new'}}" catchtap="onTap" catchlongpress="onLongPress" data-id="{{client._id}}">
   <view class="card-body">
     <view class="card-row">
-      <text class="card-name">{{client.name}}</text>
+      <text class="card-name">{{client.name || client.family_name}}</text>
       <!-- 2026-09-12 MVP 验证：成交标记（报告页手动登记）透出到列表，让"哪些客户已成单"一眼可读 -->
       <text class="card-deal" wx:if="{{client.deal_status === 'won'}}">已成交</text>
-      <!-- 2026-09-12 移除 family_label 渲染：该字段前后端均不存在（dataQuery 投影字段清单里没有它，
-           dataWrite 白名单里也没有），属恒空死字段。代理人的"记忆标签"需求由可自定义的家庭名承载
-           （客户列表「+」新建时可填"李姐-转介绍"） -->
     </view>
-    <text class="card-time">{{_fmtTime}}</text>
-  </view>
-  <view class="card-right">
-    <view wx:if="{{_completeness > 0}}" class="ring-wrap">
-      <view class="ring" style="background:conic-gradient(var(--accent) {{_completeness}}%, var(--border) 0)"></view>
-      <view class="ring-hole"><text class="ring-text">{{_completeness}}%</text></view>
-    </view>
+    <!-- 2026-10-17：时间带语义（"多久没更新"）——原实现 ≥1 天就退化成 M/D，
+         恰好丢掉顾问最需要的判断依据。≥30 天用强调色（不是报错，是"该跟进了"）。 -->
+    <text class="card-time {{_staleTime ? 'is-stale' : ''}}">{{_fmtTime}}</text>
   </view>
 </view>

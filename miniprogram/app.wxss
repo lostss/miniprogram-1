@@ -210,8 +210,9 @@ page ::selection { background: rgba(201,169,110,0.25); color: var(--text-primary
     -webkit-tap-highlight-color: rgba(201,169,110,0.25);
   }
 
-  /* 对比度修复：暗色 FAB 用固定深金渐变（若随 --accent-deep 变亮金，白图标跌回 2.2:1） */
-  .fab { background: linear-gradient(135deg, #8B6F3C 0%, #6A5425 100%); }
+  /* 2026-10-17：原此处覆盖 .fab 的暗色对比度（.fab 已随「吸底按钮」改造移除）。
+     对应覆盖已迁到 pages/index/index.wxss 末尾 —— 放在 app.wxss 里其实是**无效**的：
+     同优先级下页面 wxss 后于 app.wxss 生效，会被页面里的 background 简写盖掉。 */
   page ::selection { background: rgba(201,169,110,0.35); color: var(--text-primary); }
 }
 

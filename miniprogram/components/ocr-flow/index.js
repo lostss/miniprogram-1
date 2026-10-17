@@ -234,9 +234,9 @@ Component({
           }
           // 2026-09-22 全面审计 P1-1（前端）：本分支是本函数**唯一**漏发 busychange 的收尾路径。
           // saveCashValuesWithRetry 内部已 setData(hide()) 把遮罩关掉（成功/失败都关），但组件没
-          // 通知父页——pages/index 的 ocrBusy 停在 true → 首页「上传保单」框（index.wxml:10）
-          // 整个 wx:if 隐藏、FAB 也拿不到 fab--show（index.wxss:34 scale(0) 无命中区）→
-          // 两个上传入口同时消失且不可点，只能杀进程重进。
+          // 通知父页——pages/index 的 ocrBusy 停在 true → 首页建档引导整个 wx:if 隐藏、
+          // 底部「新建客户」吸底条也拿不到 create-bar--show（2026-10-17 起替代原 FAB；原 FAB 为
+          // transform:scale(0) 无命中区）→ 创建/上传入口同时消失且不可点，只能杀进程重进。
           // 注：不能改到外层 finally 里统一发——_renderProc 路径要在遮罩**可见**时发 busy=true，
           // finally 再发一次会把它覆盖成 false。故在本分支显式收尾。
           this._emitBusy()

@@ -19,9 +19,7 @@
 /* 2026-09-12：原 .card-label（family_label 死字段，前后端均不存在）已移除渲染，样式改为成交标记 */
 .card-deal { font-size: var(--fs-caption); color: var(--ok-deep); background: var(--ok-dim); padding: 2rpx var(--sp-3); border-radius: var(--r-full); margin-left: var(--sp-3); flex-shrink: 0; line-height:1.6 }
 .card-time { font-size: var(--fs-caption); color: var(--text-secondary); margin-top: var(--sp-1-5); }
-.card-right { display: flex; flex-direction: column; align-items: center; margin-left: var(--sp-4-5); flex-shrink: 0; padding-right: var(--sp-5); }
-/* CSS 圆环（conic-gradient）：轨道 + 进度 + 中心孔 + 百分比 */
-.ring-wrap { position: relative; width: 80rpx; height: 80rpx; }
-.ring { position: absolute; top: 0; left: 0; width: 80rpx; height: 80rpx; border-radius: 50%; }
-.ring-hole { position: absolute; top: 8rpx; left: 8rpx; width: 64rpx; height: 64rpx; border-radius: 50%; background: var(--bg-card); display: flex; align-items: center; justify-content: center; }
-.ring-text { font-size: var(--fs-caption); color: var(--text-primary); font-weight: var(--fw-semi); font-variant-numeric: tabular-nums; }
+/* 超过 30 天未更新：用强调色提示"该跟进了"（金色=提示，不用红色报警语义） */
+.card-time.is-stale { color: var(--accent-deep); }
+/* 2026-10-17 移除：.card-right / .ring-wrap / .ring / .ring-hole / .ring-text
+   —— 资料完整度圆环不再呈现（用户决策），保留空样式只会是死代码。 */

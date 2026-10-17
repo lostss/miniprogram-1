@@ -1,7 +1,8 @@
 /* ========== 页面容器 ========== */
-/* 2026-09-12 修复：底部留白须躲开 FAB。.fab 为 fixed、bottom=calc(--sp-8 + safe)=48rpx+safe、
-   直径 96rpx → 占据底部 48→144rpx。原留白 120rpx 比 FAB 顶端矮 24rpx，最后一张卡底部被压住、
-   长按删除触点也落在遮挡区。176rpx = 144 + 32rpx 间隙。
+/* 底部留白须躲开吸底按钮条。2026-10-17 起 .create-bar 为 fixed 一行：
+   padding --sp-4 + 按钮 96rpx + --sp-4（合计约 128rpx）+ safe-area。
+   原留白 176rpx（为 96rpx 圆形 FAB + 48rpx 底距预留）刚好够，且留了余量 → 不改。
+   若将来调高按钮或加第二行动作，此处必须同步，否则最后一张卡的长按删除触点会落在遮挡区。
    2026-10-13 合并页：并入库列表页的 min-height:100vh + box-sizing（列表页需要撑满视口底色）。 */
 .page { min-height:100vh; box-sizing:border-box; background:var(--bg-root); padding:0 var(--sp-6); padding-bottom:calc(176rpx + env(safe-area-inset-bottom)) }
 /* 2026-09-22 修复（UX 审计 P2）：原 `overflow:hidden` 在空态把超出视口的内容直接**裁掉且无法滚动**
@@ -15,13 +16,10 @@
 .brand-slogan { font-family:var(--font-serif); font-size:var(--fs-caption); color:var(--text-tertiary); margin-top:var(--sp-3); letter-spacing:var(--ls-wide) }
 
 /* ========== 搜索栏（2026-10-13 合并自客户列表页）========== */
-/* 2026-09-12：改为 flex 以容纳右侧「新建客户」按钮（+） */
+/* 2026-10-17：右侧「＋」已移除（新建客户统一到底部吸底按钮）→ 搜索框独占整行。
+   flex 保留：.search-wrap 用 flex:1 撑满，清除按钮 absolute 定位于其内部。 */
 .search-bar { position:sticky; top:0; z-index:10; background:var(--bg-root); padding:var(--sp-4) 0; display:flex; align-items:center; gap:var(--sp-3) }
 .search-wrap { position:relative; flex:1; min-width:0 }
-/* 新建客户入口：72rpx 视觉 + 伪元素热区扩至 ≥88rpx */
-.create-btn { position:relative; flex-shrink:0; width:72rpx; height:72rpx; display:flex; align-items:center; justify-content:center; background:var(--accent-dim); color:var(--accent-deep); border-radius:50%; font-size:var(--fs-xl); line-height:1 }
-.create-btn::after { content:''; position:absolute; left:-8rpx; right:-8rpx; top:50%; height:88rpx; transform:translateY(-50%) }
-.create-btn:active { opacity:0.6 }
 .search-input { width:100%; height:72rpx; background:var(--bg-surface); border-radius:var(--r-xl); padding:0 64rpx 0 var(--sp-5); font-size:var(--fs-base); box-sizing:border-box; border:1rpx solid transparent; transition:border-color var(--dur-fast) var(--ease-out) }
 .search-input:focus { border-color:var(--accent) }
 /* UI 审计 视觉 S2：清除按钮 padding 扩点击区；去固定宽高（content-box 下 48+24*2=96rpx 盒，✕ 居中于 96rpx 中心=偏下 12rpx） */
@@ -48,12 +46,27 @@
 .load-error-text { font-size:var(--fs-caption); color:var(--text-tertiary) }
 .load-error-retry { font-size:var(--fs-caption); color:var(--accent-deep); padding:var(--sp-2) var(--sp-5); border:1rpx solid var(--border-accent); border-radius:var(--r-full) }
 
-/* ========== FAB ========== */
-.fab { position:fixed; right:var(--sp-6); bottom:calc(var(--sp-8) + env(safe-area-inset-bottom)); width:96rpx; height:96rpx; border-radius:50%; background:linear-gradient(135deg, var(--accent-deep) 0%, #6A5425 100%); box-shadow:0 8rpx 24rpx var(--accent-glow); display:flex; align-items:center; justify-content:center; z-index:var(--z-panel); transform:scale(0); opacity:0; transition:transform 0.35s var(--ease-spring), opacity 0.25s var(--ease-out) }
-.fab--show { transform:scale(1); opacity:1 }
-.fab:active { transform:scale(0.92); opacity:0.9 }
-.fab-icon { width:44rpx; height:44rpx; filter:brightness(0) invert(1) }
-.fab-plus { font-size:56rpx; line-height:1; color:var(--color-on-accent, #FFFFFF) }
+/* ========== 吸底「新建客户」按钮条（2026-10-17 替代右下角 FAB）========== */
+/* 底衬用自上而下的渐变收边（不是实色块）：列表滚到底时卡片从按钮条后透出，
+   既保证文字对比度，又不切出一条生硬的白色横条。 */
+.create-bar { position:fixed; left:0; right:0; bottom:0; padding:var(--sp-4) var(--sp-6) calc(var(--sp-4) + env(safe-area-inset-bottom));
+  background:linear-gradient(to top, var(--bg-root) 72%, transparent);
+  z-index:var(--z-panel); transform:translateY(120%); opacity:0;
+  transition:transform 0.32s var(--ease-spring), opacity 0.22s var(--ease-out); pointer-events:none }
+.create-bar--show { transform:translateY(0); opacity:1; pointer-events:auto }
+.create-bar-btn { width:100%; height:96rpx; display:flex; align-items:center; justify-content:center; gap:var(--sp-2);
+  background:linear-gradient(135deg, var(--accent-deep) 0%, #6A5425 100%); color:var(--color-on-accent, #FFFFFF);
+  font-size:var(--fs-base); font-weight:var(--fw-semi); letter-spacing:var(--ls-wide);
+  border:none; border-radius:var(--r-full); box-shadow:0 6rpx 20rpx var(--accent-glow); line-height:1 }
+/* 原生 button 的 ::after 默认画 1px 边框，必须清掉，否则与圆角错位 */
+.create-bar-btn::after { border:none }
+.create-bar-btn:active { opacity:0.9; transform:scale(0.985) }
+/* 暗色对比度：暗色下 --accent-deep 变亮金，白字对比度跌到 2.2:1 → 固定深金渐变。
+   ⚠️ 必须写在本文件（不是 app.wxss）：同优先级下页面 wxss 后于全局生效，
+   放全局会被上面的 background 简写整条覆盖 —— 原 .fab 的暗色覆盖就是这么失效的。 */
+@media (prefers-color-scheme: dark) {
+  .create-bar-btn { background:linear-gradient(135deg, #8B6F3C 0%, #6A5425 100%) }
+}
 
 /* ========== 列表 ========== */
 .client-stagger { margin-bottom:var(--sp-4); animation:cardUp var(--dur-slow) var(--ease-out) both }
@@ -75,7 +88,7 @@
 .sk-name { display:inline-block; width:120rpx; height:28rpx; border-radius:6rpx }
 .sk-label { display:inline-block; width:60rpx; height:22rpx; border-radius:6rpx; margin-left:var(--sp-3) }
 .sk-time { display:block; width:160rpx; height:20rpx; border-radius:6rpx }
-.sk-ring { width:80rpx; height:80rpx; border-radius:50%; flex-shrink:0; margin-left:var(--sp-4-5); margin-right:var(--sp-5) }
+/* 2026-10-17：.sk-ring 随圆环一起移除（骨架屏必须与真实卡片同构，否则加载完成后高度跳动） */
 
 /* ========== 空状态（搜索无结果 / 截断提示）========== */
 /* 说明：原客户列表页的 .empty-btn / .empty-btn--ghost（"去首页上传"/"手动新建客户"）未随合并带入 ——
@@ -83,3 +96,8 @@
 .empty { display:flex; flex-direction:column; align-items:center; padding-top:160rpx }
 .empty-text { font-size:var(--fs-lg); font-weight:var(--fw-semi); color:var(--text-primary); font-family:var(--font-serif); letter-spacing:var(--ls-wide); }
 .empty-sub { font-size:var(--fs-caption); color:var(--text-tertiary); margin-top:var(--sp-3); letter-spacing:var(--ls-wide) }
+
+/* ========== 列表尾部口径提示（2026-10-17）========== */
+/* 长按删除是隐式手势，此前无任何文字说明；同时给出客户总数。
+   刻意做到最弱：tiny + tertiary + 居中，只在滚到底时被读到，不参与首屏竞争。 */
+.list-foot { font-size:var(--fs-tiny); color:var(--text-tertiary); text-align:center; letter-spacing:var(--ls-wide); padding:var(--sp-8) 0 var(--sp-3) }

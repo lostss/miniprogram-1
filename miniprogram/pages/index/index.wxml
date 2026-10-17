@@ -8,15 +8,15 @@
     <view class="brand-slogan">AI保单整理助手</view>
   </view>
 
-  <!-- 搜索栏：有客户或有搜索词时出现（空态由建档引导承担，不显示搜索） -->
-  <view class="search-bar" wx:if="{{families.length > 0 || keyword}}">
+  <!-- 搜索栏：≥8 位客户（或已有搜索词）才出现。
+       2026-10-17：原条件 `families.length > 0` → 只有 1 个客户时也占一行、且搜索是纯噪音。 -->
+  <view class="search-bar" wx:if="{{families.length >= 8 || keyword}}">
     <view class="search-wrap">
       <!-- 2026-09-12：文案修正——服务端是双路匹配（family_name + 成员 name），原"搜索客户姓名"低估了能力 -->
       <input class="search-input" value="{{keyword}}" placeholder="搜索客户或成员姓名" bindinput="onSearch" aria-label="搜索客户" />
       <view class="search-clear pressable" wx:if="{{keyword}}" bindtap="onClearSearch">✕</view>
     </view>
-    <!-- 2026-09-12 显式建档入口：无保单也能建客户（第一次见面、还没拿到保单时最需要） -->
-    <view class="create-btn pressable" bindtap="onCreateFamily" aria-label="新建客户">＋</view>
+    <!-- 2026-10-17：原搜索栏右侧「＋」已移除——新建客户入口统一收到底部吸底按钮（避免两处重复入口） -->
   </view>
 
   <!-- 加载中：骨架屏（UI 审计 状态 M5：与列表卡片同构） -->
@@ -26,7 +26,6 @@
         <view class="sk-row"><view class="sk-shimmer sk-name"></view><view class="sk-shimmer sk-label"></view></view>
         <view class="sk-shimmer sk-time"></view>
       </view>
-      <view class="sk-shimmer sk-ring"></view>
     </view>
   </block>
 
@@ -37,6 +36,11 @@
 
   <!-- 审计 P2-16：listFamilies 上限 100，超出时明示（原静默截断，用户以为客户只有这些） -->
   <view class="empty-sub" wx:if="{{!loading && truncated}}" style="padding:var(--sp-4) 0">已显示前 100 位客户，可搜索客户或成员姓名精确查找</view>
+
+  <!-- 2026-10-17：列表尾部口径提示。长按删除是**隐式手势**，全站此前没有一处文字说明
+       （顾问不知道能删）；顺带给出客户总数，替代被移除的圆环所提供的"规模感"。
+       搜索态不显示：此时 families 是命中集，写"共 N 位客户"会误导。 -->
+  <view class="list-foot" wx:if="{{!loading && families.length > 0 && !keyword}}">共 {{families.length}} 位客户 · 长按卡片可删除</view>
 
   <!-- 错误态：加载失败优先于空态与搜索空态（客户列表审计 P1-1：网络/数据库失败不伪装"未找到"）。
        ⚠️ 三种空态各自写全条件、**不用 wx:elif** —— 上方截断提示与列表也是独立 wx:if，
@@ -78,9 +82,15 @@
   </view>
 </view>
 
-<!-- FAB（非空态显示）：新建客户 -->
-<view class="fab {{families.length > 0 && !ocrBusy ? 'fab--show' : ''}}" bindtap="onCreateFamily" aria-label="新建客户">
-  <text class="fab-plus">＋</text>
+<!-- 吸底「新建客户」按钮（2026-10-17 用户决策，替代右下角 FAB）：
+     ① 带文字 → 消除「＋」在新客户 / 上传保单 / 新报告之间的语义歧义；
+     ② 吸底一行比悬浮圆点更符合"列表为主体、动作为辅"的层级（原 FAB 是页面上唯一的强调色元素）。
+     ⚠️ 必须留在 .page 之外：.page-view 带常驻 transform（pageEnter 动画），
+        transform 会为 position:fixed 后代建立包含块 → 写进 .page 内会相对容器定位而错位。
+     显隐沿用原 FAB 口径：非空态（有客户）且 OCR 弹层未占用时才出现；
+     空态由下方建档引导承担同一动作，避免两个入口并列。 -->
+<view class="create-bar {{families.length > 0 && !ocrBusy ? 'create-bar--show' : ''}}">
+  <button class="create-bar-btn pressable" bindtap="onCreateFamily" aria-label="新建客户">＋ 新建客户</button>
 </view>
 
 <!-- OCR 全流程组件 —— ⚠️ 必须留在 .page 之外（与上面 FAB 同理），勿以"结构整洁"为由移入。
