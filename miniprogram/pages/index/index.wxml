@@ -2,10 +2,12 @@
      合并后只呈现一件事：我的客户。空态=建档引导（原首页 onboarding），非空=搜索+全量列表。
      ⚠️ ocr-flow 与 FAB 必须留在 .page 之外（见文件末尾注释）。 -->
 <view class="page page-view {{families.length === 0 && !loading && !keyword && !ocrBusy ? 'page-fixed' : ''}}">
-  <!-- 品牌头 -->
+  <!-- 品牌头（2026-10-17 用户决策：主标题改为产品名「家庭保单整理助手」）。
+       原副标题「AI保单整理助手」与新主标题几乎同义 → 两句并排是重复，故把原主标题
+       「把散落的保单整理清楚」下沉为副标题，保留"做什么"的那半句信息。 -->
   <view class="brand-header">
-    <view class="brand-title">把散落的保单整理清楚</view>
-    <view class="brand-slogan">AI保单整理助手</view>
+    <view class="brand-title">家庭保单整理助手</view>
+    <view class="brand-slogan">把散落的保单整理清楚</view>
   </view>
 
   <!-- 搜索栏：≥8 位客户（或已有搜索词）才出现。
