@@ -11,9 +11,11 @@
 .page-fixed { overflow-y:auto; -webkit-overflow-scrolling:touch }
 
 /* ========== 品牌头 ========== */
-.brand-header { padding-top:var(--sp-13); padding-bottom:var(--sp-7) }
+/* 2026-10-17：副标题移除（产品名已自解释）→ .brand-slogan 规则一并删除。
+   只剩一行标题，下边距由 --sp-7 收到 --sp-6：原间距是给"标题+副标题"两行留的呼吸感，
+   单行时留 40rpx 会显得标题与列表脱开。 */
+.brand-header { padding-top:var(--sp-13); padding-bottom:var(--sp-6) }
 .brand-title { font-family:var(--font-serif); font-size:var(--fs-display); font-weight:var(--fw-normal); color:var(--text-primary); letter-spacing:var(--ls-wide); line-height:var(--lh-tight) }
-.brand-slogan { font-family:var(--font-serif); font-size:var(--fs-caption); color:var(--text-tertiary); margin-top:var(--sp-3); letter-spacing:var(--ls-wide) }
 
 /* ========== 搜索栏（2026-10-13 合并自客户列表页）========== */
 /* 2026-10-17：右侧「＋」已移除（新建客户统一到底部吸底按钮）→ 搜索框独占整行。
