@@ -40,6 +40,15 @@ Component({
     // 在 wxml 里绑定，而本方法由**父页面直接调用**（没有、也不需要 wxml 绑定）。
     syncPageScroll(scrollTop) {
       var s = Number(scrollTop) || 0
+      // 2026-10-18 真机修（回顶不回弹的第二层保险）：滚动到最顶部时**直接**判定为第一章，
+      // 不参与几何比较。原因是"测量时刻"可能落在页面中部（数据刷新后重测），
+      // 一旦测量点与真实回顶之间存在偏差，几何比较会把某章误判为已越过线。
+      // 顶部是一个绝对状态，直接给答案比推算更可靠。
+      if (s <= 2) {
+        var first = (this.data.toc && this.data.toc.length) ? this.data.toc[0].key : ''
+        if (first && first !== this.data.activeKey) this.setData({ activeKey: first, tocInto: 'toc-' + first })
+        return
+      }
       if (!this._tocOffsets) {
         this._measureToc(s)
         return // 本次先测，下一次滚动事件就能用上（滚动是连续的，不会漏帧）
@@ -56,13 +65,15 @@ Component({
       var self = this
       var q = this.createSelectorQuery()
       q.select('.toc').boundingClientRect()
-      q.selectAll('.md-card').boundingClientRect()
+      // 用 fields({id:true, rect:true}) 而不是 boundingClientRect()：后者在部分基础库上
+      // 不返回节点 id → 章节 key 全空 → 整条判定静默失效（不报错，只是永远不高亮）。
+      q.selectAll('.md-card').fields({ id: true, rect: true })
       q.exec(function(res) {
         var toc = res && res[0]
         var cards = (res && res[1]) || []
         if (!cards.length) return
         self._tocOffsets = cards.map(function(r) {
-          return { key: String(r.id || '').replace(/^ch-/, ''), top0: r.top }
+          return { key: String((r && r.id) || '').replace(/^ch-/, ''), top0: (r && r.top) || 0 }
         }).filter(function(o) { return o.key })
         // 目录下沿 + 4px 容差：标题越过这条线就算"当前章"
         self._tocLineY = toc ? (toc.bottom + 4) : 72
