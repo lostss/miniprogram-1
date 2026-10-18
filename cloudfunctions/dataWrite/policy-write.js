@@ -97,6 +97,20 @@ function normalizePolicyInput(data) {
   return { sumAssured, annualPremium, category, effectiveDate, warnings: warns }
 }
 
+// 原文出处白名单（与云侧 ocr-core 的 EVIDENCE_FIELDS 对齐）：只收这 4 键的非空字符串，
+// 防止 prompt 漂移时把任意内容写进保单文档。
+const EVIDENCE_KEYS = ['sum_assured', 'annual_premium', 'effective_date', 'policy_number']
+function _pickEvidenceIn(data) {
+  const ev = data && data.field_evidence
+  if (!ev || typeof ev !== 'object') return {}
+  const out = {}
+  EVIDENCE_KEYS.forEach(function(k) {
+    const v = ev[k]
+    if (typeof v === 'string' && v.trim()) out[k] = v.trim().slice(0, 200)
+  })
+  return out
+}
+
 // ---------- 续保 / 批改冲突判定（2026-10-18）----------
 // 原实现在"同保单号 + 同产品名"命中库中已有保单时**无条件 skip**。
 // 但续期/批改恰好就是这个场景：保单号与产品名都没变，只有保费/保额/生效日变了。
@@ -179,6 +193,9 @@ async function writePolicy(db, openid, event) {
     family_id: familyId, member_id: resolvedMemberId,
     confidence: confidence || 0, field_confidence: field_confidence || {}, confidence_source: confidence_source || '',
     auto_confirmed: !!auto_confirmed,
+    // 2026-10-18：OCR 阶段 AI 摘录的原文片段（白名单键，字符串非空）。只用于追溯展示，
+    // 不参与任何计算 —— 金额/日期的判定仍然只看结构化字段。
+    field_evidence: _pickEvidenceIn(data),
     created_at: now
   }
   // 用户决策（2026-08-30）：识别/表单入库一律默认 active，不做任何自动状态判断；

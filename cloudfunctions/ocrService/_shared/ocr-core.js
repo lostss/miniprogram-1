@@ -36,6 +36,17 @@ function _cleanDate(v) {
   return DATE_RE.test(s) ? s : ''
 }
 
+// 原文片段白名单：只保留这些键（与 applyEvidenceCheck 的 EVIDENCE_FIELDS 一致）
+function _pickEvidence(ev) {
+  if (!ev || typeof ev !== 'object') return {}
+  const out = {}
+  EVIDENCE_FIELDS.forEach(function(k) {
+    const v = ev[k]
+    if (typeof v === 'string' && v.trim()) out[k] = v.trim().slice(0, 200)
+  })
+  return out
+}
+
 function buildPolicyFromExtract(products, contractBasic, conf) {
   const { overallConf, fieldConf, ocrReliable, autoConfirmed } = conf
   // 审计 #1：autoConfirmed 需 置信度达标 && 核心字段值完整（≥4/5），防 AI 漏提取 → 空值自动入库
@@ -63,6 +74,9 @@ function buildPolicyFromExtract(products, contractBasic, conf) {
     field_confidence: fieldConf,
     confidence_source: ocrReliable ? 'ocr' : 'ai',
     auto_confirmed: finalAuto,
+    // 2026-10-18：保存 AI 摘录的原文片段（仅字符串、仅非空），供报告侧"数字从哪句话读来的"追溯。
+    // 只留关键 4 键，其它键丢弃 —— 避免 prompt 漂移时把任意内容落库。
+    field_evidence: _pickEvidence(contractBasic && conf && conf.fieldEvidence),
     insured_birth_date: _cleanDate(contractBasic.insured_birth_date),
     policyholder_birth_date: _cleanDate(contractBasic.policyholder_birth_date),
     beneficiary_birth_date: _cleanDate(contractBasic.beneficiary_birth_date)
@@ -285,7 +299,7 @@ function extractOne(extractRes, ocrConfInfo, ocrText) {
   // 保留 AI 原始判定：mixed 需同时走"保单构建"与"现价表提取"两条路，
   // 而 docType 最终要降级为 policy（同图以保单主体为主），故先存原始值
   const rawDocType = extractRes.document_type || 'policy'
-  const policies = buildPolicyFromExtract(products, contractBasic, { overallConf, fieldConf, ocrReliable, autoConfirmed })
+  const policies = buildPolicyFromExtract(products, contractBasic, { overallConf, fieldConf, ocrReliable, autoConfirmed, fieldEvidence: data.field_evidence })
 
   // 现价表数据提取（document_type = cash_value 或 mixed）
   // 2026-09-11 调整：mixed 不再"无条件丢弃现价表"。原策略（2026-09-09 片段拦截）为防

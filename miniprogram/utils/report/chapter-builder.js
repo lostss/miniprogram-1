@@ -29,6 +29,30 @@ var { yuanToWan, fmtYuan } = require('../amount')
 var { policyYearAt, cashAtYear, coverScale } = require('../cash-value-math')
 var createBlock = require('../custom-blocks').create
 
+// 原文出处（2026-10-18，v2.0「结论可溯源」最小实现）：
+// 把 OCR 阶段 AI 摘录的 field_evidence 拼成一行给附录保单卡展示。
+// 只取有值的键、保持固定顺序（金额 → 保费 → 生效日 → 保单号），超长截断——
+// 卡片是"核对用的提示"，不是条款原文段落，不追求完整。
+var EVIDENCE_ORDER = [
+  ['sum_assured', '保额'],
+  ['annual_premium', '保费'],
+  ['effective_date', '生效日'],
+  ['policy_number', '保单号']
+]
+function _evidenceLine(ev) {
+  if (!ev || typeof ev !== 'object') return ''
+  var parts = []
+  EVIDENCE_ORDER.forEach(function(pair) {
+    var v = ev[pair[0]]
+    if (typeof v !== 'string') return
+    var s = v.replace(/\s+/g, ' ').trim()
+    if (!s) return
+    if (s.length > 28) s = s.slice(0, 28) + '…'
+    parts.push(pair[1] + '：' + s)
+  })
+  return parts.join('　·　')
+}
+
 // 险种短名：卡片展示用（重疾险 → 重疾；寿险保留全称，'寿' 不可读）
 function _shortCat(cat) {
   var s = String(cat || '')
@@ -517,7 +541,10 @@ function buildChapters(family, report, gaps, opts) {
       cash_display: cashDisp,
       meta1: meta1,
       meta2: meta2,
-      meta3: meta3
+      meta3: meta3,
+      // 2026-10-18（v2.0「结论可溯源」最小实现）：OCR 时 AI 摘录的原文片段。
+      // 只拼一行、只取有值的，供代理人在附录里核对"这个数字是从哪句话读来的"。
+      evidence: _evidenceLine(p.field_evidence)
     })
   }
   Object.keys(byMember).sort(function(a, b) { return a.localeCompare(b, 'zh') }).forEach(function(n) {

@@ -145,6 +145,10 @@
                 <view class="pc-meta-row" wx:if="{{p.meta3}}">{{p.meta3}}</view>
                 <!-- 当前年份现金价值（储蓄型保单；代理人/客户均展示） -->
                 <view class="pc-meta-row" wx:if="{{p.cash_display}}">{{p.cash_display}}</view>
+                <!-- 2026-10-18（v2.0 结论可溯源）：OCR 时 AI 摘录的原文片段。
+                     只给 owner（客户版看的是一个"数字从哪抄的"，属内部核对口径）；
+                     无出处（老数据/未通过校验）则整行不渲染。 -->
+                <view class="pc-meta-row pc-evidence" wx:if="{{p.evidence && !readonly}}">原文：{{p.evidence}}</view>
               </view>
             </view>
           </view>

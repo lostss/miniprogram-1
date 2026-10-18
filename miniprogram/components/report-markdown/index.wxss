@@ -235,6 +235,9 @@
 /* 三行简写：横排数据行，无字段名（单位自带语义），分隔线区分产品行 */
 .pc-meta-row { font-size:var(--fs-caption); color:var(--text-secondary); font-variant-numeric:tabular-nums; margin-top:var(--sp-1); }
 .pc-meta-row:first-of-type { margin-top:var(--sp-3); padding-top:var(--sp-3); border-top:1rpx solid var(--border); }
+/* 原文出处（2026-10-18）：比普通元信息更弱一档（tiny + tertiary），
+   它是"核对用的脚注"而不是保单事实本身，不该与保额/保费抢注意力。 */
+.pc-evidence { font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-snug); }
 
 /* 章节前言（保障汇总缺失提示）：告警语义——浅红底 + 红字，与「特别提醒」risk-item 同构；
    区别于中性灰注释 .md-note（当前无章节使用）。此前无样式定义，默认字号 32rpx 比正文还大 */
