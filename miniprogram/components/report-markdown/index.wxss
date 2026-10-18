@@ -241,6 +241,29 @@
 .pc-card--inactive { opacity:0.72; }
 
 /* 三行简写：横排数据行，无字段名（单位自带语义），分隔线区分产品行 */
+/* ========== 年度保费柱（2026-10-18）==========
+   横滑（最多 40 年，一屏放不下）；柱宽固定 36rpx，间距由 gap 控制 —— 用 flex:1 会随年数变化，
+   40 年时柱细如发丝、3 年时柱胖成块，两种都读不出"形状"。 */
+.pt-wrap { margin:var(--sp-3) 0 var(--sp-5); }
+.pt-head { display:flex; align-items:baseline; justify-content:space-between; gap:var(--sp-3); }
+.pt-title { font-size:var(--fs-caption); color:var(--text-primary); font-weight:var(--fw-semi); }
+.pt-scope { font-size:var(--fs-tiny); color:var(--text-tertiary); }
+.pt-scroll { width:100%; margin-top:var(--sp-3); }
+.pt-bars { display:inline-flex; align-items:flex-end; gap:var(--sp-1); padding-bottom:2rpx; }
+.pt-col { display:flex; flex-direction:column; align-items:center; width:36rpx; flex-shrink:0; }
+/* 柱区固定高度：柱高用百分比（相对本区），空年（0 万）自然是一条贴底线 */
+.pt-bar-wrap { position:relative; width:100%; height:160rpx; display:flex; align-items:flex-end; justify-content:center; }
+.pt-bar { width:100%; min-height:2rpx; border-radius:3rpx 3rpx 0 0; background:var(--accent-dim); }
+/* 当前年：实色强调（读者第一眼要找到"我现在在哪一档"） */
+.pt-col.is-now .pt-bar { background:var(--accent-deep); }
+.pt-drop { position:absolute; top:-6rpx; left:50%; transform:translateX(-50%); font-size:var(--fs-tiny); color:var(--accent-deep); line-height:1; }
+/* 年份标签：每 5 年才显示（40 列全标会糊成一团），当前年强制显示 */
+.pt-year { margin-top:var(--sp-1); font-size:20rpx; color:var(--text-tertiary); font-variant-numeric:tabular-nums; transform:scale(0.9); }
+.pt-col.is-now .pt-year { color:var(--accent-deep); }
+.pt-legend { display:flex; align-items:center; gap:var(--sp-5); margin-top:var(--sp-3); font-size:var(--fs-tiny); color:var(--text-tertiary); }
+.pt-lg-item { display:inline-flex; align-items:center; gap:var(--sp-2); }
+.pt-lg-dot { width:16rpx; height:16rpx; border-radius:2rpx; background:var(--accent-deep); }
+
 /* ========== 待完善清单（2026-10-18 第二步 IA）==========
    密度接近表格：一行保单 + 若干问题点；不画卡片描边（一章里可能有 5~10 条，
    每条都描边会比数据本身更重）。 */

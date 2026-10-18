@@ -62,6 +62,11 @@ const BLOCK_REGISTRY = {
     required: ['rows'],
     defaults: { rows: [], ticks: [], startYear: 0, endYear: 0, nowPct: null, nowYear: 0, notes: [] }
   },
+  // 年度保费柱（2026-10-18）：缴费与现金流章的"跨年"维度（月历负责"年内"）
+  premium_trend: {
+    required: ['years'],
+    defaults: { years: [], maxW: 0, thisYear: 0, currentW: 0 }
+  },
   // 待完善清单（2026-10-18 第二步 IA）：原页面级「待完善」，按保单聚合后的条目
   pending_list: {
     required: ['items'],

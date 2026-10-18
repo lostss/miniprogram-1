@@ -652,6 +652,45 @@ describe('保障汇总提示：区分「缺少」与「保额不足」', () => {
   })
 })
 
+describe('缴费与现金流：年度保费柱（2026-10-18 用户提议「看到现金流释放」）', () => {
+  // 自包含夹具：两张长期险，缴费期分别 10 年 / 20 年、保障 30 年 → 未来必有两次"缴费期满降档"
+  function trendCustomer() {
+    const thisYear = new Date().getFullYear()
+    const startY = thisYear - 5
+    return {
+      name: '张三',
+      members: [{ member_id: 'm1', name: '张三', role: '本人', age: 40 }],
+      policies: [
+        { id: 'p1', insured_name: '张三', insurance_category: '寿险', sum_assured: 500000, annual_premium: 8000, effective_date: startY + '-01-01', insurance_period: '30年', payment_period: '10年', status: 'active' },
+        { id: 'p2', insured_name: '张三', insurance_category: '重疾险', sum_assured: 300000, annual_premium: 5000, effective_date: startY + '-01-01', insurance_period: '30年', payment_period: '20年', status: 'active' }
+      ]
+    }
+  }
+
+  test('缴费章含 premium_trend block：柱高按最大值归一，当前年与掉档年打标', () => {
+    const c = trendCustomer()
+    const ch = buildChapters(c, {})
+    const cal = ch.find((x) => x.key === 'premium_calendar')
+    const pt = cal.customBlocks.find((b) => b.t === 'premium_trend')
+    expect(pt).toBeTruthy()
+    expect(pt.years.length).toBeGreaterThan(1)
+    // 最高的一柱必须是 100%，其余按比例 —— 归一化错了柱子高度就失真
+    const maxPct = Math.max.apply(null, pt.years.map((x) => x.pct))
+    expect(maxPct).toBe(100)
+    expect(pt.years.filter((x) => x.isNow).length).toBe(1)
+    // 掉档年至少一个（有缴费期满的保单），且必须打标
+    expect(pt.years.some((x) => x.isDrop)).toBe(true)
+    // 标签不是每年都画（否则 40 年时会糊成一片）
+    expect(pt.years.filter((x) => x.showLabel).length).toBeLessThan(pt.years.length)
+  })
+
+  test('月历仍在同一章（跨年趋势 + 年内分布是两个维度，都要保留）', () => {
+    const c = trendCustomer()
+    const cal = buildChapters(c, {}).find((x) => x.key === 'premium_calendar')
+    expect(cal.customBlocks.some((b) => b.t === 'calendar')).toBe(true)
+  })
+})
+
 describe('第二步 IA：成员规模并入家庭结构章', () => {
   test('家庭结构节点带「N 张 · 保额 X万」（原页面「按成员整理」的信息）', () => {
     const c = baseCustomer()

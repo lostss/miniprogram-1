@@ -481,11 +481,40 @@ function buildChapters(family, report, gaps, opts) {
     var d = trend.drops[i]
     trendLines.push(d.y + ' 年起年缴保费降至 ' + d.toW + ' 万（' + d.products.join('、') + ' 缴费期满），每年减少支出 ' + d.reducedW + ' 万')
   })
+  // 年度保费柱（2026-10-18 用户提议「做成保费年历、看到现金流释放」）：
+  // 与甘特图的缴费期满竖线**不是重复**——甘特图是单张保单视角（这份何时缴完），
+  // 这里是家庭合计视角（全家哪一年松一口气）。阶梯数据早已由 premium-trend 算出，
+  // 之前只输出两行文字，看不出"形状"。
+  // 口径：只含长期险（一年期按年续保、趸交不计入曲线）—— 否则一年期保单次年"消失"会造成假台阶。
+  var trendMax = 0
+  trend.years.forEach(function(x) { if (x.w > trendMax) trendMax = x.w })
+  var dropYears = {}
+  trend.drops.forEach(function(d) { dropYears[d.y] = 1 })
+  var lastY = trend.years.length ? trend.years[trend.years.length - 1].y : 0
+  var trendYears = trend.years.map(function(x) {
+    var isNow = x.y === trend.thisYear
+    var isDrop = !!dropYears[x.y]
+    return {
+      y: x.y,
+      w: x.w,
+      pct: trendMax > 0 ? Math.round(x.w / trendMax * 100) : 0,
+      isNow: isNow,
+      isDrop: isDrop,
+      // 标签不是每年都画（年数最多 40，全标会糊成一片）：每 5 年 + 首尾 + 当前 + 掉档年
+      showLabel: x.y % 5 === 0 || isNow || isDrop || x.y === trend.thisYear || x.y === lastY
+    }
+  })
   ch.push({
-    key: 'premium_calendar', title: '缴费月历', num: '5',
+    // 章名由「缴费月历」改为「缴费与现金流」：本章现在有年度趋势（跨年）+ 月历（年内）两个维度，
+    // 原名只描述了后者。
+    key: 'premium_calendar', title: '缴费与现金流', num: '5',
     // V1.5（2026-09-12）：明细型章节默认折叠——首屏只保留结论/缺口，月历与附录按需展开（保留手动展开能力）
     collapsible: true, defaultCollapsed: true,
-    customBlocks: [createBlock('calendar', { items: months })],
+    customBlocks: [
+      // 年度柱：造型（哪几年高、哪一年掉一档）；精确金额仍写在下方文字里，图不重复标数字
+      createBlock('premium_trend', { years: trendYears, maxW: trendMax, thisYear: trend.thisYear, currentW: trend.currentW }),
+      createBlock('calendar', { items: months })
+    ],
     // 下方提示：无列表垂直排列（年保费 → 峰值月），markdown-render 以 <br> 换行
     // 客户版：占收入比标注"家庭年收入占比，仅供参考"（数据保留，缓解"推销感"顾虑）
     // 2026-09-09：家庭年收入缺失时不再输出"（占收入 0%）"——data-normalizer 在 totalIncome=0 时
