@@ -189,8 +189,14 @@ Component({
         // 这里补上第一个检查点：已取消/已销毁则立即收尾，不发起计费调用。
         if (this._disposed || this._ocrCancelled) return
         var validThumbs = []
+        var validHashes = []
         for (var i = 0; i < upResult.fileIds.length; i++) {
-          if (upResult.fileIds[i]) { allFileIds.push(upResult.fileIds[i]); validThumbs.push(upResult.localPaths[i] || tempFiles[i]) }
+          if (upResult.fileIds[i]) {
+            allFileIds.push(upResult.fileIds[i])
+            validThumbs.push(upResult.localPaths[i] || tempFiles[i])
+            // 与 validIds 同下标：云端按 md5 命中缓存时跳过 OCR（省一次计费）
+            validHashes.push((upResult.hashes && upResult.hashes[i]) || '')
+          }
         }
         var validIds = allFileIds.filter(function(id) { return !!id })
         var uploadFailed = (upResult && upResult.failures) || 0
@@ -207,7 +213,7 @@ Component({
           clearInterval(this._ocrTick)
           this._ocrTick = setInterval(function() { self.setData({ 'ocrMask.elapsed': Math.round((Date.now() - t0) / 1000) }) }, 1000)
           try {
-            var ocrRes = await flow.batchOCR(validIds, setData, { familyId: familyId, thumbs: validThumbs })
+            var ocrRes = await flow.batchOCR(validIds, setData, { familyId: familyId, thumbs: validThumbs, hashes: validHashes })
             if (this._ocrCancelled) return
             allPolicies = ocrRes.policies || []; cashValues = ocrRes.cashValues || []; errors = ocrRes.errors || []
           } catch (e2) { errors.push({ error: (e2 && e2.message) || 'OCR异常', error_code: 'ocr_exception' }) }
@@ -354,6 +360,18 @@ Component({
       this.setData({ 'ocrMask.procBusy': false })
       this._procRefresh()
       this._persistBatch()
+    },
+
+    // 批量重试：逐条串行复用单张逻辑（并发会同时占满 AI 并发位、且 procBusy 互斥会互相挡掉）。
+    // 每轮重读 _procErrors —— 成功的项已被移除，失败的仍在队列里，天然幂等。
+    async onProcRetryAllFailed() {
+      var mask = this.data.ocrMask
+      if (mask.procBusy || mask.confirming) return
+      var ids = (this._procErrors || []).map(function(x) { return x.fileId })
+      for (var i = 0; i < ids.length; i++) {
+        if (this._disposed) return
+        await this.onProcRetryOne({ currentTarget: { dataset: { fileid: ids[i] } } })
+      }
     },
 
     // UI 审计 交互 S1：宿主页 onBackPress 委托入口（report/index 两页共用）

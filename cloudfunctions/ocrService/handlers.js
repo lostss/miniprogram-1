@@ -341,6 +341,20 @@ function _finalizeBatch(p) {
  *   - ocr_texts 回传前端 → 重试时只重跑 aiExtractParallel，不重复计费 OCR
  *   - 仍写 action='ocr_only_batch' 日志：_checkOcrRateLimit 计数源不变
  */
+// 写 OCR 缓存（2026-10-18）：首次部署时集合可能还不存在 → 建一次再写。
+// 全程 fire-and-forget：缓存是纯优化，任何失败都只是"下次重算"，绝不能影响识别结果。
+let _ocrCacheEnsured = false
+function _writeOcrCache(db, openid, hash, r) {
+  const payload = { _openid: openid, hash: hash, ocrText: r.ocrText, ocrConfInfo: r.ocrConfInfo || [], created_at: new Date() }
+  db.collection('ocr_cache').add({ data: payload }).catch(function() {
+    if (_ocrCacheEnsured) return
+    _ocrCacheEnsured = true
+    db.createCollection('ocr_cache')
+      .then(function() { return db.collection('ocr_cache').add({ data: payload }) })
+      .catch(function() {})
+  })
+}
+
 async function ocrExtract(db, openid, event) {
   const { fileIds, familyId } = event
   if (!fileIds || !Array.isArray(fileIds) || fileIds.length === 0) {
@@ -378,10 +392,46 @@ async function ocrExtract(db, openid, event) {
     console.error('[ocrService] getTempFileURL 批量失败:', e && e.message)
   }
 
-  // OCR 并发
+  // 2026-10-18：图片内容哈希缓存 —— 同一张图重新上传时**跳过 OCR**（省一次识别费与 1~2s）。
+  // 只缓存 OCR 文本（不缓存 AI 结果：prompt/模型会变，且用户可能改过字段，缓存的保单会变成脏数据）。
+  // 哈希由前端用 wx.getFileInfo(md5) 算好传入；拿不到哈希就走完整链路，绝不阻断识别。
+  var hashes = Array.isArray(event.hashes) ? event.hashes : []
+  var hashByFile = {}
+  var cacheHit = {}
+  ;(function collectHashes() {
+    for (var hi = 0; hi < fileIds.length; hi++) {
+      var h = hashes[hi]
+      if (typeof h === 'string' && h.length >= 16) hashByFile[fileIds[hi]] = h
+    }
+  })()
+  var uniqHashes = Object.keys(hashByFile).map(function(k) { return hashByFile[k] }).filter(function(h, i, arr) { return arr.indexOf(h) === i })
+  if (uniqHashes.length) {
+    try {
+      var cacheRes = await db.collection('ocr_cache').where({ _openid: openid, hash: db.command.in(uniqHashes) }).limit(20).get()
+      ;(cacheRes.data || []).forEach(function(d) {
+        if (d && d.hash && typeof d.ocrText === 'string' && d.ocrText) {
+          cacheHit[d.hash] = { ocrText: d.ocrText, ocrConfInfo: d.ocrConfInfo || [] }
+        }
+      })
+    } catch (e) {
+      // 缓存集合不存在/查询失败都只降级为"不命中"，不能影响主链路
+      console.error('[ocrService] ocr_cache 查询失败，降级为完整识别:', e && e.message)
+    }
+  }
+
+  // OCR 并发（命中缓存的那几张直接复用文本，不调 OCR）
   var ocrOut = await Promise.all(fileIds.map(function(fid) {
+    var h = hashByFile[fid]
+    var hit = h && cacheHit[h]
+    if (hit) {
+      return Promise.resolve({ ok: true, data: { ocrText: hit.ocrText, ocrConfInfo: hit.ocrConfInfo, ocrErrorCode: null, fileId: fid, cached: true } })
+    }
     return ocrPhase({ cloud: cloud, fileId: fid, openid: openid, familyId: familyId || null, tempFileURL: urlMap[fid] })
-      .then(function(r) { return { ok: true, data: r } })
+      .then(function(r) {
+        // 写缓存：fire-and-forget（失败只是下次重算，不能拖慢本次识别）
+        if (h && r && r.ocrText) _writeOcrCache(db, openid, h, r)
+        return { ok: true, data: r }
+      })
       .catch(function(e) { return { ok: false, fileId: fid, error: (e && e.message) || 'OCR异常', error_code: 'ocr_failed' } })
   }))
 
@@ -406,7 +456,8 @@ async function ocrExtract(db, openid, event) {
   logOperation(db, {
     openid, familyId: familyId || undefined, traceId: event._reqId || '', action: 'ocr_only_batch',
     result: { status: ocrFailures.length > 0 ? 'partial' : 'ok', summary: 'OCR ' + fileIds.length + '张, 成功' + ocrResults.length + '/失败' + ocrFailures.length },
-    meta: { fileCount: fileIds.length, okCount: ocrResults.length, failCount: ocrFailures.length }
+    // cacheHitCount：本批命中"同图跳过 OCR"的张数（成本观测用）
+    meta: { fileCount: fileIds.length, okCount: ocrResults.length, failCount: ocrFailures.length, cacheHitCount: ocrResults.filter(function(x) { return x.cached }).length }
   })
 
   // AI 阶段：复用 aiExtractParallel（内部含 tokens 聚合 / 日志 / 错误码）

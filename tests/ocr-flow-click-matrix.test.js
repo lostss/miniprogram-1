@@ -272,6 +272,26 @@ describe('ocr-flow 点击矩阵：失败项单张重试', function () {
     expect(inst.data.ocrMask.procBusy).toBe(false)
   })
 
+  test('全部重试：逐条串行，成功后失败队列清空（网络/超时往往整批一起失败）', async () => {
+    const inst = errCtx(loadComponent())
+    inst._procErrors = [
+      { fileId: 'f1', thumb: '/a.jpg', error: '超时', retrying: false },
+      { fileId: 'f2', thumb: '/b.jpg', error: '超时', retrying: false }
+    ]
+    inst._ocrRetryOne = jest.fn().mockResolvedValue({ policies: [{ product_name: 'X' }], cashValues: [], newFileId: 'new' })
+    await inst.onProcRetryAllFailed()
+    expect(inst._ocrRetryOne).toHaveBeenCalledTimes(2)
+    expect(inst._procErrors.length).toBe(0)
+    expect(inst._procPolicies.length).toBe(2)
+  })
+
+  test('全部重试：procBusy 期间不启动（防与单张重试互相覆盖状态）', async () => {
+    const inst = errCtx(loadComponent(), { mask: { procBusy: true } })
+    inst._ocrRetryOne = jest.fn()
+    await inst.onProcRetryAllFailed()
+    expect(inst._ocrRetryOne).not.toHaveBeenCalled()
+  })
+
   test('procBusy / confirming / 未知 fileId：一律不触发重试（防并发覆盖与误触）', async () => {
     for (const over of [{ mask: { procBusy: true } }, { mask: { confirming: true } }]) {
       const inst = errCtx(loadComponent(), over)

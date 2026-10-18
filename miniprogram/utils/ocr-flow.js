@@ -89,6 +89,24 @@ function compress(path) {
 }
 
 // ============================================================
+// 图片内容 md5（2026-10-18）：给云端做"同图跳过 OCR"的缓存键
+// 用 wx.getFileInfo 的 digestAlgorithm，避免把图片读进 JS 内存（大图会卡）
+// 失败返回空串 —— 缓存只是优化，拿不到哈希就走完整链路，绝不阻断
+// ============================================================
+function _md5(path) {
+  return new Promise(function(resolve) {
+    try {
+      wx.getFileInfo({
+        filePath: path,
+        digestAlgorithm: 'md5',
+        success: function(info) { resolve((info && info.digest) || '') },
+        fail: function() { resolve('') }
+      })
+    } catch (e) { resolve('') }
+  })
+}
+
+// ============================================================
 // 并发压缩 + 上传（限流9并发，单张失败不休止）
 // ============================================================
 async function compressAndUpload(paths, setData, prefix) {
@@ -97,6 +115,7 @@ async function compressAndUpload(paths, setData, prefix) {
   var failures = 0
   var batchSize = 9
   var fileIds = new Array(paths.length)
+  var hashes = new Array(paths.length)    // 与 fileIds 同下标：云端据此跳过重复图的 OCR
   var localPaths = new Array(paths.length) // 压缩后的本地路径（缩略图/重试用，不依赖云存储）
 
   for (var b = 0; b < paths.length; b += batchSize) {
@@ -105,7 +124,9 @@ async function compressAndUpload(paths, setData, prefix) {
       var i = b + bi
       return compress(path).then(function(f) {
         localPaths[i] = f
-        return wx.cloud.uploadFile({
+        // 哈希与上传并行：算不出来也不影响上传（返回空串）
+        return _md5(f).then(function(h) { hashes[i] = h })
+          .then(function() { return wx.cloud.uploadFile({
           // cloudPath 加随机段，避免多用户同时上传时 Date.now()+i 碰撞导致文件覆盖
           cloudPath: prefix + '/' + Date.now() + '_' + Math.random().toString(36).substr(2, 8) + '_' + i + '.jpg',
           filePath: f
@@ -114,6 +135,7 @@ async function compressAndUpload(paths, setData, prefix) {
           if (setData) setData(setUploaded(uploaded))
           return { ok: true, fileId: r.fileID, idx: i }
         })
+          })
       })
     })
     var results = await Promise.allSettled(tasks)
@@ -128,7 +150,7 @@ async function compressAndUpload(paths, setData, prefix) {
       }
     }
   }
-  return { fileIds: fileIds, localPaths: localPaths, failures: failures }
+  return { fileIds: fileIds, localPaths: localPaths, hashes: hashes, failures: failures }
 }
 
 // ============================================================
@@ -175,7 +197,9 @@ async function batchOCR(fileIds, setData, opts) {
     // 云函数超时以 cloudbaserc.json ocrService.timeout 为唯一源（当前 100s），不在此处复述数值
     // 2026-09-10 traceId 修复：原实现生成 reqId 却只挂在写入调用上，OCR/AI 这两次主调用缺 trace_id，
     // 云端日志无法与前端的识别会话串联（reqId 变量此前是死变量）
-    raw = await api('ocrExtract', { fileIds: batchIds, familyId: opts.familyId || '' }, { timeout: 70000, requestId: reqId })
+    // 2026-10-18：带上图片 md5（与 fileIds 同下标、同步过滤掉 null），云端命中缓存则跳过 OCR
+    var hashes = (opts.hashes || []).filter(function(h, i) { return fileIds[i] !== null })
+    raw = await api('ocrExtract', { fileIds: batchIds, familyId: opts.familyId || '', hashes: hashes }, { timeout: 70000, requestId: reqId })
   } catch (e) {
     return { policies: [], cashValues: [], errors: batchIds.map(function(fid) { return { fileId: fid, error: (e && e.message) || 'OCR异常', error_code: 'ocr_exception' } }) }
   }
