@@ -6,10 +6,16 @@
    左右负 margin 抵消 .md-root padding，使吸顶条背景横向铺满。 */
 /* 2026-09-12：横向可滑但滚动条被下行 :8 隐藏，章节多时唯一线索是右侧被裁一半的 chip
    （有时正好对齐，完全看不出还有内容）。加右侧渐隐遮罩：内容延伸到右缘时自然淡出。 */
-.toc { position:sticky; top:0; z-index:20; display:flex; gap:var(--sp-2); white-space:nowrap; overflow-x:auto; padding:var(--sp-3) var(--sp-5); margin:calc(-1 * var(--sp-5)) calc(-1 * var(--sp-5)) var(--sp-5); background:var(--bg-root); border-bottom:1rpx solid var(--border); -webkit-mask-image:linear-gradient(to right, #000 calc(100% - 48rpx), transparent); mask-image:linear-gradient(to right, #000 calc(100% - 48rpx), transparent); }
+/* 2026-10-18：容器改 scroll-view（为了 scroll-into-view 把高亮标签滚进可视区）。
+   flex 移到内层 .toc-inner —— scroll-view 自身不宜做 flex 行容器（其滚动内容需要一个子节点）。 */
+.toc { position:sticky; top:0; z-index:20; white-space:nowrap; padding:0; margin:calc(-1 * var(--sp-5)) calc(-1 * var(--sp-5)) var(--sp-5); background:var(--bg-root); border-bottom:1rpx solid var(--border); -webkit-mask-image:linear-gradient(to right, #000 calc(100% - 48rpx), transparent); mask-image:linear-gradient(to right, #000 calc(100% - 48rpx), transparent); }
+.toc-inner { display:inline-flex; gap:var(--sp-2); padding:var(--sp-3) var(--sp-5); }
 .toc::-webkit-scrollbar { display:none; }
-.toc-item { flex-shrink:0; font-size:var(--fs-caption); color:var(--text-secondary); background:var(--bg-input); border-radius:var(--r-full); padding:var(--sp-2) var(--sp-4); }
+.toc-item { flex-shrink:0; font-size:var(--fs-caption); color:var(--text-secondary); background:var(--bg-input); border-radius:var(--r-full); padding:var(--sp-2) var(--sp-4); transition:background 0.2s var(--ease-out), color 0.2s var(--ease-out); }
 .toc-item:active { opacity:0.6; }
+/* 激活态（2026-10-18）：实底深金 + 白字 —— 与"当前章节"这一强语义匹配；
+   刻意不用浅色描边：目录是横向吸顶条，浅色在滚动中看不出来。 */
+.toc-item.is-active { background:var(--accent-deep); color:var(--color-on-accent, #FFFFFF); font-weight:var(--fw-semi); }
 /* 2026-09-06 宽屏行宽约束：与报告页正文区同宽居中（手机 <768px 不受影响） */
 @media (min-width: 768px) {
   .md-root { width: 720px; max-width: calc(100vw - 96px); margin-left: auto; margin-right: auto; box-sizing: border-box; }

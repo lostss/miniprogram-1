@@ -1,8 +1,17 @@
 <view class="md-root">
-  <!-- V1.5 吸顶目录（2026-09-12）：长报告一键跳转，降低滑动疲劳；章节 id 复用现有 id="ch-{{key}}" -->
-  <view class="toc" wx:if="{{toc.length > 1}}">
-    <view class="toc-item" wx:for="{{toc}}" wx:key="key" data-k="{{item.key}}" catchtap="onTocTap">{{item.num ? item.num + ' ' : ''}}{{item.title}}</view>
-  </view>
+  <!-- V1.5 吸顶目录（2026-09-12）：长报告一键跳转，降低滑动疲劳；章节 id 复用现有 id="ch-{{key}}"
+       2026-10-18：加**激活态** —— 高亮"当前正在读哪一章"（IntersectionObserver 判定），
+       并用 scroll-into-view 把高亮标签自动滚进可视区（章节多时标签会滚出屏幕）。
+       外层由 view 改为 scroll-view：原 overflow-x:auto 无法程序化滚动。 -->
+  <scroll-view class="toc" wx:if="{{toc.length > 1}}" scroll-x enhanced show-scrollbar="{{false}}"
+               scroll-into-view="{{tocInto}}" scroll-with-animation>
+    <view class="toc-inner">
+      <view class="toc-item {{activeKey === item.key ? 'is-active' : ''}}"
+            id="toc-{{item.key}}"
+            wx:for="{{toc}}" wx:key="key" data-k="{{item.key}}" catchtap="onTocTap"
+            aria-current="{{activeKey === item.key ? 'true' : 'false'}}">{{item.num ? item.num + ' ' : ''}}{{item.title}}</view>
+    </view>
+  </scroll-view>
   <view class="md-card" wx:for="{{cards}}" wx:key="key" id="ch-{{item.key}}" style="{{item.style}}">
     <view wx:if="{{item.collapsible}}" class="fold-hd" catchtap="toggleChapter" data-k="{{item.key}}">
       <text class="fold-title">{{item.num ? item.num + ' ' : ''}}{{item.title}}{{item.unit ? '（' + item.unit + '）' : ''}}</text>
