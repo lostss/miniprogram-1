@@ -28,10 +28,9 @@ function lineOf(re) {
 }
 
 describe('报告页 IA：规则内容整合进章节、AI 在页尾、合规与页尾常驻', () => {
-  test('成员概览 → 待完善 → 正文 → 进阶报告 → 免责 → 页尾（汇总卡/诊断卡已并入正文第 1 章）', () => {
+  test('页面只剩四块：页头 → 正文 → 进阶报告 → 页尾（页面级内容已全部进章节）', () => {
     const order = [
-      ['按成员整理', /sec-title"[^>]*>按成员整理/],
-      ['待完善', /sec-title"[^>]*>待完善/],
+      ['页头标题', /class="title-main"|family\.name/],
       ['正文（章节）', /<report-markdown/],
       ['进阶报告头', /class="adv-head-card"/],
       ['免责声明', /class="report-disclaimer"/],
@@ -40,6 +39,18 @@ describe('报告页 IA：规则内容整合进章节、AI 在页尾、合规与�
     const got = order.map(([name, re]) => ({ name, line: lineOf(re) }))
     const sorted = got.slice().sort((a, b) => a.line - b.line)
     expect(got.map((x) => x.name)).toEqual(sorted.map((x) => x.name))
+  })
+
+  test('成员规模与待完善已进章节：页面不得再渲染 checkup.groups / checkup.pending', () => {
+    expect(plain).not.toContain('checkup.groups')
+    expect(plain).not.toContain('checkup.pending')
+    expect(plain).not.toContain('checkup.unassigned')
+    // 对应内容改由组件渲染
+    const comp = fs
+      .readFileSync(path.join(__dirname, '..', 'miniprogram', 'components', 'report-markdown', 'index.wxml'), 'utf8')
+      .replace(/<!--[\s\S]*?-->/g, '')
+    expect(comp).toContain("block.t==='pending_list'")
+    expect(comp).toContain('node.scaleText')
   })
 
   test('页面级汇总卡/诊断卡已移除（搬进 chapters.overview，由组件渲染）', () => {

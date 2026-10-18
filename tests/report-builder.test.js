@@ -66,13 +66,16 @@ describe('buildReportView — 报告聚合入口（候选 2 深模块）', () =>
     expect(view.chapters.find(x => x.key === 'next_steps')).toBeUndefined()
   })
 
-  test('单接口返回全部视图数据（无告警时 9 章 + Hero + 摘要卡 + gaps + hints）', () => {
+  test('单接口返回全部视图数据（无告警时 10 章 + Hero + 摘要卡 + gaps + hints）', () => {
     const c = baseCustomer()
     const view = buildReportView(c, { conclusion: 'AI 结论', disclaimer: '免责' })
-    // 2026-10-18 IA：新增概览章 → 无告警 owner 版 = 9 章
-    // （概览 + 家庭结构 + 财务 + 保障汇总 + 缺口 + 期间 + 月历 + 收口 + 附录）
-    expect(view.chapters.length).toBe(9)
+    // 2026-10-18 IA：概览章 + 待完善章 → owner 版 = 10 章
+    // （概览 + 家庭结构 + 财务 + 保障汇总 + 缺口 + 期间 + 月历 + 收口 + 待完善 + 附录）
+    expect(view.chapters.length).toBe(10)
     expect(view.chapters[0].key).toBe('overview')
+    // 待完善必须是附录前最后一章（数据质量补录清单，不该插在诊断结论之间）
+    const keys = view.chapters.map(x => x.key)
+    expect(keys[keys.length - 2]).toBe('pending_data')
     // 概览章由 customBlock 承载（组件内渲染），不是 markdown 文本；字段平铺在 block 上
     const ov = view.chapters[0].customBlocks[0]
     expect(ov.t).toBe('overview')
@@ -89,7 +92,7 @@ describe('buildReportView — 报告聚合入口（候选 2 深模块）', () =>
 
   test('无报告对象 → 视图仍完整（conclusion 空）', () => {
     const view = buildReportView(baseCustomer(), null)
-    expect(view.chapters.length).toBe(9)
+    expect(view.chapters.length).toBe(10)
     expect(view.hero.conclusion).toBe('')
     expect(view.hints).toEqual([])
   })
@@ -646,6 +649,25 @@ describe('保障汇总提示：区分「缺少」与「保额不足」', () => {
     expect(cs.pre).toContain('保障待完善')
     expect(cs.pre).not.toContain('缺口')
     expect(cs.pre).not.toContain('缺少')
+  })
+})
+
+describe('第二步 IA：成员规模并入家庭结构章', () => {
+  test('家庭结构节点带「N 张 · 保额 X万」（原页面「按成员整理」的信息）', () => {
+    const c = baseCustomer()
+    // 必须走 buildReportView：checkup 由它在内部自算后传给 chapter-builder
+    // （直接调 buildChapters 不传 checkup 时，概览章与成员规模都不会出现）
+    const view = buildReportView(c, {})
+    const ft = view.chapters.find((x) => x.key === 'family_structure')
+    const nodes = ft.customBlocks.find((b) => b.t === 'family_tree').nodes
+    const ly = nodes.find((n) => n.name === '李阳勇')
+    expect(ly.scaleText).toMatch(/\d+ 张 · 保额 /)
+  })
+
+  test('客户版没有家庭结构章（成员结构是顾问底稿），但概览仍在', () => {
+    const view = buildReportView(baseCustomer(), {}, { view: 'shared' })
+    expect(view.chapters.find((x) => x.key === 'family_structure')).toBeUndefined()
+    expect(view.chapters[0].key).toBe('overview')
   })
 })
 

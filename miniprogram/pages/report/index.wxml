@@ -67,48 +67,12 @@
     <!-- ===== 阶段一报告主体：保单整理（2026-10-13 决策「当前报告降级成保单整理报告」）=====
          红线：只做归集/汇总/标注——不出建议、不加形容词、不确定就标出来（见 utils/checkup/organize.js）。
          数据与正文同源（_applyReportData 一处构建）→ 下拉刷新/客户版预览自动一致。 -->
-    <!-- 2026-10-18 IA 重构（用户决策：规则内容整合成一份完整报告）：
-         原「整理汇总卡」与「保障覆盖与风险卡」已合并为**正文第 1 章「概览」**（见 chapters.overview），
-         由 report-markdown 统一渲染 —— 一套排版、进目录、顺序由 CHAPTER_SEQ 单点定义。
-         这里只保留两类页面级内容：成员规模概览（第二步将并入家庭结构章）、待完善清单。 -->
-    <block wx:if="{{hasPolicy && checkup}}">
-      <!-- 2026-10-17：由「逐单卡片」改为「成员概览」。
-           原实现把 13 张保单在这里完整列了一遍，而文末「附录 · 保单明细」又完整列一遍
-           → 同一批明细出现两次，且第一次占掉报告第三屏（要滑过 22 张卡才到矩阵/缺口）。
-           现在这里只给每人的规模，逐单明细统一看附录（那边字段更全：保单号/投保人/受益人/状态）。 -->
-      <view class="sec-title">按成员整理<text class="sec-hint">逐单明细见文末附录</text></view>
-      <view class="mem-card" wx:for="{{checkup.groups}}" wx:key="memberId" wx:for-item="g">
-        <view class="mem-hd">
-          <view class="mem-name">{{g.name}}</view>
-          <view class="mem-role" wx:if="{{g.role}}">{{g.role}}</view>
-          <view class="mem-src">{{g.source}}</view>
-        </view>
-        <view class="mem-meta">{{g.policyCount}} 张保单 · 保额 {{g.sumAssuredText}}</view>
-      </view>
-
-      <block wx:if="{{checkup.unassigned.length > 0}}">
-        <view class="sec-title">未归入成员（被保人不在成员名单）</view>
-        <view class="sum-card">
-          <view class="pol" wx:for="{{checkup.unassigned}}" wx:key="id" wx:for-item="p">
-            <view class="pol-title"><text class="pol-name">{{p.productName}}</text><text class="pol-cat">{{p.category}}</text></view>
-            <view class="pol-row"><text class="k">被保人</text><text class="v">{{p.insuredName}}</text></view>
-            <view class="pol-row"><text class="k">保额</text><text class="v">{{p.sumAssuredText}}</text></view>
-          </view>
-        </view>
-      </block>
-
-      <block wx:if="{{checkup.pending.length > 0}}">
-        <!-- 待完善（2026-10-17 起按保单聚合）：一张保单一行，问题点挂在其下。
-             原实现按"问题"平铺 —— 同一张保单缺字段 + 缴费未年化会占两行，读起来像重复条目。 -->
-        <view class="sec-title">待完善（{{checkup.pending.length}} 张保单）</view>
-        <view class="sum-card">
-          <view class="pend" wx:for="{{checkup.pending}}" wx:key="policyId">
-            <view class="pend-name">{{item.productName}}</view>
-            <view class="pend-detail" wx:for="{{item.details}}" wx:for-item="d" wx:key="*this">{{d}}</view>
-          </view>
-        </view>
-      </block>
-    </block>
+    <!-- 2026-10-18 第二步 IA（用户决策：规则内容整合成一份完整报告）：
+         页面级内容已**全部搬进章节**，这里只剩页头 / 正文 / 进阶 / 页尾四个块：
+           · 概览（汇总 + 覆盖检查 + TOP-N 风险）        → chapters.overview
+           · 成员规模（N 张 · 保额）                     → 并入 chapters.family_structure 的成员节点
+           · 待完善清单（含"未归入成员"条目）             → chapters.pending_data（附录前最后一章）
+        页面不再持有 checkup 数据 —— 顺序只由 CHAPTER_SEQ 定义一处。 -->
 
     <!-- 空态（2026-10-18 IA 重构：不再挂在折叠区下，无保单时直接可见） -->
     <view class="empty-report" wx:if="{{!hasPolicy}}">

@@ -235,6 +235,20 @@
 .pc-card--inactive { opacity:0.72; }
 
 /* 三行简写：横排数据行，无字段名（单位自带语义），分隔线区分产品行 */
+/* ========== 待完善清单（2026-10-18 第二步 IA）==========
+   密度接近表格：一行保单 + 若干问题点；不画卡片描边（一章里可能有 5~10 条，
+   每条都描边会比数据本身更重）。 */
+.pd-wrap { padding:var(--sp-1) 0; }
+.pd-item { padding:var(--sp-4) 0; border-bottom:1rpx solid var(--border); }
+.pd-item:last-child { border-bottom:none; }
+.pd-head { display:flex; align-items:baseline; justify-content:space-between; gap:var(--sp-3); }
+.pd-name { flex:1; min-width:0; font-size:var(--fs-caption); color:var(--text-primary); font-weight:var(--fw-semi); }
+.pd-act { flex-shrink:0; font-size:var(--fs-tiny); color:var(--accent-deep); padding:var(--sp-1) var(--sp-2); }
+.pd-detail { display:block; margin-top:var(--sp-1); font-size:var(--fs-tiny); color:var(--text-secondary); line-height:var(--lh-snug); }
+
+/* 家庭结构里的成员规模（张数 · 保额）：比角色更弱一档，不抢姓名 */
+.ft-scale { display:block; margin-top:2rpx; font-size:var(--fs-tiny); color:var(--text-tertiary); }
+
 /* ========== 概览块（2026-10-18 IA 重构）==========
    与章节正文同一套排版：无独立卡底（章节本身就是卡片），只用分隔线分组。
    刻意不再画"第二张摘要卡" —— 那正是本次消除的重复。 */

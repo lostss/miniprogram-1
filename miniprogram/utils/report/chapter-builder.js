@@ -250,11 +250,24 @@ function buildChapters(family, report, gaps, opts) {
   var sortedMembers = [].concat(members).sort(function(a, b) {
     return (_roleGroup(a.role) - _roleGroup(b.role)) || String(a.name).localeCompare(String(b.name), 'zh')
   })
+  // 2026-10-18 第二步 IA：把原页面「按成员整理」的规模（N 张 · 保额）并入家庭结构节点 ——
+  // 它本就是"这个人有几份保障"的信息，和姓名/角色/年龄是一件事的不同侧面。
+  // 数据同源（opts.checkup.groups），不在页面另算一份。
+  var ckGroups = (ovCk && ovCk.groups) || []
   var nodes = sortedMembers.map(function(m, i) {
     var role = m.role || ''
+    var g = null
+    for (var gi = 0; gi < ckGroups.length; gi++) {
+      var gg = ckGroups[gi]
+      if ((m.member_id && gg.memberId === m.member_id) || (!m.member_id && gg.name === m.name)) { g = gg; break }
+    }
     // 2026-09-18 报告页审计：补稳定唯一 key —— 原 WXML 用 wx:key="name"，同名成员碰撞；
     // 而 member_id 在缺 id 的成员上为 ''，单用也会碰撞 → 用「member_id|下标」组合保证唯一
-    return { key: (m.member_id || 'n') + '|' + i, name: m.name, role: role, age: m.age || '', member_id: m.member_id || '', display: m.age ? (role + '(' + m.age + ')') : role }
+    return {
+      key: (m.member_id || 'n') + '|' + i, name: m.name, role: role, age: m.age || '', member_id: m.member_id || '',
+      display: m.age ? (role + '(' + m.age + ')') : role,
+      scaleText: g ? (g.policyCount + ' 张 · 保额 ' + g.sumAssuredText) : ''
+    }
   })
   // 去代际分层：成员卡片平铺流动布局（排序仍按角色分组序+中文名）
   ch.push({
@@ -611,6 +624,18 @@ function buildChapters(family, report, gaps, opts) {
     })
   }
 
+  // 待完善（2026-10-18 第二步 IA）：原页面级「待完善」清单搬进正文，作为附录前的最后一章。
+  // 数据源不变（organize 的 pending，已按保单聚合），只是换渲染位置 —— 页面不再自己列。
+  if (ovCk && ovCk.pending && ovCk.pending.length) {
+    ch.push({
+      key: 'pending_data', title: '待完善',
+      // 一句话说明这一章存在的意义（否则用户会以为是系统错误清单）
+      pre: '以下保单有字段缺失或待核对，补充后报告中的金额与缺口会更准。',
+      customBlocks: [createBlock('pending_list', { items: ovCk.pending })],
+      unit: ovCk.pending.length + ' 张保单'
+    })
+  }
+
   // 附录：保单明细（不作为编号章节，仅保留标题 + 保单卡片）
   // 审计 L1：明细型低频查阅，默认折叠
   ch.push({
@@ -627,7 +652,9 @@ function buildChapters(family, report, gaps, opts) {
   // 缺口是诊断核心，原先排在"保障期间"这层时间信息之后，读者要越过一张甘特图才看到最该看的东西。
   // 用显式序列而非就地搬代码块：① diff 小、可回退 ② 未列出的章节按原顺序兜底追加（未来新增章不丢）。
   // ⚠️ 必须列全：漏掉的章节会走下方"兜底追加"被推到附录之后（next_steps 第一次就漏了）
-  var CHAPTER_SEQ = ['overview', 'family_structure', 'family_finance', 'coverage_summary', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'risk_alerts', 'next_steps', 'appendix_policies']
+  // ⚠️ 必须列全：漏掉的章节会走下方"兜底追加"被推到附录之后（next_steps 曾经就漏了）
+  // 待完善放最后（附录前）：它是"数据质量补录"清单，不该插在诊断结论之间。
+  var CHAPTER_SEQ = ['overview', 'family_structure', 'family_finance', 'coverage_summary', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'risk_alerts', 'next_steps', 'pending_data', 'appendix_policies']
   var ordered = []
   CHAPTER_SEQ.forEach(function(k) {
     ch.forEach(function(c) { if (c.key === k) ordered.push(c) })

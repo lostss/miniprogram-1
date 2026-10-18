@@ -62,6 +62,11 @@ const BLOCK_REGISTRY = {
     required: ['rows'],
     defaults: { rows: [], ticks: [], startYear: 0, endYear: 0, nowPct: null, nowYear: 0, notes: [] }
   },
+  // 待完善清单（2026-10-18 第二步 IA）：原页面级「待完善」，按保单聚合后的条目
+  pending_list: {
+    required: ['items'],
+    defaults: { items: [] }
+  },
   // 概览（2026-10-18 重新启用）：正文第 1 章 = 原「整理汇总卡 + 保障覆盖与风险卡」
   overview: {
     required: ['policyCount', 'payoutText', 'quotaText'],

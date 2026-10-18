@@ -99,6 +99,8 @@
               <view class="ft-info">
                 <text class="ft-name">{{node.name}}</text>
                 <text class="ft-role">{{node.display}}</text>
+                <!-- 2026-10-18 第二步 IA：原页面「按成员整理」的规模并到这里（同一件事的不同侧面） -->
+                <text class="ft-scale" wx:if="{{node.scaleText}}">{{node.scaleText}}</text>
               </view>
             </view>
           </view>
@@ -124,6 +126,18 @@
           </view>
         </view>
         <!-- 附录保单卡片（按成员分组，点击弹明细） -->
+        <!-- 待完善清单（2026-10-18 第二步 IA）：原页面级「待完善」，按保单聚合后进正文最后一章。
+             每张保单一行 +「去补」直达该保单的编辑 Sheet（复用 policytap 事件，不新增链路）。 -->
+        <view wx:if="{{block.t==='pending_list'}}" class="pd-wrap">
+          <view class="pd-item" wx:for="{{block.items}}" wx:key="policyId">
+            <view class="pd-head">
+              <text class="pd-name">{{item.productName || '未命名保单'}}</text>
+              <text class="pd-act pressable" wx:if="{{item.policyId && !readonly}}" data-id="{{item.policyId}}" catchtap="onPolicyTap" aria-label="补充该保单信息">去补</text>
+            </view>
+            <text class="pd-detail" wx:for="{{item.details}}" wx:for-item="d" wx:key="*this">{{d}}</text>
+          </view>
+        </view>
+
         <!-- 概览块（2026-10-18 IA 重构）：原页面级「整理汇总卡 + 保障覆盖与风险卡」合并为正文第 1 章。
              合并的意义：同一批信息不再出现两套排版、缺口不再在 3 处重复、目录能索引到它。
              数据全部由 chapter-builder 备好（本组件不做计算）。 -->
