@@ -147,11 +147,13 @@
    而横滑后成员名滚出视野 → 剩下几个数字不知道是谁的（真机截图里就是这个观感）。
    sticky 在 overflow-x 容器内可用；不支持时退化为普通单元格，无副作用。
    首列必须有不透明底色，否则滚动时数字会从底下透出来（偶数行另有底色，单独覆盖）。 */
-.pano-hd-first { flex:0 0 84rpx; position:sticky; left:0; z-index:2; background:var(--accent-dim); }
+/* 2026-10-18 修（真机）：首列 84rpx（42px）装不下 3 个汉字 —— sticky 生效后姓名被裁成单字
+   （"李阳勇"只显示"勇"）。加宽到 128rpx，并允许换行兜底（4 字名如"欧阳娜娜"也不会截断）。 */
+.pano-hd-first { flex:0 0 128rpx; position:sticky; left:0; z-index:2; background:var(--accent-dim); }
 .pano-row { display:flex; }
 .pano-row:nth-child(even) { background:var(--bg-input); }
 .pano-cell { flex:1; min-width:148rpx; padding:var(--sp-3) var(--sp-2); font-size:var(--fs-caption); text-align:center; display:flex; align-items:center; justify-content:center; }
-.pano-name { flex:0 0 84rpx; font-weight:var(--fw-semi); color:var(--text-primary); position:sticky; left:0; z-index:2; background:var(--bg-card); }
+.pano-name { flex:0 0 128rpx; font-weight:var(--fw-semi); color:var(--text-primary); position:sticky; left:0; z-index:2; background:var(--bg-card); line-height:var(--lh-tight); padding-right:var(--sp-1); }
 .pano-row:nth-child(even) .pano-name { background:var(--bg-input); }
 .pano-name-total { color:var(--accent-deep); }
 .pano-status { min-height:56rpx; border-radius:var(--r-sm); margin:var(--sp-1); font-weight:var(--fw-semi); }
@@ -242,7 +244,8 @@
 .ov-pair-item { flex:1; min-width:0; }
 .ov-pair-val { font-size:var(--fs-xl); font-weight:var(--fw-bold); color:var(--text-primary); letter-spacing:var(--ls-wide); }
 .ov-pair-lbl { margin-top:2rpx; font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:1.4; }
-.ov-cats { display:flex; flex-wrap:wrap; gap:var(--sp-2); margin-top:var(--sp-4); }
+.ov-cat-row { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-2); margin-top:var(--sp-4); }
+.ov-cat-label { font-size:var(--fs-tiny); color:var(--text-tertiary); margin-right:var(--sp-1); }
 .ov-chip { font-size:var(--fs-tiny); color:var(--text-secondary); background:var(--bg-input); padding:var(--sp-1) var(--sp-3); border-radius:var(--r-full); }
 .ov-note { margin-top:var(--sp-2); font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-snug); }
 /* 覆盖检查：与风险条之间用分隔线，避免两块结论挤在一起 */

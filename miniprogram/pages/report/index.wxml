@@ -154,11 +154,11 @@
       </view>
     </view>
     <view class="deep-analysis" wx:if="{{hasPolicy && deep}}">
+      <!-- 2026-10-18 修（真机）：原此处又有一套「保障分析 / AI 解读 / 语气」标题 ——
+           与上方「进阶报告 / AI 分析 / 语气」重复成两层头。标题与语气开关统一由进阶区头部承担，
+           这里只留内容（生成时间见下方 deep-meta）。 -->
       <view class="deep-head">
-        <text class="deep-title">保障分析</text>
-        <!-- 2026-09-12：客户版不显示「AI 解读」角标（同 hero 结论标签，理由见上报文摘要卡） -->
-        <text class="deep-badge" wx:if="{{!isShared}}">AI 解读</text>
-        <text class="deep-tone pressable" wx:if="{{!isShared}}" bindtap="onToggleTone" aria-label="切换分析语气">{{reportTone === 'warm' ? '语气：共情' : '语气：直白'}}</text>
+        <text class="deep-title">分析正文</text>
       </view>
       <!-- 保障分析生成时间（2026-09-06：主 meta 位为"报告更新"，此处作分析新鲜度说明） -->
       <text class="deep-meta" wx:if="{{reportMeta.analysisAt}}">{{reportMeta.analysisAt}}</text>

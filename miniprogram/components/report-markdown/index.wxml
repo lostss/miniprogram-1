@@ -139,8 +139,11 @@
               <view class="ov-pair-lbl">报销额度 · 医疗 / 意外</view>
             </view>
           </view>
-          <view class="ov-cats" wx:if="{{block.categories.length}}">
-            <text class="ov-chip" wx:for="{{block.categories}}" wx:key="*this">已覆盖 {{item}}</text>
+          <!-- 2026-10-18 修（真机）：原每个 chip 都写"已覆盖"，5 个险种就重复 5 次；
+               "已覆盖"是这一组的标题，chips 只放险种名。 -->
+          <view class="ov-cat-row" wx:if="{{block.categories.length}}">
+            <text class="ov-cat-label">已覆盖险种</text>
+            <text class="ov-chip" wx:for="{{block.categories}}" wx:key="*this">{{item}}</text>
           </view>
           <view class="ov-note" wx:if="{{block.savingsText}}">储蓄型（年金 / 增额寿 / 终身寿）合计 {{block.savingsText}}，与上述分列</view>
           <view class="ov-note" wx:if="{{block.unknownText}}">{{block.unknownText}} 的保单未标注险种，未计入上述分类</view>

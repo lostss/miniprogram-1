@@ -199,8 +199,19 @@ function buildHero(family, gaps, opts) {
   // 的 gap 为 null 被过滤 → 该类成员被判"保障覆盖完整"（绿点）并计入完整数。未知 ≠ 完整。
   var alerts = members.map(function(m) {
     var mine = gaps.filter(function(g) { return g.member === m.name })
-    var missing = mine.filter(function(g) { return g.gap > 0 }).map(function(g) { return _shortCatName(g.category) })
+    var gapItems = mine.filter(function(g) { return g.gap > 0 })
+    // 2026-10-18 修（真机截图）：原实现把 `gap > 0` 一律写成「缺少XX保障」——
+    // 而"有保单但保额低于需求"也是 gap > 0。截图里矩阵明明写着「李阳勇 重疾险 20 万」，
+    // 概览却说他"缺少…重疾"，客户当场就会质疑。（chapter-builder 的保障汇总章已修过同一处，
+    // 这是 hero 这条独立路径漏改。）两个事实分开表达：
+    //   无此类保单 → 缺少X；有但不足 → X保额不足
+    var absent = gapItems.filter(function(g) { return !(Number(g.existing) > 0) }).map(function(g) { return _shortCatName(g.category) })
+    var short = gapItems.filter(function(g) { return Number(g.existing) > 0 }).map(function(g) { return _shortCatName(g.category) })
+    var missing = gapItems.map(function(g) { return _shortCatName(g.category) })
     var unknown = mine.filter(function(g) { return g.reliability === 'blocked' }).map(function(g) { return _shortCatName(g.category) })
+    var ownerText = []
+    if (absent.length) ownerText.push('缺少' + absent.join('、') + '保障')
+    if (short.length) ownerText.push(short.join('、') + '保额不足')
     return {
       name: m.name,
       role: m.role || '',
@@ -212,7 +223,7 @@ function buildHero(family, gaps, opts) {
       blocked: missing.length === 0 && unknown.length > 0,
       // 客户版中性措辞：不列"缺少XX"式恐吓文案，只标"保障待完善"
       display: missing.length > 0
-        ? (shared ? '保障待完善' : ('缺少' + missing.join('、') + '保障'))
+        ? (shared ? '保障待完善' : ownerText.join('；'))
         : (unknown.length > 0
           ? (shared ? '部分保障待确认' : (unknown.join('、') + '保障情况待确认'))
           : '保障覆盖完整')

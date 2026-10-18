@@ -232,8 +232,11 @@ function buildChapters(family, report, gaps, opts) {
         summaryLead: (ovHero && ovHero.summary) || '',
         alerts: (ovHero && ovHero.alerts) || [],
         topAdvice: (ovHero && ovHero.topAdvice) || '',
-        // TOP-N 风险（红黄绿灯）：客户版不显示（与 risk_alerts 章同口径）
-        risks: (!shared && ovRisks && ovRisks.items) ? ovRisks.items : [],
+        // TOP-N 风险（红黄绿灯）：客户版不显示（与 risk_alerts 章同口径）。
+        // 2026-10-18 真机修：概览只放前 3 条 —— 原实现把 12 项全塞进来，
+        // 其中 3 条都是同一类"保单载明期限已过"，把概览撑成了风险列表页。
+        // 完整清单仍在「特别提醒」章（risk_alerts），概览只负责"先看到最要命的三条"。
+        risks: (!shared && ovRisks && ovRisks.items) ? ovRisks.items.slice(0, 3) : [],
         risksMore: (!shared && ovRisks && ovRisks.more) || 0,
         risksTotal: (!shared && ovRisks && ovRisks.total) || 0
       })]
