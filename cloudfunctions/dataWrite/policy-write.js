@@ -117,7 +117,9 @@ async function writePolicy(db, openid, event) {
   const vals = [data.insured_name, data.product_name, data.insurance_category, data.special_agreement].filter(Boolean)
   if (vals.some(v => detectInjection(String(v)).injected)) return { code: 400, msg: '内容校验未通过' }
   const now = new Date()
-  const { product_name, insurance_category, insurance_type, insurance_period, sum_assured, annual_premium, policy_number, insurer, effective_date, policyholder_name, insured_name, beneficiary_name, special_agreement, payment_method, payment_period, id, member_id, memberId: dataMemberId, confidence, field_confidence, confidence_source, auto_confirmed } = data
+  // 2026-10-18：sum_assured / annual_premium / effective_date 统一由 normalizePolicyInput 归一
+  // （金额钳位、险种白名单、日期校验），这里不再直接解构，避免出现"解构了却没用"的死变量。
+  const { product_name, insurance_type, insurance_period, policy_number, insurer, policyholder_name, insured_name, beneficiary_name, special_agreement, payment_method, payment_period, id, member_id, memberId: dataMemberId, confidence, field_confidence, confidence_source, auto_confirmed } = data
   // A1 修复：insured_name 为空时回退用 policyholder_name（新华保险投保人=被保人场景）
   const resolvedInsuredName = insured_name || policyholder_name || ''
   // P0-2：special_agreement 入库前脱敏，防止 OCR 提取的身份证/手机号/银行卡号明文落库
