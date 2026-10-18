@@ -22,48 +22,42 @@ describe('buildDeepAnalysis — core_insights 视图包装', () => {
 })
 
 describe('buildReportView — 报告聚合入口（候选 2 深模块）', () => {
-  test('客户版视图（view=shared）：中性措辞 + 置信度章隐藏 + 仅保障期满节点 + 占收入比仅供参考', () => {
+  test('报告内容不分代理/客户（2026-10-18 决策）：view=shared 与 owner 产出完全一致', () => {
     const c = baseCustomer()
     c.policies = [
       { id: 'P1', insured_name: '李阳勇', insurance_category: '寿险', sum_assured: 1000000, annual_premium: 8000, effective_date: '1980-01-01', insurance_period: '至2060年12月31日', payment_period: '100年', status: 'active', field_confidence: { sum_assured: 0.8 } }
     ]
     const view = buildReportView(c, { conclusion: 'AI 结论' }, { view: 'shared' })
-    // Hero 中性措辞：不写"缺少XX"
+    const owner = buildReportView(c, { conclusion: 'AI 结论' }, { view: 'owner' })
+
+    // ① 章节集合与顺序一致（含家庭结构/财务、置信度告警）
+    expect(view.chapters.map(x => x.key)).toEqual(owner.chapters.map(x => x.key))
+    expect(view.chapters.find(x => x.key === 'family_structure')).toBeDefined()
+    expect(view.chapters.find(x => x.key === 'family_finance')).toBeDefined()
+    // 置信度告警不再对客户隐藏（这一条是本次决策的直接后果：客户也会看到"字段识别存疑"）
+    expect(view.chapters.find(x => x.key === 'risk_alerts')).toBeDefined()
+
+    // ② 措辞统一为 owner 口径：区分"缺少"与"保额不足"，不再用中性话术
     const ly = view.hero.alerts.find(a => a.name === '李阳勇')
     expect(ly.ok).toBe(false)
-    expect(ly.display).toBe('保障待完善')
-    expect(ly.display).not.toContain('缺少')
-    expect(view.hero.summary).toContain('保障待完善')
-    expect(view.hero.summary).not.toContain('缺口')
-    expect(view.hero.topAdvice).toContain('建议关注')
-    expect(view.hero.topAdvice).not.toContain('补充')
-    // 置信度告警章整章隐藏（客户版不可见内部置信度）
-    expect(view.chapters.find(x => x.key === 'risk_alerts')).toBeUndefined()
-    // 审计·顾问视角（2026-09-04）：客户版跳过①②（家庭结构/财务为顾问核对底稿，客户无需被告知自家信息）
-    expect(view.chapters.find(x => x.key === 'family_structure')).toBeUndefined()
-    expect(view.chapters.find(x => x.key === 'family_finance')).toBeUndefined()
-    // 2026-10-18 IA 重构：概览（原页面级汇总卡/诊断卡）成为正文第 1 章，客户版同样从概览开始
-    expect(view.chapters[0].key).toBe('overview')
-    // 保障汇总缺失提示中性化
+    expect(ly.display).toContain('缺少')
+    expect(ly.display).toBe(owner.hero.alerts.find(a => a.name === '李阳勇').display)
     const cs = view.chapters.find(x => x.key === 'coverage_summary')
-    expect(cs.pre).toContain('保障待完善')
-    expect(cs.pre).not.toContain('缺少')
-    // 2026-09-12：客户版不再显示占收入比——家庭财务章对客户隐藏（:181），客户无从核对"家庭年收入"基数；
-    // 原实现引用不可见数据并附"仅供参考"，双重减分（数字算不出 + 结论自我注销）
+    expect(cs.pre).toContain('缺少')
+    expect(cs.pre).toBe(owner.chapters.find(x => x.key === 'coverage_summary').pre)
+
+    // ③ 保费占收入比、时间线全部节点、缺口公式：两边一致
     const cal = view.chapters.find(x => x.key === 'premium_calendar')
-    expect(cal.content).toContain('年总保费')
-    expect(cal.content).not.toContain('占家庭年收入')
-    expect(cal.content).not.toContain('仅供参考')
-    // 关键节点仅保留保障期满（交费期满/现价回本对客户隐藏）
-    const tl = view.chapters.find(x => x.key === 'premium_timeline')
-    const tlBlock = tl.customBlocks.find(b => b.t === 'timeline')
-    expect(tlBlock.items.some(e => e.type === 'paydone' || e.type === 'breakeven')).toBe(false)
-    // 缺口章（客户版仅缺口金额，不暴露"需求=…"公式）
-    const gapS = view.chapters.find(x => x.key === 'gap_analysis')
-    expect(gapS).toBeDefined()
-    expect(gapS.content).not.toContain('需求')
-    // 活报告模型（2026-09）：客户版移除⑧章（行动出口唯一化为 AI 行动清单）；owner 保留
-    expect(view.chapters.find(x => x.key === 'next_steps')).toBeUndefined()
+    expect(cal.content).toBe(owner.chapters.find(x => x.key === 'premium_calendar').content)
+    const tlBlock = view.chapters.find(x => x.key === 'premium_timeline').customBlocks.find(b => b.t === 'timeline')
+    expect(tlBlock.items.length).toBe(
+      owner.chapters.find(x => x.key === 'premium_timeline').customBlocks.find(b => b.t === 'timeline').items.length
+    )
+    expect(view.chapters.find(x => x.key === 'gap_analysis').content)
+      .toBe(owner.chapters.find(x => x.key === 'gap_analysis').content)
+
+    // ④ 概览仍是第 1 章
+    expect(view.chapters[0].key).toBe('overview')
   })
 
   test('单接口返回全部视图数据（无告警时 10 章 + Hero + 摘要卡 + gaps + hints）', () => {
@@ -703,9 +697,11 @@ describe('第二步 IA：成员规模并入家庭结构章', () => {
     expect(ly.scaleText).toMatch(/\d+ 张 · 保额 /)
   })
 
-  test('客户版没有家庭结构章（成员结构是顾问底稿），但概览仍在', () => {
+  test('统一视图下客户版同样有家庭结构章（2026-10-18 决策：内容不分视角）', () => {
     const view = buildReportView(baseCustomer(), {}, { view: 'shared' })
-    expect(view.chapters.find((x) => x.key === 'family_structure')).toBeUndefined()
+    const ft = view.chapters.find((x) => x.key === 'family_structure')
+    expect(ft).toBeDefined()
+    expect(ft.customBlocks.find((b) => b.t === 'family_tree').nodes[0].scaleText).toMatch(/\d+ 张/)
     expect(view.chapters[0].key).toBe('overview')
   })
 })

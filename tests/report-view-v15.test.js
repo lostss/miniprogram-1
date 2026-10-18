@@ -47,25 +47,37 @@ describe('V1.5 行动出口收敛（owner）', function () {
   })
 })
 
-describe('V1.5 客户版行动指向保持', function () {
-  test('shared 版保留 topAdvice（无 next_steps 章，它是唯一行动指向）', function () {
-    const view = buildReportView(family(), { portrait: '家庭画像' }, { view: 'shared' })
-    expect(hasKey(view.chapters, 'next_steps')).toBe(false)
-    expect(view.hero.topAdvice).toBeTruthy()
+describe('内容统一（2026-10-18 用户决策）', function () {
+  test('报告不再区分代理/客户：同一份数据产出的章节与结论完全一致', function () {
+    const owner = buildReportView(family(), { portrait: '家庭画像' }, { view: 'owner' })
+    const shared = buildReportView(family(), { portrait: '家庭画像' }, { view: 'shared' })
+    expect(shared.chapters.map(c => c.key)).toEqual(owner.chapters.map(c => c.key))
+    expect(shared.hero.alerts).toEqual(owner.hero.alerts)
+  })
+
+  test('统一后行动指向仍只有一处：有 AI 分析时去掉 next_steps 章，无 AI 时保留', function () {
+    const withDeep = buildReportView(family(), { portrait: '家庭画像' }, { view: 'shared' })
+    expect(hasKey(withDeep.chapters, 'next_steps')).toBe(false)
+    expect(withDeep.hero.topAdvice).toBe('')
+    expect(withDeep.deep).toBeTruthy()
+
+    const noDeep = buildReportView(family(), {}, { view: 'shared' })
+    expect(hasKey(noDeep.chapters, 'next_steps')).toBe(true)
   })
 })
 
-describe('客户版呈现修正（2026-09-12）', function () {
-  test('客户版缺口章：带单位 + 章首差额口径，且不含倍数/收入基数', function () {
+describe('缺口章呈现（统一后不再有客户版专用措辞）', function () {
+  test('缺口章带单位 + 章首差额口径；收入基数随家庭财务章一起对客户可见', function () {
     const view = buildReportView(family(), {}, { view: 'shared' })
     const gap = view.chapters.find(c => c.key === 'gap_analysis')
     expect(gap).toBeDefined()
     expect(gap.unit).toBe('单位：万元')
-    expect(gap.content).toContain('建议保额')
-    expect(gap.content).toContain('已有保额')
-    // 不给倍数公式/收入基数——家庭财务章对客户隐藏，写出来等于暴露被刻意隐藏的数据
-    expect(gap.content).not.toContain('需求')
-    expect(gap.content).not.toContain('年收入')
+    expect(gap.content).toContain('缺口')
+    expect(gap.content).toContain('需求')
+    expect(gap.content).toContain('已有')
+    // 2026-10-18：客户版与 owner 版逐字一致（内容统一的直接判据；旧版客户版会删掉"需求=…"公式）
+    const ownerGap = buildReportView(family(), {}, { view: 'owner' }).chapters.find(c => c.key === 'gap_analysis')
+    expect(gap.content).toBe(ownerGap.content)
   })
 
   test('owner 版缺口章同样带单位（差额口径行仅客户版）', function () {

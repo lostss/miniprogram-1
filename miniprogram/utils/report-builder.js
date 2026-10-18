@@ -25,7 +25,13 @@ var { buildCheckupReport } = require('./checkup/organize')
 function buildReportView(family, report, opts) {
   report = report || {}
   opts = opts || {}
-  const shared = !!(opts.view === 'shared')
+  // 2026-10-18 用户决策：**报告内容不区分代理人与客户，完全统一**。
+  // 因此内容侧不再看 `opts.view` —— 家庭结构/财务、置信度告警、保费占收入比、
+  // 时间线全部节点、缺口公式、"缺少X"措辞、风险预警，客户看到的与代理人完全一致。
+  // ⚠️ 仍按 isShared 变化的只剩**交互与权限**（编辑入口 / 上传 / 转发 / 导出 / 水印），
+  //    它们在页面层（pages/report 的 readonly、footer）处理，与本文件无关。
+  // 保留 `shared` 这个名字只为让下游分支保持可读（值恒为 false）。
+  const shared = false
   const gaps = buildGaps(family)
   const deep = buildDeepAnalysis(report)
   // 2026-10-18 IA 重构：**chapters 改为最后构建** —— 概览章（第 1 章）要用到
@@ -33,7 +39,9 @@ function buildReportView(family, report, opts) {
   // 顺序调整不改变任何口径，只是把"先生成再拼装"改成"先备料再生成"。
   const hints = makeHints(report, family)
   // Hero 结论先行：规则版覆盖检查（警示列表 + 总结 + 优先建议），AI conclusion 仅供分享标题
-  const heroView = buildHero(family, gaps, opts)
+  // 内容统一（见文件头决策）：下游一律按 owner 口径构建，客户版不再走中性措辞
+  const uniOpts = Object.assign({}, opts, { view: 'owner' })
+  const heroView = buildHero(family, gaps, uniOpts)
   const hero = Object.assign(heroView, { conclusion: String(report.conclusion || '') })
   // V1.5 行动出口收敛（2026-09-12）：owner 版行动建议此前有 4 个出口
   // （hero.topAdvice / next_steps 章 / deep.plan / deep.suggestions）→ 收敛为任一时刻只有一个：
@@ -89,13 +97,13 @@ function buildReportView(family, report, opts) {
     members: family.members || [],
     policies: family.policies || [],
     premiumRatio: norm.premiumRatio,
-    view: opts.view
+    view: 'owner' // 内容统一：风险预警不再按视角分档
   })
   // 2026-10-18 IA 重构：chapters 最后构建 —— 概览章需要 hero / risks / checkup。
   // checkup 缺省时**在此自算**（而不是要求每个 caller 都传）：否则只有报告页有概览章，
   // PDF / 分享页 / 单测各自缺一章 —— 那正是"同一份报告多处实现"的老问题。
   const ck = opts.checkup || buildCheckupReport({ family: family, members: (family && family.members) || [], policies: (family && family.policies) || [] })
-  let chapters = buildChapters(family, report, gaps, Object.assign({}, opts, { hero: hero, risks: risks, checkup: ck }))
+  let chapters = buildChapters(family, report, gaps, Object.assign({}, uniOpts, { hero: hero, risks: risks, checkup: ck }))
   // V1.5 行动出口收敛：owner 已有 AI 分析时移除 next_steps（原在 chapters 构建前过滤，现后置）
   if (!shared && deep) chapters = chapters.filter(c => c.key !== 'next_steps')
   return { chapters: chapters, hero: hero, summaryCards: summaryCards, gaps: gaps, hints: hints, deep: deep, risks: risks }

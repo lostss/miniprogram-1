@@ -273,8 +273,11 @@ Page({
     // 过滤，客户调必然空/无权。改用共享响应里带下来的 facts（getSharedFamily 已分页取回 + 脱敏）。
     // 视图组装仍由 buildFactsView(shared:true) 独家承担（"只给客观信息、不给线索/时间线"这条规则
     // 只有一处实现）——wxml 注释早已写"owner 与客户版都渲染"，断的只是取数。
+    // 2026-10-18 用户决策：报告不区分代理/客户 → 客户档案也统一（含"待核实线索/时间线"）。
+    // 仍按 isShared 分支的只剩**取数路径**（客户拿不到 owner 的 facts，只能读共享响应里的），
+    // 展示规则不再分两套。
     if (this.data.isShared) {
-      const view = buildFactsView((this._family && this._family.facts) || [], { shared: true })
+      const view = buildFactsView((this._family && this._family.facts) || [], { shared: false })
       this.setData({ factsView: view.empty ? null : view })
       return
     }
@@ -496,7 +499,9 @@ Page({
     // 输入是同一份 family（members/policies），输出只含事实白名单（见 utils/checkup/organize.js）。
     // 2026-10-18 第二步 IA：checkup 由 buildReportView 内部自算（概览章 + 成员规模 + 待完善章都用它），
     // 页面不再持有这份数据 —— 之前页面算一份、builder 再算一份，是"同一份报告多处实现"的温床。
-    const view = buildReportView(c, rp, { view: this.data.isShared ? 'shared' : 'owner' })
+    // 2026-10-18：报告内容统一（builder 内部已固定 owner 口径），这里不再传视角 ——
+    // `isShared` 只影响交互与权限（编辑/上传/转发/导出/水印），与内容无关。
+    const view = buildReportView(c, rp, {})
     // 审计 P1-1：meta 必须基于本次入参 c，不可依赖任何"上一次"数据（否则标题日期首次显示当前时刻、
     // 后续滞后一个刷新周期，且分享标题同步错）。现 this._family 已在方法首行赋为本次 c，约束天然成立。
     const reportMeta = buildReportMeta(c)
