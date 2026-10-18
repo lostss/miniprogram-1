@@ -42,7 +42,8 @@ describe('buildReportView — 报告聚合入口（候选 2 深模块）', () =>
     // 审计·顾问视角（2026-09-04）：客户版跳过①②（家庭结构/财务为顾问核对底稿，客户无需被告知自家信息）
     expect(view.chapters.find(x => x.key === 'family_structure')).toBeUndefined()
     expect(view.chapters.find(x => x.key === 'family_finance')).toBeUndefined()
-    expect(view.chapters[0].key).toBe('coverage_summary') // 客户版从保障汇总开始
+    // 2026-10-18 IA 重构：概览（原页面级汇总卡/诊断卡）成为正文第 1 章，客户版同样从概览开始
+    expect(view.chapters[0].key).toBe('overview')
     // 保障汇总缺失提示中性化
     const cs = view.chapters.find(x => x.key === 'coverage_summary')
     expect(cs.pre).toContain('保障待完善')
@@ -65,12 +66,19 @@ describe('buildReportView — 报告聚合入口（候选 2 深模块）', () =>
     expect(view.chapters.find(x => x.key === 'next_steps')).toBeUndefined()
   })
 
-  test('单接口返回全部视图数据（无告警时 8 章 + Hero + 摘要卡 + gaps + hints）', () => {
+  test('单接口返回全部视图数据（无告警时 9 章 + Hero + 摘要卡 + gaps + hints）', () => {
     const c = baseCustomer()
     const view = buildReportView(c, { conclusion: 'AI 结论', disclaimer: '免责' })
-    // 审计·顾问视角（2026-09-04）：新增 ④保障缺口 + 行动收口两章 → 无告警 owner 版 = 8 章
-    expect(view.chapters.length).toBe(8)
-    expect(view.chapters[0].key).toBe('family_structure')
+    // 2026-10-18 IA：新增概览章 → 无告警 owner 版 = 9 章
+    // （概览 + 家庭结构 + 财务 + 保障汇总 + 缺口 + 期间 + 月历 + 收口 + 附录）
+    expect(view.chapters.length).toBe(9)
+    expect(view.chapters[0].key).toBe('overview')
+    // 概览章由 customBlock 承载（组件内渲染），不是 markdown 文本；字段平铺在 block 上
+    const ov = view.chapters[0].customBlocks[0]
+    expect(ov.t).toBe('overview')
+    expect(ov.policyCount).toBeGreaterThan(0)
+    expect(ov.payoutText).toBeTruthy()
+    expect(ov.quotaText).toBeTruthy()
     expect(view.hero.alerts.length).toBe(3)
     expect(view.hero.conclusion).toBe('AI 结论')
     expect(view.summaryCards.count).toBe(1) // 保障人数=有 active 保单的去重成员数（李阳勇1人）
@@ -81,7 +89,7 @@ describe('buildReportView — 报告聚合入口（候选 2 深模块）', () =>
 
   test('无报告对象 → 视图仍完整（conclusion 空）', () => {
     const view = buildReportView(baseCustomer(), null)
-    expect(view.chapters.length).toBe(8)
+    expect(view.chapters.length).toBe(9)
     expect(view.hero.conclusion).toBe('')
     expect(view.hints).toEqual([])
   })

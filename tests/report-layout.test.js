@@ -27,11 +27,9 @@ function lineOf(re) {
   return i + 1
 }
 
-describe('报告页 IA：规则内容常驻、AI 在页尾、合规与页尾常驻', () => {
-  test('整理汇总卡 → 规则诊断 → 成员概览 → 待完善 → 正文 → 进阶报告 → 页尾', () => {
+describe('报告页 IA：规则内容整合进章节、AI 在页尾、合规与页尾常驻', () => {
+  test('成员概览 → 待完善 → 正文 → 进阶报告 → 免责 → 页尾（汇总卡/诊断卡已并入正文第 1 章）', () => {
     const order = [
-      ['整理汇总卡', /class="sum-card"/],
-      ['规则诊断卡', /class="diag-card"/],
       ['按成员整理', /sec-title"[^>]*>按成员整理/],
       ['待完善', /sec-title"[^>]*>待完善/],
       ['正文（章节）', /<report-markdown/],
@@ -44,12 +42,22 @@ describe('报告页 IA：规则内容常驻、AI 在页尾、合规与页尾常�
     expect(got.map((x) => x.name)).toEqual(sorted.map((x) => x.name))
   })
 
-  test('规则诊断（覆盖检查 / TOP-N 风险）不在任何 AI 折叠里 —— 原先是"展开保障分析"内', () => {
-    // 折叠机制已删除：不得再出现 showLegacyBody / legacy-toggle
+  test('页面级汇总卡/诊断卡已移除（搬进 chapters.overview，由组件渲染）', () => {
+    // 注意：待完善/未归入成员仍用 .sum-card 容器 —— 所以不能按类名断言，要按**概览特有内容**
+    expect(plain).not.toContain('checkup.summary.policyCount')
+    expect(plain).not.toContain('sum-pair')
+    expect(plain).not.toMatch(/class="diag-card"/)
+    // 概览内容改由 report-markdown 的 overview block 渲染
+    const comp = fs
+      .readFileSync(path.join(__dirname, '..', 'miniprogram', 'components', 'report-markdown', 'index.wxml'), 'utf8')
+      .replace(/<!--[\s\S]*?-->/g, '')
+    expect(comp).toContain("block.t==='overview'")
+    expect(comp).toContain('block.payoutText')
+    expect(comp).toContain('给付型 · 寿险 / 重疾')
+  })
+
+  test('折叠机制整体移除（showLegacyBody / legacy-toggle 不得回归）', () => {
     expect(plain).not.toMatch(/showLegacyBody|legacy-toggle/)
-    // 诊断卡必须无条件渲染（只受 hasPolicy 约束，不受任何展开态约束）
-    const diagLine = lines.find((l) => /class="diag-card"/.test(l))
-    expect(diagLine).toContain('wx:if="{{hasPolicy}}"')
   })
 
   test('正文在进阶报告之前（正则是规则交付物，AI 是加购层）', () => {
@@ -64,13 +72,15 @@ describe('报告页 IA：规则内容常驻、AI 在页尾、合规与页尾常�
     expect(plain).not.toContain('保障分析自动更新中')
   })
 
-  test('保额口径：不给「报销额度 + 给付金额」的合计', () => {
-    expect(plain).not.toContain('保障型保额合计')
+  test('保额口径：不给「报销额度 + 给付金额」的合计（断言在组件侧）', () => {
+    const comp = fs
+      .readFileSync(path.join(__dirname, '..', 'miniprogram', 'components', 'report-markdown', 'index.wxml'), 'utf8')
+      .replace(/<!--[\s\S]*?-->/g, '')
+    expect(comp).not.toContain('保障型保额合计')
     // ⚠️ 划分口径必须是**险种**（给付型 / 报销额度）。第一版用"保障型 − 一年期"，
     // 真机立刻自相矛盾：卡片 300 万，而险种明细 寿险100+重疾210=310 万。
-    expect(plain).toContain('checkup.summary.payoutSumAssuredText')
-    expect(plain).toContain('checkup.summary.quotaSumAssuredText')
-    expect(plain).toContain('给付型 · 寿险 / 重疾')
+    expect(comp).toContain('block.payoutText')
+    expect(comp).toContain('block.quotaText')
   })
 
   test('wxml 标签计数平衡（提前/延后闭合会立即失衡）', () => {

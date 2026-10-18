@@ -23,7 +23,9 @@
  *                  条位置/宽度为**占时间轴**的百分比；payRatio 为**占本条自身宽度**的百分比（条内斜纹段=缴费期）；
  *                  nowPct 为"今天"竖线位置（越界时为 null）。渲染侧不做任何时间计算。
  *
- * 已下线类型（清理审计）：overview / urgent_list / insight_cards / dashboard（无生成端）
+ * 已下线类型（清理审计）：urgent_list / insight_cards / dashboard（无生成端）
+ * ⚠️ overview 于 2026-10-18 **重新启用**：IA 重构把页面级「整理汇总卡 + 保障覆盖与风险卡」
+ *    合并成正文第 1 章，由该 block 承载（见 chapter-builder 的 'overview' 章）。
  */
 
 // 字段契约：必填字段（缺失则 normalize 时 console.warn 并补默认值）
@@ -59,6 +61,16 @@ const BLOCK_REGISTRY = {
   gantt: {
     required: ['rows'],
     defaults: { rows: [], ticks: [], startYear: 0, endYear: 0, nowPct: null, nowYear: 0, notes: [] }
+  },
+  // 概览（2026-10-18 重新启用）：正文第 1 章 = 原「整理汇总卡 + 保障覆盖与风险卡」
+  overview: {
+    required: ['policyCount', 'payoutText', 'quotaText'],
+    defaults: {
+      policyCount: 0, memberCount: 0, premiumText: '',
+      payoutText: '', quotaText: '', savingsText: '', unknownText: '', inactiveNote: '',
+      categories: [], summaryLead: '', alerts: [], topAdvice: '',
+      risks: [], risksMore: 0, risksTotal: 0
+    }
   }
 }
 

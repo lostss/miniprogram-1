@@ -109,21 +109,21 @@ describe('保额拆分接线（防第四份实现 / 防只改一处）', () => {
     expect(checkup).toContain("require('../coverage-summary')")
   })
 
-  test('整理报告汇总卡不再展示单一"保额合计"，改为保障型 + 分险种 tag', () => {
-    const wxml = fs.readFileSync(path.join(root, 'miniprogram', 'pages', 'report', 'index.wxml'), 'utf8')
-    expect(wxml).not.toContain('>保额合计<')
-    expect(wxml).toContain('保障型保额合计')
-    expect(wxml).toContain('checkup.summary.coverageByCat')
+  test('概览（正文第 1 章）不再展示单一"保额合计"，改为给付型 + 报销额度两队', () => {
+    // 2026-10-18 IA 重构：汇总卡从页面搬进 chapters.overview，由 report-markdown 渲染
+    const comp = fs.readFileSync(path.join(root, 'miniprogram', 'components', 'report-markdown', 'index.wxml'), 'utf8')
+    expect(comp).not.toContain('>保额合计<')
+    expect(comp).not.toContain('保障型保额合计')
+    expect(comp).toContain('block.payoutText')
+    expect(comp).toContain('block.quotaText')
+    expect(comp).toContain('给付型 · 寿险 / 重疾')
   })
 
-  test('报告页摘要卡不再渲染单一"总保额"，改为按类展示', () => {
+  test('报告页不再渲染单一"总保额"（页面级汇总卡已移除）', () => {
     const wxml = fs.readFileSync(path.join(root, 'miniprogram', 'pages', 'report', 'index.wxml'), 'utf8')
     expect(wxml).not.toContain('>总保额<')
-    // 2026-10-18 IA 重构：AI 摘要卡（含它的三个数字与 chips）已删除 ——
-    // 按类展示统一由**整理汇总卡**承担，口径仍来自同一契约 coverage-summary。
-    expect(wxml).toContain('checkup.summary.coverageByCat')
-    expect(wxml).toContain('checkup.summary.unknownSumAssuredText')
-    expect(wxml).toContain('给付型 · 寿险 / 重疾')
+    // 概览内容不再出现在页面：两条口径断言都指向组件侧（见上一条）
+    expect(wxml).not.toContain('checkup.summary.coverageByCat')
     expect(wxml).not.toContain('summaryCards.byCat')
   })
 

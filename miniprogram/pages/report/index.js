@@ -137,16 +137,8 @@ Page({
   // 为什么做成交互而不是直接铺开：依据是审计用的（"参考50万（治疗费+收入损失），现有20万"），
   // 首屏全铺会盖住结论本身；折叠默认 + 一键展开，既保"结论可追溯"，又不牺牲一屏冲击。
   // 用 setData 的路径写法只改被点那一条（不清空其它条的展开态，也不重传整份 risks）。
-  onRiskTap(e) {
-    const idx = (e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.idx) || 0
-    const items = (this.data.risks && this.data.risks.items) || []
-    const it = items[idx]
-    if (!it || !it.basis) return // 无依据可展开（不该发生：构建器保证有依据才出结论）
-    const path = 'risks.items[' + idx + '].expanded'
-    const patch = {}
-    patch[path] = !it.expanded
-    this.setData(patch)
-  },
+  // 2026-10-18：删除 onRiskTap —— 风险条已随概览章进入 report-markdown 组件（block.t==='overview'），
+  // 组件内无交互态，依据对红/黄项直接展开（见组件 wxml 的 ov-risk-basis）。页面不再需要展开状态。
 
   // ===== 章节内编辑入口（设计稿：家庭结构/财务 [编辑]） =====
   onChapterEdit(e) {
@@ -500,8 +492,14 @@ Page({
     this._family = c
     // 2026-09-06：保障分析恒展开完整解读（无折叠态）
     const rp = reportOverride || (c.report || {})
+    // 保单整理视图（阶段一报告主体，2026-10-13 决策）：在此**唯一 choke point** 构建，
+    // 下拉刷新 / 客户版预览 / 分享加载等所有刷新路径自动一致（各自重算 = 又一次口径分裂）。
+    // 输入是同一份 family（members/policies），输出只含事实白名单（见 utils/checkup/organize.js）。
+    // 2026-10-18 IA 重构：checkup **提前**到 buildReportView 之前 —— 概览章（正文第 1 章）由它供数，
+    // 页面不再单独渲染汇总卡/诊断卡。
+    const checkup = buildCheckupReport({ family: c, members: c.members || [], policies: c.policies || [] })
     // 双视图：客户版（share=1）走中性措辞 + 置信度/现价回本隐藏；owner 版行为不变
-    const view = buildReportView(c, rp, { view: this.data.isShared ? 'shared' : 'owner' })
+    const view = buildReportView(c, rp, { view: this.data.isShared ? 'shared' : 'owner', checkup: checkup })
     // 审计 P1-1：meta 必须基于本次入参 c，不可依赖任何"上一次"数据（否则标题日期首次显示当前时刻、
     // 后续滞后一个刷新周期，且分享标题同步错）。现 this._family 已在方法首行赋为本次 c，约束天然成立。
     const reportMeta = buildReportMeta(c)
@@ -520,10 +518,7 @@ Page({
     // 落库后同时消掉"按当前数据求值 vs 生成时刻"的漂移——报告内容与 tier 恒为同一次生成。
     // 仅在 deep 已生成时展示：未生成时 deep-entry 已引导"立即生成分析"，再提示"定性"会误导。
     const qualitativeMode = c.readiness_tier === 'degraded' && !!view.deep
-    // 保单整理视图（阶段一报告主体，2026-10-13 决策）：在此**唯一 choke point** 构建，
-    // 下拉刷新 / 客户版预览 / 分享加载等所有刷新路径自动一致（各自重算 = 又一次口径分裂）。
-    // 输入是同一份 family（members/policies），输出只含事实白名单（见 utils/checkup/organize.js）。
-    const checkup = buildCheckupReport({ family: c, members: c.members || [], policies: c.policies || [] })
+    // checkup 已在上方构建（buildReportView 之前）——此处直接使用，勿重复计算
     this.setData(Object.assign({
       // 视图切片（见方法头）：name 供页头标题，对象本身作三处 wx:if 的真值门禁。整份文档在 this._family。
       family: { name: c.name || '' },

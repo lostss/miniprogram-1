@@ -203,6 +203,43 @@ function buildChapters(family, report, gaps, opts) {
   var actionable = gaps.filter(function(g) { return g.gap > 0 && g.reliability !== 'blocked' })
   var blockedGaps = gaps.filter(function(g) { return g.reliability === 'blocked' })
 
+  // ======== 概览（2026-10-18 IA 重构，第 1 章）========
+  // 动机：原「整理汇总卡 + 保障覆盖与风险卡」是页面级的两个卡片，与下面的章节正文是两套排版；
+  // 且同一批信息重复：缺口出现在诊断卡 / 保障汇总章红条 / 保障缺口章三处，
+  // 成员在卡片与家庭结构章各一遍，金额在汇总卡与汇总章矩阵合计各一遍。
+  // 现在把它们合并成**正文的第 1 章**：一套排版、进目录、顺序由 CHAPTER_SEQ 单点定义。
+  // 数据来自 caller（report-builder 传入 hero / risks / checkup），本文件不做二次计算。
+  var ovHero = (opts && opts.hero) || null
+  var ovRisks = (opts && opts.risks) || null
+  var ovCk = opts && opts.checkup
+  if (ovCk && ovCk.summary) {
+    var os = ovCk.summary
+    ch.push({
+      key: 'overview', title: '概览',
+      customBlocks: [createBlock('overview', {
+        // 规模一句话：张数 / 成员数 / 年保费
+        policyCount: os.policyCount,
+        memberCount: os.memberCount,
+        premiumText: os.annualPremiumText,
+        // 保额按险种分两组（payout + quota === protection，不给合计 —— 见 coverage-summary）
+        payoutText: os.payoutSumAssuredText,
+        quotaText: os.quotaSumAssuredText,
+        savingsText: os.savingsSumAssuredText,
+        unknownText: os.unknownSumAssuredText,
+        inactiveNote: os.inactiveNote || '',
+        categories: os.categories || [],
+        // 覆盖检查（规则版，客户版已中性化）
+        summaryLead: (ovHero && ovHero.summary) || '',
+        alerts: (ovHero && ovHero.alerts) || [],
+        topAdvice: (ovHero && ovHero.topAdvice) || '',
+        // TOP-N 风险（红黄绿灯）：客户版不显示（与 risk_alerts 章同口径）
+        risks: (!shared && ovRisks && ovRisks.items) ? ovRisks.items : [],
+        risksMore: (!shared && ovRisks && ovRisks.more) || 0,
+        risksTotal: (!shared && ovRisks && ovRisks.total) || 0
+      })]
+    })
+  }
+
   // ======== ① 家庭结构 / ② 家庭财务 ========
   // 审计·顾问视角（2026-09-04）：客户版跳过①②——成员结构与收入是顾问的核对工作底稿（带 [编辑] 入口），
   // 客户无需被重新告知自家信息；结论摘要之后直接进入保障汇总/缺口诊断
@@ -587,7 +624,7 @@ function buildChapters(family, report, gaps, opts) {
   // 缺口是诊断核心，原先排在"保障期间"这层时间信息之后，读者要越过一张甘特图才看到最该看的东西。
   // 用显式序列而非就地搬代码块：① diff 小、可回退 ② 未列出的章节按原顺序兜底追加（未来新增章不丢）。
   // ⚠️ 必须列全：漏掉的章节会走下方"兜底追加"被推到附录之后（next_steps 第一次就漏了）
-  var CHAPTER_SEQ = ['family_structure', 'family_finance', 'coverage_summary', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'risk_alerts', 'next_steps', 'appendix_policies']
+  var CHAPTER_SEQ = ['overview', 'family_structure', 'family_finance', 'coverage_summary', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'risk_alerts', 'next_steps', 'appendix_policies']
   var ordered = []
   CHAPTER_SEQ.forEach(function(k) {
     ch.forEach(function(c) { if (c.key === k) ordered.push(c) })

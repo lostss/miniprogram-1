@@ -69,8 +69,8 @@ describe('classifyBatchResults — 识别结果分流分组（收编 _procRefres
 })
 
 describe('custom-blocks 注册表', function () {
-  test('SUPPORTED_TYPES 声明 8 种类型（overview/urgent_list/insight_cards/dashboard 已下线；gantt 为 2026-10-13 新增）', function () {
-    expect(cb.SUPPORTED_TYPES.sort()).toEqual(['calendar', 'family_tree', 'finance', 'gantt', 'panorama', 'policy_cards', 'risk_alerts', 'timeline'])
+  test('SUPPORTED_TYPES 声明 9 种类型（overview 于 2026-10-18 重新启用；urgent_list/insight_cards/dashboard 已下线）', function () {
+    expect(cb.SUPPORTED_TYPES.sort()).toEqual(['calendar', 'family_tree', 'finance', 'gantt', 'overview', 'panorama', 'policy_cards', 'risk_alerts', 'timeline'])
   })
 
   test('gantt 默认字段补齐（rows/ticks/startYear/endYear/notes）', function () {

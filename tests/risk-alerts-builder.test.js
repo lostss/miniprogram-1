@@ -233,17 +233,26 @@ describe('风险预警接线（防"建好了但没接进报告"）', () => {
   const path = require('path')
   const SRC_PAGE = fs.readFileSync(path.join(__dirname, '..', 'miniprogram', 'pages', 'report', 'index.js'), 'utf8')
   const SRC_WXML = fs.readFileSync(path.join(__dirname, '..', 'miniprogram', 'pages', 'report', 'index.wxml'), 'utf8')
+// 2026-10-18：风险条改由概览章 block 在 report-markdown 组件内渲染
+const SRC_COMPONENT = fs.readFileSync(path.join(__dirname, '..', 'miniprogram', 'components', 'report-markdown', 'index.wxml'), 'utf8')
   const SRC_WXSS = fs.readFileSync(path.join(__dirname, '..', 'miniprogram', 'pages', 'report', 'index.wxss'), 'utf8')
 
-  test('报告页 setData 了 risks，且渲染了条目与"另有 N 项"', () => {
+  test('风险条目接进报告：概览章 block 携带 risks（2026-10-18 起由组件渲染，不再在页面）', () => {
+    // 页面仍 setData risks（其它消费方如预设问题用它），但渲染改由 chapters.overview 承担
     expect(SRC_PAGE).toContain('risks: view.risks')
-    expect(SRC_WXML).toContain('risks.items')
-    expect(SRC_WXML).toContain('risks.more')
+    expect(SRC_COMPONENT).toContain('block.risks')
+    expect(SRC_COMPONENT).toContain('block.risksMore')
+    // 空列表时整块不渲染（不制造空标题）
+    expect(SRC_COMPONENT).toContain('wx:if="{{block.risks.length}}"')
   })
 
-  test('点击展开依据的处理器已定义且已绑定（孤儿处理器会被 wxml-binding-integrity 抓）', () => {
-    expect(SRC_PAGE).toContain('onRiskTap(e)')
-    expect(SRC_WXML).toContain('catchtap="onRiskTap"')
+  test('依据对红/黄项直接展开，达标项不铺开（组件内无交互态，故取消了 onRiskTap）', () => {
+    expect(SRC_COMPONENT).toContain('ov-risk-basis')
+    expect(SRC_COMPONENT).toContain("item.level !== 'ok'")
+    // 旧交互已随页面级诊断卡一起移除（断言**方法定义与绑定**，不能断言字符串本身：
+    // index.js 的注释里还写着"删除 onRiskTap"这句说明，直接 not.toContain 会被自己的注释命中）
+    expect(SRC_PAGE).not.toContain('onRiskTap(e) {')
+    expect(SRC_WXML).not.toContain('onRiskTap')
   })
 
   test('三个等级的样式类都有定义（红黄绿不得只定义其一）', () => {

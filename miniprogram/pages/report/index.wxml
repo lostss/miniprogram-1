@@ -67,87 +67,11 @@
     <!-- ===== 阶段一报告主体：保单整理（2026-10-13 决策「当前报告降级成保单整理报告」）=====
          红线：只做归集/汇总/标注——不出建议、不加形容词、不确定就标出来（见 utils/checkup/organize.js）。
          数据与正文同源（_applyReportData 一处构建）→ 下拉刷新/客户版预览自动一致。 -->
+    <!-- 2026-10-18 IA 重构（用户决策：规则内容整合成一份完整报告）：
+         原「整理汇总卡」与「保障覆盖与风险卡」已合并为**正文第 1 章「概览」**（见 chapters.overview），
+         由 report-markdown 统一渲染 —— 一套排版、进目录、顺序由 CHAPTER_SEQ 单点定义。
+         这里只保留两类页面级内容：成员规模概览（第二步将并入家庭结构章）、待完善清单。 -->
     <block wx:if="{{hasPolicy && checkup}}">
-      <view class="sum-card">
-        <view class="sum-grid">
-          <view class="sum-item"><view class="sum-label">保单张数</view><view class="sum-value">{{checkup.summary.policyCount}}</view></view>
-          <view class="sum-item"><view class="sum-label">年缴保费合计</view><view class="sum-value">{{checkup.summary.annualPremiumText}}</view></view>
-        </view>
-        <view class="sum-note" wx:if="{{checkup.summary.premiumNote}}">{{checkup.summary.premiumNote}}</view>
-        <!-- 2026-10-14 用户决策：不再给单一"保额合计"，按保障类型拆分。
-             这一处是线上实测最容易误导的地方（"保额合计 2310万"里 2010万 是一年期短期报销限额）。 -->
-        <!-- 2026-10-17（v2.0 评审遗留）：**不再给"保障型保额合计"**。
-             原实现主数字 2310 万，其中 2010 万是一年期报销/意外额度 —— 报销上限与给付金额相加无意义，
-             且"其中一年期"只以小字挂在下面，眼球只记住了 2310 万。
-             现在两颗数字并列、各自标注性质：长期给付（真正赔钱）/ 一年期额度（每年续保）。 -->
-        <view class="sum-wide">
-          <view class="sum-label">保额构成</view>
-          <view class="sum-pair">
-            <view class="sum-pair-item">
-              <view class="sum-pair-val">{{checkup.summary.payoutSumAssuredText}}</view>
-              <view class="sum-pair-lbl">给付型 · 寿险 / 重疾</view>
-            </view>
-            <view class="sum-pair-item">
-              <view class="sum-pair-val">{{checkup.summary.quotaSumAssuredText}}</view>
-              <view class="sum-pair-lbl">报销额度 · 医疗 / 意外</view>
-            </view>
-          </view>
-          <!-- 一年期是"时效"信息，与上面按险种的划分是两个维度 → 单独一行，不再混进数字标签 -->
-          <view class="sum-note" wx:if="{{checkup.summary.shortTermCount > 0}}">其中 {{checkup.summary.shortTermCount}} 张为一年期保单，每年需续保</view>
-          <view class="tags" wx:if="{{checkup.summary.coverageByCat.length}}">
-            <view class="tag" wx:for="{{checkup.summary.coverageByCat}}" wx:key="cat">{{item.cat}} {{item.text}}</view>
-          </view>
-          <view class="sum-note" wx:if="{{checkup.summary.savingsSumAssuredText}}">储蓄型（年金 / 增额寿 / 终身寿）合计 {{checkup.summary.savingsSumAssuredText}}，与上述保障型分列</view>
-          <view class="sum-note" wx:if="{{checkup.summary.unknownSumAssuredText}}">{{checkup.summary.unknownSumAssuredText}} 的保单未标注险种，未计入上述分类</view>
-          <!-- 2026-10-18（审计 P0-2）：失效/退保单不计入任何统计，但必须可见，否则用户会发现
-               "张数 + 保额对不上"（原实现把退保单算进张数与保费、却不算进保额）。 -->
-          <view class="sum-note" wx:if="{{checkup.summary.inactiveCount > 0}}">{{checkup.summary.inactiveNote}}</view>
-        </view>
-        <view class="sum-wide">
-          <view class="sum-label">已覆盖险种</view>
-          <view class="tags">
-            <view class="tag" wx:for="{{checkup.summary.categories}}" wx:key="*this">{{item}}</view>
-            <view class="tag-empty" wx:if="{{checkup.summary.categories.length === 0}}">暂无</view>
-          </view>
-        </view>
-        <view class="sum-note" wx:if="{{checkup.summary.memberNote}}">{{checkup.summary.memberNote}}</view>
-      </view>
-
-      <!-- 规则诊断卡（2026-10-18 IA 重构，用户决策：规则类内容都属整理报告、结构与风格统一）：
-           覆盖检查（hero.alerts）与 TOP-N 风险预警都是**本地规则计算**，不是 AI 内容 ——
-           此前它们被包进「展开保障分析（AI 解读）」且默认收起，导致首屏看不到任何结论。
-           现在常驻在整理汇总卡与成员概览之间，与章节同样式（.diag-card 复用 .summary-card 的排版）。
-           同时删除原 AI 摘要卡的三个数字（年保费/给付型保额/保障人数）——它们与整理汇总卡完全重复。 -->
-      <view class="diag-card" wx:if="{{hasPolicy}}">
-        <view class="diag-title">保障覆盖与风险</view>
-        <!-- 保障覆盖检查（结论先行：汇总在上、逐条论据在下、行动建议收尾） -->
-        <view class="summary-check" wx:if="{{hero.alerts.length}}">
-          <view class="hero-summary-lead">{{hero.summary}}</view>
-          <view class="hero-alert {{item.ok ? 'is-ok' : (item.blocked ? 'is-unknown' : 'is-warn')}}" wx:for="{{hero.alerts}}" wx:key="name">
-            <text class="hero-alert-dot"></text>
-            <text class="hero-alert-text">{{item.name}} {{item.display}}</text>
-          </view>
-          <view class="hero-advice" wx:if="{{hero.topAdvice}}">{{hero.topAdvice}}</view>
-        </view>
-        <!-- 风险预警 TOP-N（2026-10-13 报告结构 v2.0 ① 家庭总检结论）
-             排序口径（report/risk-alerts-builder）：等级 → gapPriority → 敞口金额降序 → 成员档案顺序，
-             **不按险种、不引入主观权重**；每条都可展开看依据（basis），给不出依据的结论不出现。
-             达标项（绿）同样展示，建立信任、不只制造焦虑。 -->
-        <view class="risk-list" wx:if="{{risks.items.length}}">
-          <view class="risk-item risk-{{item.level}}" wx:for="{{risks.items}}" wx:key="key" catchtap="onRiskTap" data-idx="{{index}}">
-            <view class="risk-head">
-              <text class="risk-dot"></text>
-              <text class="risk-level">{{item.levelLabel}}</text>
-              <text class="risk-title">{{item.title}}</text>
-            </view>
-            <text class="risk-detail">{{item.detail}}</text>
-            <!-- 依据：默认收起（避免首屏噪音），点击条目展开 —— 结论可追溯是"错误不对称"的落地方式 -->
-            <text class="risk-basis" wx:if="{{item.expanded && item.basis}}">依据：{{item.basis}}</text>
-          </view>
-          <view class="risk-more" wx:if="{{risks.more}}">另有 {{risks.more}} 项未展开{{risks.moreRed ? '（含高危 ' + risks.moreRed + ' 项）' : ''}}，共 {{risks.total}} 项</view>
-        </view>
-      </view>
-
       <!-- 2026-10-17：由「逐单卡片」改为「成员概览」。
            原实现把 13 张保单在这里完整列了一遍，而文末「附录 · 保单明细」又完整列一遍
            → 同一批明细出现两次，且第一次占掉报告第三屏（要滑过 22 张卡才到矩阵/缺口）。

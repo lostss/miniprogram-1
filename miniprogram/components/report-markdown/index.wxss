@@ -233,6 +233,40 @@
 .pc-card--inactive { opacity:0.72; }
 
 /* 三行简写：横排数据行，无字段名（单位自带语义），分隔线区分产品行 */
+/* ========== 概览块（2026-10-18 IA 重构）==========
+   与章节正文同一套排版：无独立卡底（章节本身就是卡片），只用分隔线分组。
+   刻意不再画"第二张摘要卡" —— 那正是本次消除的重复。 */
+.ov-wrap { padding:var(--sp-2) 0 var(--sp-3); }
+.ov-meta { font-size:var(--fs-caption); color:var(--text-secondary); }
+.ov-pair { display:flex; gap:var(--sp-6); margin-top:var(--sp-4); }
+.ov-pair-item { flex:1; min-width:0; }
+.ov-pair-val { font-size:var(--fs-xl); font-weight:var(--fw-bold); color:var(--text-primary); letter-spacing:var(--ls-wide); }
+.ov-pair-lbl { margin-top:2rpx; font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:1.4; }
+.ov-cats { display:flex; flex-wrap:wrap; gap:var(--sp-2); margin-top:var(--sp-4); }
+.ov-chip { font-size:var(--fs-tiny); color:var(--text-secondary); background:var(--bg-input); padding:var(--sp-1) var(--sp-3); border-radius:var(--r-full); }
+.ov-note { margin-top:var(--sp-2); font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-snug); }
+/* 覆盖检查：与风险条之间用分隔线，避免两块结论挤在一起 */
+.ov-check { margin-top:var(--sp-5); padding-top:var(--sp-4); border-top:1rpx solid var(--border); }
+.ov-check-lead { font-size:var(--fs-caption); color:var(--text-primary); margin-bottom:var(--sp-3); }
+.ov-alert { display:flex; align-items:flex-start; gap:var(--sp-2); margin-top:var(--sp-2); }
+.ov-dot { flex-shrink:0; width:10rpx; height:10rpx; border-radius:50%; margin-top:14rpx; background:var(--text-tertiary); }
+.ov-alert.is-warn .ov-dot { background:var(--red); }
+.ov-alert.is-ok .ov-dot { background:var(--ok-deep); }
+.ov-alert.is-unknown .ov-dot { background:var(--text-tertiary); }
+.ov-alert-text { font-size:var(--fs-caption); color:var(--text-secondary); line-height:var(--lh-snug); }
+.ov-advice { margin-top:var(--sp-3); font-size:var(--fs-caption); color:var(--accent-deep); line-height:var(--lh-snug); }
+.ov-risks { margin-top:var(--sp-5); padding-top:var(--sp-4); border-top:1rpx solid var(--border); }
+.ov-risk { margin-top:var(--sp-4); }
+.ov-risk:first-child { margin-top:0; }
+.ov-risk-head { display:flex; align-items:baseline; gap:var(--sp-2); }
+.ov-risk-level { flex-shrink:0; font-size:var(--fs-tiny); font-weight:var(--fw-semi); }
+.ov-risk--red .ov-risk-level { color:var(--red); }
+.ov-risk--yellow .ov-risk-level { color:var(--accent-deep); }
+.ov-risk--ok .ov-risk-level { color:var(--ok-deep); }
+.ov-risk-title { font-size:var(--fs-caption); color:var(--text-primary); font-weight:var(--fw-semi); }
+.ov-risk-detail { display:block; margin-top:var(--sp-1); font-size:var(--fs-caption); color:var(--text-secondary); line-height:var(--lh-snug); }
+.ov-risk-basis { display:block; margin-top:var(--sp-1); font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-snug); }
+
 .pc-meta-row { font-size:var(--fs-caption); color:var(--text-secondary); font-variant-numeric:tabular-nums; margin-top:var(--sp-1); }
 .pc-meta-row:first-of-type { margin-top:var(--sp-3); padding-top:var(--sp-3); border-top:1rpx solid var(--border); }
 /* 原文出处（2026-10-18）：比普通元信息更弱一档（tiny + tertiary），
