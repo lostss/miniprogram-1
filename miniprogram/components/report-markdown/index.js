@@ -69,6 +69,9 @@ Component({
     onTocTap(e) {
       const k = e.currentTarget.dataset.k
       if (!k) return
+      // 2026-10-18：点击立即点亮（乐观更新）—— 页面滚动到目标章节有过渡时间，
+      // 若等观察器回调才高亮，手指抬起后约 0.3s 内没有任何反馈，像没点中。
+      if (k !== this.data.activeKey) this.setData({ activeKey: k, tocInto: 'toc-' + k })
       this.createSelectorQuery().select('#ch-' + k).boundingClientRect((rect) => {
         if (!rect) return
         this.triggerEvent('tocnav', { key: k, top: rect.top })

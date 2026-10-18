@@ -59,6 +59,14 @@ describe('接线守卫：组件确实用了它，且标签有激活样式', () =
     expect(wxml).toContain('id="toc-{{item.key}}"')
   })
 
+  test('点击标签立即点亮（乐观更新），不等观察器回调', () => {
+    const js = read('index.js')
+    const i = js.indexOf('onTocTap(e)')
+    expect(i).toBeGreaterThan(-1)
+    const body = js.slice(i, i + 600)
+    expect(body).toMatch(/setData\(\{\s*activeKey:\s*k/)
+  })
+
   test('激活态样式有实底高亮（浅色描边在横向滚动条里看不出来）', () => {
     const wxss = read('index.wxss')
     expect(wxss).toMatch(/\.toc-item\.is-active\s*\{[^}]*background:var\(--accent-deep\)/)
