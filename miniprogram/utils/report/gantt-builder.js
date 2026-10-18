@@ -66,6 +66,18 @@ function buildGantt(policies, members) {
   })
 
   const thisYear = new Date().getFullYear()
+
+  // 2026-10-18 用户提议「按年龄做时间轴」的落地方式：
+  // 全家人以同样速度变老 ⇒ 年龄轴与年份轴在几何上等价，只需给刻度补一行年龄。
+  // 但一根年龄轴必须指定基准人（3 位成员年龄不同），这里取"户主"（role=本人）；
+  // 没有本人时退化为档案里第一个填了年龄的成员；都没有年龄 → 不显示年龄行（不猜）。
+  let refName = ''
+  let refAge = 0
+  const refMember = (members || []).filter(function(m) { return m && (m.age || 0) > 0 })[0]
+  const ownerMember = (members || []).filter(function(m) { return m && m.role === '本人' && (m.age || 0) > 0 })[0]
+  const ref = ownerMember || refMember
+  if (ref) { refName = ref.name || ''; refAge = ref.age || 0 }
+
   const rows = []
   let missStart = 0   // 缺生效日期（无法定位起点）
   let missTerm = 0    // 有生效日期但无保障期间信息（无法定位终点）→ 均不入图，只在 notes 里标出
@@ -106,6 +118,8 @@ function buildGantt(policies, members) {
       // 到期时被保人年龄（回答稿子那句"60 岁时还剩什么"）：当前年龄 + 距到期年数
       // 终身险无到期年 → null；年龄未知（未匹配到成员/未填出生日期）→ null（不猜）
       endAge: (!lifetime && endY && age > 0) ? (age + (endY - thisYear)) : null,
+      // 缴费期满时的被保人年龄需要 age，但要在算出轴范围之后才能定位置 → 先把 age 带下去（内部字段，最后删除）
+      _age: age,
       _order: orderByName[name] === undefined ? 999 : orderByName[name]
     })
   }
@@ -151,31 +165,39 @@ function buildGantt(policies, members) {
       const w = (r.endY - r.startY) / span * 100
       r.widthPct = _round1(Math.max(MIN_WIDTH_PCT, Math.min(w, 100 - r.startPct)))
     }
-    // 缴费段长度 = **占本条自身宽度的百分比**（不是占时间轴的）—— 渲染层把它放在条内做绝对定位，
-    // 用轴百分比会算错（条宽本身已小于轴宽）。语义：条 = 保障期，条内斜纹段 = 缴费期，
-    // 于是"钱交完了但保障还在"一眼可见（2026-10-13 稿子对甘特图的核心要求）。
-    // 分母取本条的实际右端：终身条右端是轴末（endYear），定期条右端是 endY。
+    // 缴费期满标记（2026-10-18 改）：原实现用"条内斜纹段"表示缴费期，但条高只有 20rpx，
+    // 斜纹在真机上几乎不可见（用户提议"只做保障期间"就是这个观感的直接后果）。
+    // 现在改为**条内一根缴费期满竖线**（按时间轴百分比定位，不再需要相对条宽的换算）：
+    // 语义不变（钱交完了、保障还在），视觉噪声≈0；具体年份由时间线章与 note 承担。
+    // 只在"缴费期满早于保障期满"时画 —— 缴费与保障同时结束（多数定期险）时画在条尾是噪音。
     const barEndY = r.lifetime ? endYear : r.endY
-    if (r.payEndY && r.payEndY > r.startY && barEndY > r.startY) {
-      const ratio = (r.payEndY - r.startY) / (barEndY - r.startY) * 100
-      r.payRatio = _round1(Math.max(0, Math.min(ratio, 100)))
+    if (r.payEndY && r.payEndY > r.startY && r.payEndY < barEndY) {
+      r.payEndPct = _round1((r.payEndY - startYear) / span * 100)
+      r.payEndAge = (r._age > 0) ? (r._age + (r.payEndY - thisYear)) : null
     } else {
-      r.payRatio = null
+      r.payEndPct = null
+      r.payEndAge = null
     }
     delete r._order
+    delete r._age
   })
 
   // 刻度：首尾必在，中间按 span 均分（步长向上取整，避免出现半年的刻度）
+  // 2026-10-18：每个刻度额外带基准人（户主）在该年的年龄 —— 客户读"保障到 72 岁"
+  // 比读"保障到 2054 年"更直观；几何不变，只多一行标签。
   const step = Math.max(1, Math.ceil(span / (MAX_TICKS - 1)))
+  const ageAt = function(y) { return refAge > 0 ? refAge + (y - thisYear) : null }
   const ticks = []
   for (let y = startYear; y <= endYear; y += step) {
-    ticks.push({ y: y, pct: _round1((y - startYear) / span * 100) })
+    ticks.push({ y: y, pct: _round1((y - startYear) / span * 100), age: ageAt(y) })
   }
-  if (ticks[ticks.length - 1].y !== endYear) ticks.push({ y: endYear, pct: 100 })
+  if (ticks[ticks.length - 1].y !== endYear) ticks.push({ y: endYear, pct: 100, age: ageAt(endYear) })
 
   const notes = []
   if (missStart) notes.push(missStart + ' 张保单缺少生效日期，未在时间轴上显示')
   if (missTerm) notes.push(missTerm + ' 张保单未填写保障期间，未在时间轴上显示')
+  // 缴费期满竖线的图例（替代原斜纹段；斜纹在 20rpx 条高下不可读，已移除）
+  if (rows.some(function(r) { return r.payEndPct !== null })) notes.push('条内竖线 = 缴费期满，其后只保留保障（不用再交钱）')
   if (rows.some(function(r) { return r.oneYear })) notes.push('一年期短险每年需续保，条形表示当前保单年度')
   if (rows.some(function(r) { return r.lifetime })) notes.push('"终身"保单无固定到期日，条形画至右端')
 
@@ -184,6 +206,9 @@ function buildGantt(policies, members) {
     ticks: ticks,
     startYear: startYear,
     endYear: endYear,
+    // 年龄行的基准人（户主）：刻度第二行"62岁"是**谁的** 62 岁，必须标出来，否则读者会以为是自己的
+    refName: refName,
+    refAge: refAge,
     // "今天"竖线位置（稿子：让客户看到当前处在哪）：当前年在轴上；保单尚未生效（未来生效日）
     // 时落在轴左侧 → 给 null，不画（画在 0% 会被误读成"已生效"）
     nowPct: (thisYear >= startYear && thisYear <= endYear) ? _round1((thisYear - startYear) / span * 100) : null,

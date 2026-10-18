@@ -33,9 +33,14 @@
           <!-- 三列栅格：谁/哪个产品 ｜ 时间条 ｜ 到期与保额。
                到期文案独立成列（而非跟在条尾），避免"条到底右端"时文字溢出卡片被裁。 -->
           <view class="gt-axis">
-            <view class="gt-label"></view>
+            <!-- 年龄行的基准人：不写清楚"这是谁的 62 岁"，读者会默认当成自己的 -->
+            <view class="gt-label"><text class="gt-ref" wx:if="{{block.refAge}}">{{block.refName || '户主'}} 年龄</text></view>
             <view class="gt-track gt-track--axis">
-              <text class="gt-tick {{index === 0 ? 'gt-tick--first' : ''}} {{index === block.ticks.length - 1 ? 'gt-tick--last' : ''}}" wx:for="{{block.ticks}}" wx:for-item="tk" wx:key="y" style="left:{{tk.pct}}%">{{tk.y}}</text>
+              <!-- 2026-10-18：刻度两行 = 年份 + 户主年龄。几何不变（全家同龄化），只多一行标签 -->
+              <view class="gt-tick {{index === 0 ? 'gt-tick--first' : ''}} {{index === block.ticks.length - 1 ? 'gt-tick--last' : ''}}" wx:for="{{block.ticks}}" wx:for-item="tk" wx:key="y" style="left:{{tk.pct}}%">
+                <text class="gt-tick-y">{{tk.y}}</text>
+                <text class="gt-tick-age" wx:if="{{tk.age}}">{{tk.age}}岁</text>
+              </view>
               <!-- "今天"标记（稿子：让客户看到当前处在哪）。越界（保单尚未生效）时 nowPct 为 null，不画 -->
               <text class="gt-now-label" wx:if="{{block.nowPct !== null}}" style="left:{{block.nowPct}}%">今天</text>
             </view>
@@ -53,16 +58,16 @@
               </view>
               <view class="gt-track">
                 <view class="gt-now" wx:if="{{block.nowPct !== null}}" style="left:{{block.nowPct}}%"></view>
-                <!-- 条内斜纹段 = 缴费期；剩余实色 = 已交完但保障仍在（两类语义一眼可分） -->
-                <view class="gt-bar {{r.lifetime ? 'gt-bar--life' : ''}} {{r.oneYear ? 'gt-bar--short' : ''}}" style="left:{{r.startPct}}%;width:{{r.widthPct}}%">
-                  <view class="gt-pay" wx:if="{{r.payRatio}}" style="width:{{r.payRatio}}%"></view>
-                </view>
+                <view class="gt-bar {{r.lifetime ? 'gt-bar--life' : ''}} {{r.oneYear ? 'gt-bar--short' : ''}}" style="left:{{r.startPct}}%;width:{{r.widthPct}}%"></view>
+                <!-- 2026-10-18：缴费期满标记（替代原条内斜纹）。按时间轴百分比定位，
+                     只在"缴费期满早于保障期满"时出现 —— 两者同时结束时画在条尾是噪音。 -->
+                <view class="gt-payend" wx:if="{{r.payEndPct !== null}}" style="left:{{r.payEndPct}}%"></view>
               </view>
+              <!-- 右侧压成两行（原来三行在 160rpx 里挤成一团）：
+                   行1 = 到期年/终身 + 该成员到期时的年龄；行2 = 保额 -->
               <view class="gt-side">
-                <text class="gt-end {{r.lifetime ? 'gt-end--life' : ''}}">{{r.lifetime ? '终身' : r.endY + '年'}}</text>
+                <text class="gt-end {{r.lifetime ? 'gt-end--life' : ''}}">{{r.lifetime ? '终身' : r.endY + '年'}}{{r.endAge ? ' · ' + r.endAge + '岁' : ''}}</text>
                 <text class="gt-amt" wx:if="{{r.sumAssured}}">{{r.sumAssured}}万</text>
-                <!-- 到期时被保人年龄：回答"60 岁时还剩什么"（终身险/年龄未知时 endAge 为 null，不显示） -->
-                <text class="gt-age" wx:if="{{r.endAge}}">止于{{r.endAge}}岁</text>
               </view>
             </view>
           </block>

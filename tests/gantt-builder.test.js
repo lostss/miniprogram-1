@@ -88,29 +88,34 @@ describe('gantt-builder — 今天竖线 / 缴费期 / 到期年龄（2026-10-14
     expect(g.nowPct).toBeNull()
   })
 
-  test('缴费期：payRatio 是**占本条宽度**的百分比（10 年缴 / 20 年保障 ≈ 50%）', function () {
+  // 2026-10-18：缴费期表示从「条内斜纹段的相对宽度(payRatio)」改为「条内一个期满竖线(payEndPct,
+  // 按时间轴百分比定位)」—— 20rpx 条高下斜纹在真机不可读。语义不变（钱交完了、保障还在）。
+  test('缴费期满标记落在条的中间（10 年缴 / 20 年保障 → 轴百分比在条内）', function () {
     const g = buildGantt([pol({ insurance_period: '20年', effective_date: '2020-01-01', payment_period: '10年' })], [{ name: '张三' }])
     const r = g.rows[0]
     expect(r.payEndY).toBe(2030)
-    expect(r.payRatio).toBeCloseTo(50, 0)
+    // 竖线必须落在条内（不是条外），且大致位于条的前半段
+    expect(r.payEndPct).toBeGreaterThan(r.startPct)
+    expect(r.payEndPct).toBeLessThan(r.startPct + r.widthPct)
+    expect(r.payEndPct - r.startPct).toBeLessThan(r.widthPct / 2 + 1)
   })
 
-  test('无缴费期信息 → payRatio 为 null（不猜"缴到多久"，红线 3）', function () {
+  test('无缴费期信息 → payEndPct 为 null（不猜"缴到多久"，红线 3）', function () {
     const g = buildGantt([pol({ insurance_period: '20年', effective_date: '2020-01-01', payment_period: '', premium_term: null })], [{ name: '张三' }])
-    expect(g.rows[0].payRatio).toBeNull()
+    expect(g.rows[0].payEndPct).toBeNull()
     expect(g.rows[0].payEndY).toBeNull()
   })
 
-  test('趸交 → singlePay=true 且不画缴费段（premium_term=1）', function () {
+  test('趸交 → singlePay=true 且无缴费期满标记（premium_term=1）', function () {
     const g = buildGantt([pol({ insurance_period: '终身', coverage_term: 105, premium_term: 1 })], [{ name: '张三' }])
     const r = g.rows[0]
     expect(r.singlePay).toBe(true)
-    expect(r.payRatio).toBeNull()
+    expect(r.payEndPct).toBeNull()
   })
 
-  test('脏数据防御：缴费期长于保障期时 payRatio 夹在 100 内（不画出条外）', function () {
+  test('脏数据防御：缴费期长于保障期 → 不画竖线（画在条尾等于"缴费到保障结束"，是噪音）', function () {
     const g = buildGantt([pol({ insurance_period: '5年', effective_date: '2020-01-01', payment_period: '20年' })], [{ name: '张三' }])
-    expect(g.rows[0].payRatio).toBeLessThanOrEqual(100)
+    expect(g.rows[0].payEndPct).toBeNull()
   })
 
   test('到期年龄：当前年龄 + 距到期年数（回答"60 岁时还剩什么"）', function () {
@@ -177,11 +182,39 @@ describe('gantt-builder — 按成员分组（成员名只出现一次）', func
   })
 })
 
+describe('gantt-builder — 年龄刻度（2026-10-18 用户提议：按年龄看时间轴）', function () {
+  const thisYear = new Date().getFullYear()
+
+  test('刻度带基准人（户主）年龄：age = 户主当前年龄 + (年份 − 今年)', function () {
+    const g = buildGantt([pol({ insurance_period: '30年', effective_date: '2020-01-01' })], [
+      { name: '张三', role: '本人', age: 44 },
+      { name: '张小某', role: '子女', age: 13 }
+    ])
+    expect(g.refName).toBe('张三')
+    expect(g.refAge).toBe(44)
+    const t = g.ticks[0]
+    expect(t.age).toBe(44 + (t.y - thisYear))
+  })
+
+  test('没有"本人"时退化为第一个填了年龄的成员（不猜、不崩）', function () {
+    const g = buildGantt([pol({ insurance_period: '30年', effective_date: '2020-01-01' })], [{ name: '李四', role: '配偶', age: 40 }])
+    expect(g.refAge).toBe(40)
+  })
+
+  test('全员年龄未知 → age 为 null（不显示年龄行，而不是显示 0 岁）', function () {
+    const g = buildGantt([pol({ insurance_period: '30年', effective_date: '2020-01-01' })], [{ name: '张三' }])
+    expect(g.refAge).toBe(0)
+    expect(g.ticks.every(t => t.age === null)).toBe(true)
+  })
+})
+
 describe('gantt-builder — 守卫：不做无字段支撑的判定（v2.0 评审必改②）', function () {
   // 2026-10-14 扩字段（今天竖线 / 缴费期 / 到期年龄）：白名单**显式**列入，新增字段必须先想清楚再改这里
-  const ALLOWED_BLOCK_KEYS = ['rows', 'ticks', 'startYear', 'endYear', 'nowPct', 'nowYear', 'notes']
+  // 2026-10-18 加 refName / refAge：年龄轴刻度的基准人（户主），属于轴标注
+  const ALLOWED_BLOCK_KEYS = ['rows', 'ticks', 'startYear', 'endYear', 'nowPct', 'nowYear', 'notes', 'refName', 'refAge']
   // 2026-10-17 加 firstOfMember：纯渲染分组标记（同一成员的第一行），不属于"空白期/重叠"那类判定字段
-  const ALLOWED_ROW_KEYS = ['rowKey', 'name', 'product', 'cat', 'sumAssured', 'startY', 'endY', 'startPct', 'widthPct', 'payEndY', 'payRatio', 'endAge', 'lifetime', 'oneYear', 'singlePay', 'firstOfMember']
+  // 2026-10-18 payRatio → payEndPct / payEndAge（缴费期满竖线替换斜纹段）
+  const ALLOWED_ROW_KEYS = ['rowKey', 'name', 'product', 'cat', 'sumAssured', 'startY', 'endY', 'startPct', 'widthPct', 'payEndY', 'payEndPct', 'payEndAge', 'endAge', 'lifetime', 'oneYear', 'singlePay', 'firstOfMember']
 
   test('block 与 row 只暴露白名单字段（将来误加"空白期/重叠"字段会在此处红）', function () {
     const g = buildGantt([pol({}), pol({ insurance_period: '1年', coverage_term: 1, insured_name: '李四' })], [{ name: '张三' }, { name: '李四' }])

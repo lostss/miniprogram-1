@@ -109,16 +109,22 @@
 .gt-name { font-size:var(--fs-caption); font-weight:var(--fw-semi); color:var(--text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .gt-prod { font-size:var(--fs-tiny); color:var(--text-tertiary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .gt-track { position:relative; flex:1; min-width:0; height:36rpx; }
-.gt-track--axis { height:28rpx; border-bottom:1rpx solid var(--border); }
+/* 2026-10-18：轴高 28 → 44rpx —— 刻度改成两行（年份 + 户主年龄） */
+.gt-track--axis { height:44rpx; border-bottom:1rpx solid var(--border); }
 /* 刻度：中间刻度以自身中心对齐位置；首尾刻度贴边（transform 翻转），避免被卡片裁掉 */
-.gt-tick { position:absolute; bottom:0; transform:translateX(-50%); font-size:var(--fs-tiny); color:var(--text-tertiary); white-space:nowrap; font-variant-numeric:tabular-nums; }
-.gt-tick--first { transform:none; }
-.gt-tick--last { transform:translateX(-100%); }
+.gt-tick { position:absolute; bottom:2rpx; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; gap:1rpx; color:var(--text-tertiary); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.gt-tick--first { transform:none; align-items:flex-start; }
+.gt-tick--last { transform:translateX(-100%); align-items:flex-end; }
+.gt-tick-y { font-size:var(--fs-tiny); }
+/* 年龄行更弱一档：它是"帮助理解"的第二语义，不该和年份抢注意力 */
+.gt-tick-age { font-size:var(--fs-tiny); color:var(--text-tertiary); opacity:0.75; }
+/* 轴左侧的基准人标注（"李阳勇 年龄"）：不标的话读者会把"62岁"当成自己的 */
+.gt-ref { font-size:var(--fs-tiny); color:var(--text-tertiary); }
 .gt-bar { position:absolute; top:8rpx; height:20rpx; min-width:6rpx; border-radius:999rpx; background:var(--accent-deep); }
-/* 缴费期斜纹段（2026-10-14）：条 = 保障期，条内斜纹 = 缴费期 → "钱交完了但保障还在"一眼可见。
-   用 repeating-linear-gradient（纯 CSS，不引图表库 —— 小程序里 ECharts/G2 要接 canvas 适配与分包）。 */
-.gt-pay { position:absolute; left:0; top:0; bottom:0; border-radius:999rpx 0 0 999rpx;
-  background-image:repeating-linear-gradient(45deg, rgba(255,255,255,0.55) 0, rgba(255,255,255,0.55) 3rpx, transparent 3rpx, transparent 8rpx); }
+/* 缴费期满竖线（2026-10-18 替代条内斜纹）：20rpx 条高下斜纹在真机不可读；
+   一根 2rpx 竖线 + 图例说明"其后只保留保障"，信息不减、噪声近零。
+   用白色半透明压深金色条，两种条色（金 / 琥珀）上都可见。 */
+.gt-payend { position:absolute; top:6rpx; height:24rpx; width:2rpx; background:rgba(255,255,255,0.9); }
 /* "今天"竖线：每行一条（虚线感，弱于时间条本身）；轴上一枚"今天"标签 */
 .gt-now { position:absolute; top:0; bottom:0; width:0; border-left:1rpx dashed var(--text-tertiary); opacity:0.55; }
 .gt-now-label { position:absolute; bottom:0; transform:translateX(-50%); font-size:var(--fs-tiny); color:var(--text-tertiary); white-space:nowrap; }
