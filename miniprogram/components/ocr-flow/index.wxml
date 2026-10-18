@@ -67,10 +67,21 @@
         </block>
         <block wx:if="{{ocrMask.procError.length > 0}}">
           <view class="proc-group-head proc-group-head--err">
-            <text>识别异常 · {{ocrMask.procError.length}}份</text>
+            <!-- 整批失败时不说"识别异常 N 份"：那是同一件事的 N 次，读起来像每张图都有独立问题 -->
+            <text wx:if="{{ocrMask.procBatchFail}}">识别失败 · 全部 {{ocrMask.procError.length}} 张</text>
+            <text wx:else>识别异常 · {{ocrMask.procError.length}}份</text>
             <!-- 2026-10-18：多张失败时给一个批量出口（逐条点太慢；网络抖动/超时往往是整批一起失败） -->
-            <text class="proc-retry-all pressable" wx:if="{{ocrMask.procError.length > 1}}" bindtap="onProcRetryAllFailed">{{ocrMask.procBusy ? '重试中...' : '全部重试'}}</text>
+            <text class="proc-retry-all pressable" wx:if="{{ocrMask.procBatchFail || ocrMask.procError.length > 1}}" bindtap="onProcRetryAllFailed">{{ocrMask.procBusy ? '重试中...' : '全部重试'}}</text>
           </view>
+          <!-- 整批失败：一条总说明 + 一个出口。逐条列 9 行相同原因既刷屏又误导（用户会以为要挨个点） -->
+          <view class="proc-card proc-card--err" wx:if="{{ocrMask.procBatchFail}}">
+            <view class="proc-info">
+              <text class="proc-err">{{ocrMask.procError[0].error}}</text>
+              <text class="proc-err-hint">网络或服务异常，重试即可；图片已上传，重试不会重复计费。</text>
+            </view>
+          </view>
+          <!-- ⚠️ 不要写在同一节点上（`wx:else` + `wx:for` 混用语义含糊，编译器不报错但行为不确定） -->
+          <block wx:else>
           <view class="proc-card proc-card--err" wx:for="{{ocrMask.procError}}" wx:key="fileId">
             <image class="proc-thumb" wx:if="{{item.thumb}}" src="{{item.thumb}}" mode="aspectFill" />
             <view class="proc-info">
@@ -86,6 +97,7 @@
               <text class="proc-retry-btn pressable {{item.retrying ? 'is-busy' : ''}}" data-fileid="{{item.fileId}}" catchtap="onProcRetryOne">{{item.retrying ? '重试中' : '重试'}}</text>
             </view>
           </view>
+          </block>
         </block>
       </scroll-view>
       <view class="ocr-actions-row">

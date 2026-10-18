@@ -305,3 +305,45 @@ describe('ocr-flow 点击矩阵：失败项单张重试', function () {
     expect(inst2._ocrRetryOne).not.toHaveBeenCalled()
   })
 })
+
+// 2026-10-18：区分「整批失败」与「单图失败」。
+// 整批 = 所有失败项共享同一个 RPC 级原因（网络/云函数异常），逐条列 9 行相同原因会读成
+// "9 张图各有各的问题"，且逐条重试等于把同一次失败重放 9 遍。
+describe('ocr-flow：整批失败 vs 单图失败', function () {
+  function renderWith(errors) {
+    const cfg = loadComponent()
+    const inst = makeInstance(cfg)
+    inst.data.ocrMask = Object.assign({}, inst.data.ocrMask, { procBusy: false })
+    inst._emitBusy = jest.fn()
+    inst._persistBatch = jest.fn()
+    inst._renderProc([], [], 'fam1', errors, {})
+    return inst
+  }
+
+  test('全部是 RPC 级错误（ocr_api_error / ocr_exception）→ 标记为整批失败', () => {
+    const inst = renderWith([
+      { fileId: 'f1', error: 'OCR阶段失败', error_code: 'ocr_api_error' },
+      { fileId: 'f2', error: 'OCR阶段失败', error_code: 'ocr_api_error' }
+    ])
+    expect(inst.data.ocrMask.procBatchFail).toBe(true)
+    expect(inst.data.ocrMask.procError.length).toBe(2)
+  })
+
+  test('单张也有自己的原因（识别为空 / 格式错）→ 不是整批失败，逐条重试才有意义', () => {
+    const inst = renderWith([
+      { fileId: 'f1', error: 'OCR阶段失败', error_code: 'ocr_api_error' },
+      { fileId: 'f2', error: 'OCR识别结果为空', error_code: 'ocr_empty' }
+    ])
+    expect(inst.data.ocrMask.procBatchFail).toBe(false)
+  })
+
+  test('只有一张且是异常 → 视为整批（此时"全部"=1，文案不该说"识别异常 1 份"）', () => {
+    const inst = renderWith([{ fileId: 'f1', error: '网络异常', error_code: 'ocr_exception' }])
+    expect(inst.data.ocrMask.procBatchFail).toBe(true)
+  })
+
+  test('没有失败项 → 不标记整批（避免空组误显示"全部 0 张"）', () => {
+    const inst = renderWith([])
+    expect(inst.data.ocrMask.procBatchFail).toBe(false)
+  })
+})

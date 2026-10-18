@@ -303,9 +303,17 @@ Component({
       const cls = flow.classifyBatchResults(this._procPolicies, this._procCash, errors, thumbMap)
       this._procErrors = cls.error
       this._procFamilyId = familyId || this.properties.familyId || ''
+      // 2026-10-18：区分「整批失败」与「单图失败」（评审遗留的最后一项）。
+      // 整批 = 所有失败项都源自同一个 RPC 级错误（ocr_api_error / ocr_exception）：它们**共享同一个原因**
+      //   （网络断、云函数超时/异常），逐条列出会读成"9 张图各有各的问题"，而逐条重试也只是
+      //   把同一次失败重放 9 遍。单图 = 每张各有原因（识别为空 / AI 格式错），逐条重试才正确。
+      const BATCH_CODES = { ocr_api_error: 1, ocr_exception: 1 }
+      const errList = cls.error || []
+      const batchFail = errList.length > 0 && errList.every(function(x) { return BATCH_CODES[x.error_code] })
       this.setData(flow.setDone(this._procPolicies, this._procCash, {
         'ocrMask._familyId': this._procFamilyId,
-        'ocrMask.procSuccess': cls.success, 'ocrMask.procReview': cls.review, 'ocrMask.procError': cls.error
+        'ocrMask.procSuccess': cls.success, 'ocrMask.procReview': cls.review, 'ocrMask.procError': cls.error,
+        'ocrMask.procBatchFail': batchFail
       }))
       this._emitBusy()
       this._persistBatch()

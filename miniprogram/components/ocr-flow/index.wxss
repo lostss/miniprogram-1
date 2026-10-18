@@ -55,6 +55,8 @@
 .proc-retry-btn::after { content:''; position:absolute; left:0; right:0; top:50%; height:88rpx; transform:translateY(-50%); }
 .proc-retry-btn:active { opacity:0.6 }
 .proc-retry-btn.is-busy { opacity:0.6 }
+/* 整批失败的补充说明（2026-10-18）：比错误正文弱一档，说明"下一步做什么"而不是重复问题本身 */
+.proc-err-hint { display:block; margin-top:var(--sp-1); font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-snug) }
 .ocr-badge { font-size:var(--fs-tiny); padding:var(--sp-1) var(--sp-2); border-radius:var(--r-full) }
 .ocr-badge.badge-ok { color:var(--ok-deep, #1a7f4f); background:var(--ok-dim, #e6f4ec) }
 .ocr-badge.badge-warn { color:var(--amber-deep); background:var(--amber-dim, #f7eedb) }

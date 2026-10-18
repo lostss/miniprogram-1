@@ -562,7 +562,9 @@ function classifyBatchResults(policies, cashValues, errors, thumbMap) {
   var errorCards = (errors || []).map(function(e) {
     var ec = e.error_code || 'ocr_exception'
     // 保留 retrying 标记：重试中经 _procRefresh 重渲染时按钮应保持"重试中"状态
-    return { fileId: e.fileId, thumb: e.thumb || (thumbMap && thumbMap[e.fileId]) || '', error: errorLabel(ec) || '识别失败', retrying: !!e.retrying }
+    // 2026-10-18：保留 error_code —— 调用方需要靠它区分「整批失败」（RPC 级：ocr_api_error /
+    // ocr_exception）与「单图失败」（ocr_empty / ai_format …）。原先只保留人话文案，判据丢失。
+    return { fileId: e.fileId, thumb: e.thumb || (thumbMap && thumbMap[e.fileId]) || '', error: errorLabel(ec) || '识别失败', error_code: ec, retrying: !!e.retrying }
   })
   return { success: success, review: review, error: errorCards }
 }
