@@ -146,6 +146,48 @@ function applyNumericEvidence(products, fieldConf, ocrText) {
 }
 
 /**
+ * 期间字段的"原文存在性"校验（2026-10-18）
+ *
+ * 为什么单独做：`insurance_period` / `payment_period` 是**文字型**字段，最容易出现
+ * "20年交" 与 "保障20年" 混淆、"终身" 与 "至70岁" 误读。它们不像金额有数字边界可比，
+ * 而一旦读错，甘特图的条长、缴费期斜纹段、时间线的「保障期满/交费期满」节点全错 ——
+ * 但页面不报错，只是画错。
+ *
+ * 做法：字段值（归一后）必须能在 OCR 文本里找到；找不到时退化为
+ * "数字+单位" 或 "终身" 这类 token 匹配（原文常有"缴费期间：20年（20次交）"的写法）。
+ * 找不到 → 置信度压到 0.5 → 进待核对。
+ *
+ * 已知局限（可接受）：token 匹配是"全文任意位置出现"，无法确认它属于哪一栏。
+ * 但它拦的是**彻底不存在**的期间（如把 30年 读成 50年），那种情况一定找不到。
+ */
+const PERIOD_FIELDS = ['insurance_period', 'payment_period']
+function _textEvidenceOk(ocrText, value) {
+  const hay = _normEvidence(ocrText)
+  const v = _normEvidence(value)
+  if (!hay || !v) return true
+  if (hay.indexOf(v) !== -1) return true
+  const tokens = String(value).match(/\d+\s*(?:年|岁|个月|月|日)|终身/g) || []
+  if (!tokens.length) return false
+  return tokens.every(function(t) { return hay.indexOf(_normEvidence(t)) !== -1 })
+}
+
+function applyPeriodEvidence(products, ocrText, fieldConf) {
+  const out = Object.assign({}, fieldConf)
+  const flagged = []
+  ;(products || []).forEach(function(p) {
+    PERIOD_FIELDS.forEach(function(f) {
+      const v = p && p[f]
+      if (typeof v !== 'string' || !v.trim()) return // 没值不判（缺失由 completeness 负责）
+      if (_textEvidenceOk(ocrText, v)) return
+      const cur = Number(out[f] == null ? 1 : out[f])
+      out[f] = Math.min(isFinite(cur) ? cur : 1, 0.5)
+      if (flagged.indexOf(f) === -1) flagged.push(f)
+    })
+  })
+  return { fieldConf: out, flagged: flagged }
+}
+
+/**
  * field_evidence 校验（2026-10-18）
  *
  * 上一层的置信度仍含"AI 自评"成分 —— 主观分救不了"模型抄错但很自信"。
@@ -291,7 +333,16 @@ function extractOne(extractRes, ocrConfInfo, ocrText) {
   const evNum = applyNumericEvidence(products, base.fieldConf, ocrText)
   // 2026-10-18：AI 提供的"原文出处"逐字回查（编造引用 / 值与引用不符 → 降级）
   const evQuote = applyEvidenceCheck(products, contractBasic, data.field_evidence, ocrText, evNum.fieldConf)
-  const ev = { fieldConf: evQuote.fieldConf, flagged: evNum.flagged.concat(evQuote.flagged.filter(function(f) { return evNum.flagged.indexOf(f) === -1 })) }
+  // 2026-10-18：期间字段（保障期间 / 缴费期间）的文字型校验 —— 读错会让甘特图与时间线画错
+  const evPeriod = applyPeriodEvidence(products, ocrText, evQuote.fieldConf)
+  const ev = {
+    fieldConf: evPeriod.fieldConf,
+    flagged: evNum.flagged
+      .concat(evQuote.flagged.filter(function(f) { return evNum.flagged.indexOf(f) === -1 }))
+      .concat(evPeriod.flagged.filter(function(f) {
+        return evNum.flagged.indexOf(f) === -1 && evQuote.flagged.indexOf(f) === -1
+      }))
+  }
   const fieldConf = ev.fieldConf
   const overallConf = base.overallConf
   const ocrReliable = base.ocrReliable
@@ -446,4 +497,4 @@ async function aiPhase({ ocrText, ocrConfInfo, ocrErrorCode, fileId, t0, t1, t2,
 // aiExtractBatch 单图路径统一走 aiPhase（DeepSeek 直连），批量拼接编排（_callBatchAI/aiExtractBatchPhase）已删除。
 // 备份文件已随 docs 归档清理（2026-09-04）；原实现见 git 历史。
 
-module.exports = { ocrPhase, aiPhase, matchPoliciesToMembers, buildPolicyFromExtract, extractOne, applyNumericEvidence, applyEvidenceCheck, _hasNumericEvidence, _toNum, _isCashValueFooterResidue, _cashValueTitleRatio }
+module.exports = { ocrPhase, aiPhase, matchPoliciesToMembers, buildPolicyFromExtract, extractOne, applyNumericEvidence, applyEvidenceCheck, applyPeriodEvidence, _textEvidenceOk, _hasNumericEvidence, _toNum, _isCashValueFooterResidue, _cashValueTitleRatio }

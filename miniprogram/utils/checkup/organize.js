@@ -34,11 +34,14 @@ const CATEGORY_OTHER = '其他'
 // 整理报告需要的"关键字段"= OCR 核心字段 + 报告必需的期间/保费。
 // 刻意**不复制** CORE_FIELDS 的内容，只在其上追加；`tests/checkup-organize.test.js`
 // 断言本清单恒为 CORE_FIELDS 的超集 —— CORE_FIELDS 增项而此处漏跟会直接变红。
-const EXTRA_REQUIRED_FIELDS = ['insurance_period', 'annual_premium']
+// 2026-10-18：补 payment_period（缴费期间）。它虽只用于展示，却是**甘特图缴费期斜纹段**与
+// 时间线「交费期满」节点的输入 —— 缺了不会报错，只会静默画少一段，用户分不清是"没读到"还是"本来就趸交"。
+const EXTRA_REQUIRED_FIELDS = ['insurance_period', 'payment_period', 'annual_premium']
 const REPORT_REQUIRED_FIELDS = CORE_FIELDS.concat(EXTRA_REQUIRED_FIELDS)
 const FIELD_ZH = {
   product_name: '产品名', insurance_category: '险种', insured_name: '被保人',
-  sum_assured: '保额', effective_date: '生效日', insurance_period: '保障期间', annual_premium: '年缴保费'
+  sum_assured: '保额', effective_date: '生效日', insurance_period: '保障期间',
+  payment_period: '缴费期间', annual_premium: '年缴保费'
 }
 
 const _num = (v) => Number(v) || 0
@@ -55,8 +58,19 @@ function missingRequiredFields(policy) {
   const p = policy || {}
   return REPORT_REQUIRED_FIELDS.filter((k) => {
     if (k === 'sum_assured' || k === 'annual_premium') return _num(p[k]) <= 0
+    // 2026-10-18：一年期产品的缴费期间天然是「一次性」（见 chapter-builder._payTermText），
+    // 没填 payment_period 不是缺失 → 否则每张百万医疗都会被标"缺缴费期间"，待完善直接变噪音。
+    if (k === 'payment_period' && _isOneYearPolicy(p)) return false
     return _str(p[k]) === ''
   })
+}
+
+// 一年期判定（与 chapter-builder._isOneYear / policy-terms 同口径）：
+// insurance_period 以「1年/一年」开头，或 coverage_term === 1
+function _isOneYearPolicy(p) {
+  if (/^(1|一)年/.test(String((p && p.insurance_period) || '').trim())) return true
+  const ct = p && p.coverage_term
+  return ct === 1 || ct === '1'
 }
 
 // 年缴口径白名单：只有这些缴费方式下，`annual_premium` 才能当"年缴金额"读。
