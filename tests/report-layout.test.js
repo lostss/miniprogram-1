@@ -1,13 +1,14 @@
 /**
- * 报告页布局结构守卫（2026-10-14）
+ * 报告页信息架构守卫（2026-10-14 建立 → 2026-10-18 IA 重构后重写）
  *
- * 背景（用户实报 + 真机截图）：`pages/report/index.wxml` 的「展开保障分析（AI 解读）」折叠区
- * 其 `</block>` 原本写到了页尾才闭合，把**保单整理报告的正文**（report-markdown 章节目录 + 全 7 章）、
- * 免责声明、转发/导出 footer 全部包了进去。而 `showLegacyBody` 默认 `false`
- * → 首屏只剩页头 + 汇总卡 + 按成员整理，正文与页尾（含合规免责、转发/导出按钮）全部不可见。
+ * 演变：
+ *   · 10-14：折叠区 `</block>` 写到页尾，把正文/免责/footer 全吞进「展开保障分析（AI 解读）」，
+ *            而 showLegacyBody 默认 false → 首屏看不到正文与合规项。当时的守卫是"折叠区行范围"。
+ *   · 10-18：用户决策 **规则类内容 = 一份完整的保单整理报告（常驻）；AI = 页尾进阶报告（手动触发）**。
+ *            折叠区整体移除 → 守卫改为**顺序断言**：规则内容在前、AI 在正文之后、合规与页尾常驻。
  *
- * 这类错误**不会报错**：标签闭合合法、WXSS 正常、单测全绿，只是渲染范围悄悄变大。
- * 故用"折叠区范围"断言钉住，而不是只断言"某段文案存在"。
+ * 这类错误不会报错（标签合法、样式正常、单测全绿，只是渲染顺序/范围悄悄变了），
+ * 所以必须钉结构而不是钉文案。
  */
 const fs = require('fs')
 const path = require('path')
@@ -16,22 +17,9 @@ const WXML = path.join(__dirname, '..', 'miniprogram', 'pages', 'report', 'index
 const src = fs.readFileSync(WXML, 'utf8')
 
 // ⚠️ 结构扫描必须在"注释已置空（保留换行 → 行号不变）"的副本上做：
-// 本文件注释里出现了 `<block>` / `</block>` 字面文本（讲"用 <block> 拆开"、记录本次修复），
-// 不置空会污染嵌套计数 —— 写这条守卫时踩了两次（假失衡 + 抓不到注入的 bug）。
+// 本文件注释里出现了 `<block>` / `</block>` 字面文本，不置空会污染嵌套计数（踩过两次）。
 const lines = src.replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, ' ')).split(/\r?\n/)
-
-/** 找到 AI 折叠区的 `<block>` 起止行号（1-based），用嵌套计数配对，而非硬编码行号 */
-function legacyBlockRange() {
-  const startIdx = lines.findIndex((l) => /\{\{!hasPolicy \|\| showLegacyBody\}\}/.test(l))
-  expect(startIdx).toBeGreaterThan(-1)
-  let depth = 0
-  for (let i = startIdx; i < lines.length; i++) {
-    depth += (lines[i].match(/<block\b/g) || []).length
-    depth -= (lines[i].match(/<\/block>/g) || []).length
-    if (depth === 0 && i >= startIdx) return { start: startIdx + 1, end: i + 1 }
-  }
-  throw new Error('折叠区 <block> 未闭合')
-}
+const plain = src.replace(/<!--[\s\S]*?-->/g, '')
 
 function lineOf(re) {
   const i = lines.findIndex((l) => re.test(l))
@@ -39,56 +27,54 @@ function lineOf(re) {
   return i + 1
 }
 
-describe('报告页布局：AI 折叠区不得吞掉正文与页尾', () => {
-  const range = legacyBlockRange()
-
-  test('折叠区起止行落在 AI 材料范围内（不是页尾）', () => {
-    // 折叠区应止于事实观察（factsView）附近，不应延伸到 scroll-view 结尾
-    expect(range.start).toBeGreaterThan(0)
-    expect(range.end).toBeLessThan(lines.length - 4)
+describe('报告页 IA：规则内容常驻、AI 在页尾、合规与页尾常驻', () => {
+  test('整理汇总卡 → 规则诊断 → 成员概览 → 待完善 → 正文 → 进阶报告 → 页尾', () => {
+    const order = [
+      ['整理汇总卡', /class="sum-card"/],
+      ['规则诊断卡', /class="diag-card"/],
+      ['按成员整理', /sec-title"[^>]*>按成员整理/],
+      ['待完善', /sec-title"[^>]*>待完善/],
+      ['正文（章节）', /<report-markdown/],
+      ['进阶报告头', /class="adv-head-card"/],
+      ['免责声明', /class="report-disclaimer"/],
+      ['页尾操作区', /class="report-footer/]
+    ]
+    const got = order.map(([name, re]) => ({ name, line: lineOf(re) }))
+    const sorted = got.slice().sort((a, b) => a.line - b.line)
+    expect(got.map((x) => x.name)).toEqual(sorted.map((x) => x.name))
   })
 
-  test.each([
-    ['保单整理报告正文（章节目录 + 全 7 章）', /<report-markdown/],
-    ['免责声明（合规项，必须常驻）', /class="report-disclaimer"/],
-    ['页尾操作区（转发报告给客户 / 导出 PDF）', /class="report-footer/]
-  ])('%s 不得落在折叠区内', (_name, re) => {
-    const n = lineOf(re)
-    // 折叠区内的元素，行号必然落在 [start, end]；这里断言"在区外"
-    const inside = n >= range.start && n <= range.end
-    expect({ line: n, range: `${range.start}-${range.end}`, inside }).toEqual({
-      line: n,
-      range: `${range.start}-${range.end}`,
-      inside: false
-    })
+  test('规则诊断（覆盖检查 / TOP-N 风险）不在任何 AI 折叠里 —— 原先是"展开保障分析"内', () => {
+    // 折叠机制已删除：不得再出现 showLegacyBody / legacy-toggle
+    expect(plain).not.toMatch(/showLegacyBody|legacy-toggle/)
+    // 诊断卡必须无条件渲染（只受 hasPolicy 约束，不受任何展开态约束）
+    const diagLine = lines.find((l) => /class="diag-card"/.test(l))
+    expect(diagLine).toContain('wx:if="{{hasPolicy}}"')
   })
 
-  test('AI 材料（摘要卡 / 深度解读 / 事实观察）确实在折叠区内 —— 防止"修过度"把折叠区掏空', () => {
-    for (const re of [/class="summary-card"/, /class="deep-sec-title"/]) {
-      const n = lineOf(re)
-      expect(n >= range.start && n <= range.end).toBe(true)
-    }
+  test('正文在进阶报告之前（正则是规则交付物，AI 是加购层）', () => {
+    expect(lineOf(/<report-markdown/)).toBeLessThan(lineOf(/class="adv-head-card"/))
+  })
+
+  test('AI 生成入口是手动按钮，且不再有"自动生成"承诺文案', () => {
+    expect(plain).toContain('bindtap="onDeepAnalysis"')
+    expect(plain).toContain('生成进阶报告')
+    // 原文案"系统会在信息更新后自动生成分析"已随自动生成一起移除
+    expect(plain).not.toContain('系统会在信息更新后自动生成分析')
+    expect(plain).not.toContain('保障分析自动更新中')
   })
 
   test('保额口径：不给「报销额度 + 给付金额」的合计', () => {
-    const wxml = src.replace(/<!--[\s\S]*?-->/g, '')
-    // 整理汇总卡：两颗数字并列，合计不再出现
-    expect(wxml).not.toContain('保障型保额合计')
+    expect(plain).not.toContain('保障型保额合计')
     // ⚠️ 划分口径必须是**险种**（给付型 / 报销额度）。第一版用"保障型 − 一年期"，
     // 真机立刻自相矛盾：卡片 300 万，而险种明细 寿险100+重疾210=310 万。
-    expect(wxml).toContain('checkup.summary.payoutSumAssuredText')
-    expect(wxml).toContain('checkup.summary.quotaSumAssuredText')
-    expect(wxml).toContain('给付型 · 寿险 / 重疾')
-    // AI 摘要卡主数字同口径（两卡相邻，口径不一致会比单卡错更明显）
-    expect(wxml).toContain('{{summaryCards.payout}}')
-    expect(wxml).not.toContain('{{summaryCards.protection}}')
+    expect(plain).toContain('checkup.summary.payoutSumAssuredText')
+    expect(plain).toContain('checkup.summary.quotaSumAssuredText')
+    expect(plain).toContain('给付型 · 寿险 / 重疾')
   })
 
   test('wxml 标签计数平衡（提前/延后闭合会立即失衡）', () => {
-    // ⚠️ 必须先剥掉 HTML 注释：本文件的注释里出现了 `<block>` 字面文本（讲"用 <block> 拆开"），
-    // 不剥注释会数出 14/13 的假失衡 —— 第一次写这条断言时就踩到了。
-    const stripped = src.replace(/<!--[\s\S]*?-->/g, '')
-    const cnt = (re) => (stripped.match(re) || []).length
+    const cnt = (re) => (plain.match(re) || []).length
     expect(cnt(/<block\b/g)).toBe(cnt(/<\/block>/g))
     // 自闭合 <view ... /> 不存在于本文件；若将来引入需同步调整此断言
     expect(cnt(/<view\b/g)).toBe(cnt(/<\/view>/g))

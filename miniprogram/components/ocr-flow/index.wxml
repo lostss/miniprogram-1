@@ -121,7 +121,10 @@
       <view class="ocr-saved-wrap">
         <view class="ocr-saved-head">
           <view class="ocr-done-title done-green">✓ 保存成功</view>
-          <view class="ocr-sheet-close pressable" catchtap="onSavedEnter" aria-label="{{skipMatch ? '查看报告' : '立即进入保障报告'}}"><image class="ocr-sheet-close-icon" src="/images/close.svg" mode="aspectFit" /></view>
+          <!-- 2026-10-18 修（审计 P1）：右上角原本是 ✕ 图标却绑 onSavedEnter（进报告）——
+               用户点"关闭"实际被跳转。语义与图标必须一致：✕ = 关闭弹层（不跳转），
+               进报告走下面那个带文字的「完成查看 / 立即进入」按钮。 -->
+          <view class="ocr-sheet-close pressable" catchtap="onSavedHome" aria-label="关闭"><image class="ocr-sheet-close-icon" src="/images/close.svg" mode="aspectFit" /></view>
         </view>
         <view class="ocr-done-sub">已保存 {{ocrMask.savedPolicies}} 份保单{{ocrMask.savedCash > 0 ? ' + ' + ocrMask.savedCash + ' 份现价表' : ''}}</view>
         <view class="ocr-phase-sub">{{skipMatch ? '报告即将刷新' : '3s 后进入保障报告'}}</view>

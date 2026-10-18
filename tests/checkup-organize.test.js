@@ -297,3 +297,46 @@ describe('checkup/organize — 契约与边界', () => {
     expect(toPolicyCard(P({ insurance_period: '至2050-06-01' })).shortTerm).toBe(false)
   })
 })
+
+describe('checkup/organize — 口径一致：失效/退保不计入任何统计（审计 P0-2 回归）', () => {
+  // 审计复现：1 张有效重疾 30 万 + 1 张退保寿险 100 万/月交 5 万
+  // 旧实现（只排除 deleted）→「2 张 / 5.3 万 / 已覆盖寿险+重疾」，而保额只有 30 万、成员行写 130 万。
+  const build = () => buildCheckupReport({
+    family: {
+      // P() 默认 member_id='m2'、M() 默认 'm1' → 必须显式对齐，否则保单会进 unassigned
+      members: [M({ member_id: 'm1' })],
+      policies: [
+        P({ id: 'p1', member_id: 'm1', insurance_category: '重疾险', sum_assured: 300000, annual_premium: 3000, status: 'active' }),
+        P({ id: 'p2', member_id: 'm1', insurance_category: '寿险', sum_assured: 1000000, annual_premium: 50000, payment_method: '月交', status: 'surrendered' })
+      ]
+    }
+  })
+
+  test('保单张数 / 保额 / 已覆盖险种只算 active', () => {
+    const r = build()
+    expect(r.summary.policyCount).toBe(1)
+    expect(r.summary.protectionSumAssured).toBe(300000)
+    expect(r.summary.categories).toEqual(['重疾险'])
+    // 非年交口径：退保单被排除后，就不该再有"非年交未年化"的告警
+    expect(r.summary.nonAnnualCount).toBe(0)
+  })
+
+  test('成员行保额与汇总同源（不再出现"汇总 30 万 / 成员 130 万"）', () => {
+    const r = build()
+    expect(r.groups[0].sumAssured).toBe(300000)
+    expect(r.groups[0].policyCount).toBe(1)
+  })
+
+  test('失效/退保单单列提示（不静默消失）', () => {
+    const r = build()
+    expect(r.summary.inactiveCount).toBe(1)
+    expect(r.summary.inactiveNote).toContain('失效 / 退保')
+    expect(r.summary.inactiveNote).toContain('文末附录')
+  })
+
+  test('全部有效时不给多余提示（不制造噪音）', () => {
+    const r = buildCheckupReport({ family: { members: [M()], policies: [P({ status: 'active' })] } })
+    expect(r.summary.inactiveCount).toBe(0)
+    expect(r.summary.inactiveNote).toBe('')
+  })
+})

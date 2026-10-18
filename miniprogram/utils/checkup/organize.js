@@ -136,7 +136,15 @@ function buildCheckupReport(input) {
   const src = input || {}
   const family = src.family || {}
   const members = (src.members || family.members || []).filter((m) => m && m.status !== 'deleted')
-  const policies = (src.policies || family.policies || []).filter((p) => p && p.status !== 'deleted')
+  // 2026-10-18（审计 P0-2 修复）：**整理报告的每个数字都只算有效保单**。
+  // 原实现只排除 deleted → 「张数 / 年缴保费 / 已覆盖险种 / 成员保额」把失效、退保、理赔终止
+  // 的保单也算进去，而同一张卡的「保额构成」走 coverage-summary（只算 active）→ 同卡四个数字口径不一。
+  // 实测：1 张有效重疾 30 万 + 1 张退保寿险 100 万 → 卡上写「2 张 / 6 万 / 已覆盖寿险+重疾」，
+  // 而保额只有 30 万、成员行却写 130 万。
+  // 失效/退保单不丢：`inactiveCount` 在卡上单列一行，明细仍在文末附录（附录本就显示全部并带状态标签）。
+  const allPolicies = (src.policies || family.policies || []).filter((p) => p && p.status !== 'deleted')
+  const policies = allPolicies.filter((p) => p.status === 'active')
+  const inactiveCount = allPolicies.length - policies.length
 
   // 归属：member_id 优先；无 member_id 才按被保人姓名精确匹配（与保单入库口径一致）
   const byId = {}
@@ -195,8 +203,14 @@ function buildCheckupReport(input) {
   // 合计里混入了非年交保单 → 金额口径不齐，必须提示（不静默相加）
   const nonAnnualCount = policies.filter((p) => ANNUAL_METHODS.indexOf(_str(p.payment_method)) === -1).length
   const summary = {
+    // 只统计 active（见上方 allPolicies / policies 的说明）
     policyCount: policies.length,
     memberCount: members.length,
+    // 失效 / 退保 / 理赔终止：不计入任何统计，但必须让用户知道它们存在
+    inactiveCount,
+    inactiveNote: inactiveCount > 0
+      ? '另有 ' + inactiveCount + ' 张失效 / 退保保单，未计入上述统计（明细见文末附录）'
+      : '',
     nonAnnualCount,
     premiumNote: nonAnnualCount > 0
       ? '其中 ' + nonAnnualCount + ' 张非年交保单的保费未年化，仅按期缴金额列出'

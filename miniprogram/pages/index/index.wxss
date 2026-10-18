@@ -66,8 +66,11 @@
 .cf-row { display:flex; align-items:center; justify-content:space-between; margin-top:var(--sp-6) }
 .cf-label { font-size:var(--fs-base); color:var(--text-primary) }
 .cf-stepper { display:flex; align-items:center; gap:var(--sp-4); background:var(--bg-input); border-radius:var(--r-full); padding:var(--sp-1) var(--sp-2) }
-/* 步进器按钮 56rpx 视觉 + 内边距凑够 88rpx 热区（与全站最小触点一致） */
-.cf-step { width:56rpx; height:56rpx; display:flex; align-items:center; justify-content:center; border-radius:50%; background:var(--bg-card); color:var(--accent-deep); font-size:var(--fs-lg); line-height:1 }
+/* 步进器：56rpx 视觉 + 伪元素把热区扩到 88rpx（全站最小触点基线）。
+   2026-10-18 修（审计 P1）：上一版注释就写着"凑够 88rpx 热区"，但**代码里没有 ::after** ——
+   实际点按区只有 28px，是漏网的小触点。注释与实现不一致比没注释更贵，这里补齐。 */
+.cf-step { position:relative; width:56rpx; height:56rpx; display:flex; align-items:center; justify-content:center; border-radius:50%; background:var(--bg-card); color:var(--accent-deep); font-size:var(--fs-lg); line-height:1 }
+.cf-step::after { content:''; position:absolute; left:50%; top:50%; width:88rpx; height:88rpx; transform:translate(-50%,-50%) }
 .cf-step.is-off { color:var(--text-tertiary); opacity:0.5 }
 .cf-count { min-width:120rpx; text-align:center; font-size:var(--fs-base); color:var(--text-primary); font-variant-numeric:tabular-nums }
 .cf-count.is-empty { color:var(--text-tertiary); font-size:var(--fs-caption) }

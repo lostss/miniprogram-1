@@ -80,13 +80,11 @@ Page({
     factsView: null, factsOpen: false,
     // 2026-09-12 MVP 验证：反馈已提交态 + 成交标记（成交是 ROI 的唯一真值来源）
     feedbackGiven: false, dealStatus: '',
-    // 保单整理视图（阶段一报告主体，见 _applyReportData）；原 AI 分析报告默认收起、可展开对照
+    // 保单整理视图（阶段一报告主体，见 _applyReportData）
+    // 2026-10-18 IA 重构：删除 showLegacyBody / onToggleLegacyBody ——
+    // 原来用「展开保障分析（AI 解读）」把 AI 内容折起来；现在 AI 整体移到页尾、手动生成，
+    // 不再需要一个默认收起的折叠开关（规则内容全部常驻，用户要求"整合成完整报告"）。
     checkup: null,
-    showLegacyBody: false,
-  },
-  onToggleLegacyBody() {
-    if (this._disposed) return
-    this.setData({ showLegacyBody: !this.data.showLegacyBody })
   },
   // 真机 404 修复兜底：familyId 为 'undefined'/'null' 字面量（跳转传参异常时）→ 走"缺少客户信息"而非 getFamily 404 误报"客户不存在"
   onLoad(o) {
@@ -573,62 +571,21 @@ Page({
   // 活报告模型（2026-09）：自动介入保障分析（source:'auto'，fire-and-forget）。
   // 后端 30s CAS/节流兜底并发与连点；本地 30s 抑制窗口减少无效请求；客户版/无保单/未 stale 不触发。
   _tryAutoAnalysis() {
-    if (this.data.isShared || this._disposed || this._autoTrying) return
-    const cid = this.data.familyId
+    // 2026-10-18 IA 重构（用户决策：AI 内容移到报告尾部、由**手动触发**更新）：
+    // 原实现每次数据变更（OCR 保存/编辑/对话/撤销都汇到本方法）都自动调 reportAI ——
+    // 60s 超时 + 真实计费，而生成结果默认折叠在「展开保障分析」里 → 为看不见的东西付费。
+    // 现在只做"提示"：已生成过且数据变脏 → 把入口文案标成"可重新生成"；
+    // 从未生成过则不催办（用户没要就别花钱）。
+    if (this.data.isShared || this._disposed) return
     const f = this._family
-    if (!cid || !f || !f.insight_stale) return
+    if (!f || !f.insight_stale) return
     if (!f.policies || !f.policies.length) return
-    const now = Date.now()
-    const last = f.last_analysis_at ? new Date(f.last_analysis_at).getTime() : 0
-    // 2026-09-06：节流窗口内命中 → 安排窗口结束后补发一次（stale 自愈，避免"下拉后 tag 永不消失"）
-    const waitLast = now - last < 30000 ? (30000 - (now - last)) : 0
-    const waitFire = (this._lastAutoFireAt && now - this._lastAutoFireAt < 30000) ? (30000 - (now - this._lastAutoFireAt)) : 0
-    const wait = Math.max(waitLast, waitFire)
-    if (wait > 0) { this._scheduleAutoRetry(wait); return }
-    this._lastAutoFireAt = now
-    this._autoTrying = true
-    // 2026-09-06 进行中反馈：auto 已发起 → 页头提示切换"自动更新中"，避免用户误以为刷新未生效
-    this.setData({ staleTag: '保障分析自动更新中…' })
-    // V1.5 语气：自动分析沿用用户当前语气偏好（与手工路径一致）
-    const autoPayload = { familyId: cid, source: 'auto' }
-    if (this.data.reportTone === 'warm') autoPayload.tone = 'warm'
-    // 2026-09-22 全面审计 P1-3：必须显式给 60s 超时。reportAI 的**函数时限就是 60s**
-    // （cloudbaserc.json），而 apiClient 默认超时 30s → 只要一次真实生成超过 30s，
-    // 前端先放弃、报"云函数超时"，后端仍在跑并最终落库：用户看到"自动更新中…"后又退回
-    // "数据有更新"，实际报告已悄悄更新（或反之）。手工路径 report-analysis.js 早已显式
-    // 传 60000 并注明此坑，自动路径漏了。retries 保持 0（重发会双份计费）。
-    api('generateReport', autoPayload, { timeout: 60000, retries: 0 })
-      .then((r) => {
-        if (r && r.ok && r.data && r.data.portrait && !this._disposed) {
-          // 实际生成完成：静默刷新取新分析（stale 复位后 staleTag 自然消失）
-          this._refreshReportSequence(cid, { waitMs: 0, applyOpts: {} }).catch(e => { console.error('[report] auto analysis refresh:', (e && e.message) || e); this._restoreStaleTag() })
-        } else {
-          // throttled/skipped/未实际执行 → 恢复提示文案
-          this._restoreStaleTag()
-        }
-      })
-      .catch(() => { this._restoreStaleTag() })
-      .then(() => { this._autoTrying = false })
+    if (!this.data.deep) return
+    this.setData({ staleTag: '数据已更新，可重新生成进阶报告' })
   },
 
-  // 2026-09-06：auto 未执行/失败时恢复 staleTag 提示（数据仍待刷新则回到下拉引导，否则清空）
-  _restoreStaleTag() {
-    if (this._disposed || this.data.isShared) return
-    const f = this._family
-    const stillStale = f && f.insight_stale && !!this.data.deep
-    this.setData({ staleTag: stillStale ? '数据有更新，下拉刷新报告内容' : '' })
-  },
-
-  // 2026-09-06：节流窗口结束后补发 auto 尝试（单例 timer，防 stale 悬置；onUnload 清理）
-  _scheduleAutoRetry(delay) {
-    if (this._disposed || this.data.isShared) return
-    if (this._autoRetryTimer) return
-    this._autoRetryTimer = setTimeout(() => {
-      this._autoRetryTimer = null
-      if (this._disposed || this.data.isShared) return
-      this._tryAutoAnalysis()
-    }, Math.max(1000, delay))
-  },
+  // 2026-10-18：删除 _restoreStaleTag / _scheduleAutoRetry —— 它们只服务于"自动生成"路径
+  // （auto 未执行时恢复提示、节流窗口后补发）。自动生成已按用户决策移除，两者成为孤儿。
 
   async _loadReport(cid, retry) {
     retry = retry || 0

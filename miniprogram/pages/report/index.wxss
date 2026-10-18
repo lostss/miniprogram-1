@@ -15,6 +15,25 @@
 /* 保障摘要 + 覆盖检查融合卡：数据在上，检查在下（原独立 Hero 卡已并入） */
 /* 正文卡片间距：sp-6（24rpx，与卡内 padding 同值，紧凑连贯） */
 .summary-card { margin:0 var(--sp-5) var(--sp-7); padding:var(--sp-6); border-radius:var(--r-xl); background:var(--bg-card); border:1rpx solid var(--border); box-shadow:var(--shadow-md); animation:cardReveal var(--dur-glacial) var(--ease-out-expo) both; }
+/* ========== 2026-10-18 IA 重构：规则诊断卡 + 进阶报告（统一一套卡片语言）========== */
+/* 诊断卡：与整理汇总卡同一边距/圆角/底色（用户要求"结构风格统一"），
+   只是标题层级降一档 —— 它是汇总卡的展开说明，不是并列的第二张卡。 */
+.diag-card { margin:0 var(--sp-5) var(--sp-7); padding:var(--sp-6); border-radius:var(--r-xl); background:var(--bg-card); border:1rpx solid var(--border); }
+.diag-title { font-size:var(--fs-lg); font-weight:var(--fw-bold); color:var(--accent-deep); letter-spacing:var(--ls-wide); font-family:var(--font-serif); margin-bottom:var(--sp-4); }
+
+/* 进阶报告区（页尾、手动生成）：刻意用**更弱的容器**（无卡底、只有上分隔线），
+   与规则报告区分层级 —— 规则报告是主体，AI 是加购层，视觉上不该抢。 */
+.adv-head-card { margin:var(--sp-8) var(--sp-5) var(--sp-4); padding-top:var(--sp-6); border-top:1rpx solid var(--border); }
+.adv-title-row { display:flex; align-items:center; gap:var(--sp-3); }
+.adv-title { font-family:var(--font-serif); font-size:var(--fs-xl); color:var(--text-primary); letter-spacing:var(--ls-wide); }
+.adv-badge { font-size:var(--fs-tiny); color:var(--accent-deep); background:var(--accent-dim); padding:var(--sp-1) var(--sp-3); border-radius:var(--r-full); }
+.adv-sub { display:block; margin-top:var(--sp-2); font-size:var(--fs-caption); color:var(--text-tertiary); line-height:var(--lh-snug); }
+.adv-cta { display:flex; align-items:center; gap:var(--sp-4); margin-top:var(--sp-5); }
+.adv-btn { flex:1; height:88rpx; display:flex; align-items:center; justify-content:center; background:var(--accent-dim); color:var(--accent-deep);
+  font-size:var(--fs-base); font-weight:var(--fw-semi); letter-spacing:var(--ls-wide); border:none; border-radius:var(--r-full); line-height:1 }
+.adv-btn::after { border:none }
+.adv-btn.is-loading { opacity:0.55 }
+.adv-tone { flex-shrink:0; font-size:var(--fs-caption); color:var(--text-tertiary); padding:var(--sp-2) var(--sp-3) }
 .summary-card-title { font-size:var(--fs-lg); font-weight:var(--fw-bold); color:var(--accent-deep); letter-spacing:var(--ls-wide); font-family:var(--font-serif); margin-bottom:var(--sp-5); padding-bottom:var(--sp-4); border-bottom:1rpx solid var(--border-accent); }
 .summary-card-grid { display:flex; gap:var(--sp-3); }
 /* 覆盖检查区：与摘要数据分隔，卡内下半区（分隔线统一 --border-accent） */

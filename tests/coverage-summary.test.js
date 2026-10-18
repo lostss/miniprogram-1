@@ -119,9 +119,12 @@ describe('保额拆分接线（防第四份实现 / 防只改一处）', () => {
   test('报告页摘要卡不再渲染单一"总保额"，改为按类展示', () => {
     const wxml = fs.readFileSync(path.join(root, 'miniprogram', 'pages', 'report', 'index.wxml'), 'utf8')
     expect(wxml).not.toContain('>总保额<')
-    expect(wxml).toContain('保障型保额')
-    expect(wxml).toContain('summaryCards.byCat')
-    expect(wxml).toContain('summaryCards.unknown')
+    // 2026-10-18 IA 重构：AI 摘要卡（含它的三个数字与 chips）已删除 ——
+    // 按类展示统一由**整理汇总卡**承担，口径仍来自同一契约 coverage-summary。
+    expect(wxml).toContain('checkup.summary.coverageByCat')
+    expect(wxml).toContain('checkup.summary.unknownSumAssuredText')
+    expect(wxml).toContain('给付型 · 寿险 / 重疾')
+    expect(wxml).not.toContain('summaryCards.byCat')
   })
 
   test('PDF 摘要不再输出"总保额"字样', () => {

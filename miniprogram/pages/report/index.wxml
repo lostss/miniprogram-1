@@ -99,6 +99,9 @@
           </view>
           <view class="sum-note" wx:if="{{checkup.summary.savingsSumAssuredText}}">储蓄型（年金 / 增额寿 / 终身寿）合计 {{checkup.summary.savingsSumAssuredText}}，与上述保障型分列</view>
           <view class="sum-note" wx:if="{{checkup.summary.unknownSumAssuredText}}">{{checkup.summary.unknownSumAssuredText}} 的保单未标注险种，未计入上述分类</view>
+          <!-- 2026-10-18（审计 P0-2）：失效/退保单不计入任何统计，但必须可见，否则用户会发现
+               "张数 + 保额对不上"（原实现把退保单算进张数与保费、却不算进保额）。 -->
+          <view class="sum-note" wx:if="{{checkup.summary.inactiveCount > 0}}">{{checkup.summary.inactiveNote}}</view>
         </view>
         <view class="sum-wide">
           <view class="sum-label">已覆盖险种</view>
@@ -108,6 +111,41 @@
           </view>
         </view>
         <view class="sum-note" wx:if="{{checkup.summary.memberNote}}">{{checkup.summary.memberNote}}</view>
+      </view>
+
+      <!-- 规则诊断卡（2026-10-18 IA 重构，用户决策：规则类内容都属整理报告、结构与风格统一）：
+           覆盖检查（hero.alerts）与 TOP-N 风险预警都是**本地规则计算**，不是 AI 内容 ——
+           此前它们被包进「展开保障分析（AI 解读）」且默认收起，导致首屏看不到任何结论。
+           现在常驻在整理汇总卡与成员概览之间，与章节同样式（.diag-card 复用 .summary-card 的排版）。
+           同时删除原 AI 摘要卡的三个数字（年保费/给付型保额/保障人数）——它们与整理汇总卡完全重复。 -->
+      <view class="diag-card" wx:if="{{hasPolicy}}">
+        <view class="diag-title">保障覆盖与风险</view>
+        <!-- 保障覆盖检查（结论先行：汇总在上、逐条论据在下、行动建议收尾） -->
+        <view class="summary-check" wx:if="{{hero.alerts.length}}">
+          <view class="hero-summary-lead">{{hero.summary}}</view>
+          <view class="hero-alert {{item.ok ? 'is-ok' : (item.blocked ? 'is-unknown' : 'is-warn')}}" wx:for="{{hero.alerts}}" wx:key="name">
+            <text class="hero-alert-dot"></text>
+            <text class="hero-alert-text">{{item.name}} {{item.display}}</text>
+          </view>
+          <view class="hero-advice" wx:if="{{hero.topAdvice}}">{{hero.topAdvice}}</view>
+        </view>
+        <!-- 风险预警 TOP-N（2026-10-13 报告结构 v2.0 ① 家庭总检结论）
+             排序口径（report/risk-alerts-builder）：等级 → gapPriority → 敞口金额降序 → 成员档案顺序，
+             **不按险种、不引入主观权重**；每条都可展开看依据（basis），给不出依据的结论不出现。
+             达标项（绿）同样展示，建立信任、不只制造焦虑。 -->
+        <view class="risk-list" wx:if="{{risks.items.length}}">
+          <view class="risk-item risk-{{item.level}}" wx:for="{{risks.items}}" wx:key="key" catchtap="onRiskTap" data-idx="{{index}}">
+            <view class="risk-head">
+              <text class="risk-dot"></text>
+              <text class="risk-level">{{item.levelLabel}}</text>
+              <text class="risk-title">{{item.title}}</text>
+            </view>
+            <text class="risk-detail">{{item.detail}}</text>
+            <!-- 依据：默认收起（避免首屏噪音），点击条目展开 —— 结论可追溯是"错误不对称"的落地方式 -->
+            <text class="risk-basis" wx:if="{{item.expanded && item.basis}}">依据：{{item.basis}}</text>
+          </view>
+          <view class="risk-more" wx:if="{{risks.more}}">另有 {{risks.more}} 项未展开{{risks.moreRed ? '（含高危 ' + risks.moreRed + ' 项）' : ''}}，共 {{risks.total}} 项</view>
+        </view>
       </view>
 
       <!-- 2026-10-17：由「逐单卡片」改为「成员概览」。
@@ -148,14 +186,7 @@
       </block>
     </block>
 
-    <!-- 原 AI 分析报告（保障摘要/覆盖检查/缺口成因/配置建议…）：结构保留、**默认收起**，
-         一行可展开对照；内容一字未删 → 阶段一验完再决定是否删除（可回退）。 -->
-    <view class="legacy-toggle pressable" wx:if="{{hasPolicy && checkup}}" bindtap="onToggleLegacyBody">
-      <text class="legacy-toggle-text">{{showLegacyBody ? '收起保障分析（AI 解读）' : '展开保障分析（AI 解读）'}}</text>
-      <text class="legacy-toggle-go">{{showLegacyBody ? '⌃' : '⌄'}}</text>
-    </view>
-    <block wx:if="{{!hasPolicy || showLegacyBody}}">
-    <!-- 全链路审计 UC4：无保单空状态（引导上传，替代零值数字+红色告警） -->
+    <!-- 空态（2026-10-18 IA 重构：不再挂在折叠区下，无保单时直接可见） -->
     <view class="empty-report" wx:if="{{!hasPolicy}}">
       <view class="empty-report-icon">📄</view>
       <view class="empty-report-title">{{isShared ? '暂无保单' : '还没有保单，先传第一张'}}</view>
@@ -174,86 +205,29 @@
         <text class="empty-report-members-act pressable" bindtap="onEmptyEditMembers" aria-label="补充成员姓名">去补充</text>
       </view>
     </view>
-    <!-- 保障摘要 + 保障覆盖检查融合卡：数据在上，覆盖检查在下（同卡分层） -->
-    <view class="summary-card" wx:if="{{hasPolicy}}">
-      <view class="summary-card-title">保障摘要</view>
-      <!-- 2026-09-12：移除 AI summary（familyTag）渲染——其设计用途是列表页/卡片预览场景（prompts.js summary 章目标），
-           而报告中它与下方 hero.conclusion 同卡相邻、要素重叠（均含结构+最致命风险+负债），造成同义重复。
-           摘要卡的一句话总结改由 hero.conclusion 独家承担；summary 仍写库，供将来列表预览使用 -->
-      <view class="summary-card-grid">
-        <view class="num-cell">
-          <text class="num-val">{{summaryCards.premium}}</text>
-          <text class="num-unit">万</text>
-          <text class="num-lbl">年保费</text>
-        </view>
-        <!-- 2026-10-17：与整理汇总卡同一口径 —— 主数字改「长期给付」，一年期额度另行标注。
-             原"保障型保额 2310 万"里含 2010 万报销额度，两张卡又在相邻位置各显示一次。 -->
-        <view class="num-cell">
-          <text class="num-val">{{summaryCards.payout}}</text>
-          <text class="num-unit">万</text>
-          <text class="num-lbl">给付型保额</text>
-        </view>
-        <view class="num-cell">
-          <text class="num-val">{{summaryCards.count}}</text>
-          <text class="num-unit">人</text>
-          <text class="num-lbl">保障人数</text>
-        </view>
+    <!-- 规则诊断卡已上移到「按成员整理」之前（见上方 2026-10-18 IA 重构说明） -->
+
+    <!-- 整理报告正文（章节目录 + 全 N 章）：纯规则计算，常驻。
+         2026-10-18 IA 重构：正文从页尾上移到 AI 之前 —— **整理报告到此结束**，后面是进阶层。 -->
+    <report-markdown wx:if="{{hasPolicy}}" chapters="{{chapters}}" readonly="{{isShared}}" bind:policytap="onPolicyTap" bind:statuschange="onStatusChange" bind:chapteredit="onChapterEdit" bind:riskcheck="onRiskCheck" bind:tocnav="onTocNav" />
+
+    <!-- ===== 进阶报告（AI 分析）=====
+         2026-10-18 用户决策：AI 内容统一收到报告尾部，**手动触发**，不再随数据变更自动生成。
+         · 为什么手动：自动生成一次是 60s + 真实计费，而内容默认折叠 → 为看不见的东西付费；
+         · 为什么在页尾：整理报告（规则）本身已是完整交付物，AI 是"加购层"，阅读顺序应是先事实后解读。 -->
+    <view class="adv-head-card" wx:if="{{hasPolicy}}">
+      <view class="adv-title-row">
+        <text class="adv-title">进阶报告</text>
+        <text class="adv-badge" wx:if="{{!isShared}}">AI 分析</text>
       </view>
-      <!-- 2026-10-14 用户决策：不再展示单一"总保额"，改按保障类型统计。
-           理由：医疗险 400 万报销年限额 + 重疾 30 万保险金额相加没有意义 ——
-           前者是报销上限、后者是给付金额，混算会让客户把报销额度当成"能拿到手的钱"。
-           2026-10-17 再进一步：主数字＝**长期给付**（保障型 − 一年期），一年期额度在这一行标注。 -->
-      <view class="summary-note" wx:if="{{summaryCards.quota !== '0'}}">另有 {{summaryCards.quota}} 万为报销额度（医疗 / 意外），与上述给付型分列</view>
-      <view class="summary-note summary-cats" wx:if="{{summaryCards.byCat.length}}">
-        <text class="cat-chip" wx:for="{{summaryCards.byCat}}" wx:key="cat">{{item.cat}} {{item.w}}万</text>
-      </view>
-      <view class="summary-note" wx:if="{{summaryCards.savings !== '0'}}">储蓄型（年金 / 增额寿 / 终身寿）合计 {{summaryCards.savings}} 万，与上述保障型分列</view>
-      <!-- 未标注险种的保额单列：不并入任何一类（并入会朝某一方向高估），同时是数据质量信号 -->
-      <view class="summary-note" wx:if="{{summaryCards.unknown !== '0'}}">{{summaryCards.unknown}} 万的保单未标注险种，未计入上述分类（补充险种后即自动归类）</view>
-      <!-- 2026-10-17：原「其中一年期短险 X 万（每年需续保）」已并入上方长期给付口径下的
-           「另有 X 万为一年期额度」，避免同卡两行说同一件事。 -->
-      <!-- 审计 C1（2026-09-02）：AI 一句话结论（此前死值）置于摘要卡内、覆盖检查前 -->
-      <!-- P1-C（2026-09-05）：AI 结论与规则覆盖检查同卡并存，标注来源防止客户把 AI 解读误当系统计算 -->
-      <!-- 2026-09-12：客户版不显示来源角标——「AI 解读」是 owner 侧的审计需要（防误当系统计算），
-           搬到客户版只会让客户读成"机器猜的"；「自动生成」事实由页尾免责声明覆盖，不构成隐瞒 -->
+      <text class="adv-sub">由 AI 补充家庭画像、保障点评、缺口成因与配置建议。基于当前数据生成，不改变上面的整理结论。</text>
+      <!-- AI 一句话结论：原在摘要卡内（与覆盖检查并列），随 AI 层一起移到此处 -->
       <view class="hero-conclusion" wx:if="{{hero.conclusion}}"><text class="hero-conclusion-tag" wx:if="{{!isShared}}">AI 解读</text>{{hero.conclusion}}</view>
-      <!-- 保障覆盖检查（结论先行：汇总在上、逐条论据在下、行动建议收尾） -->
-      <view class="summary-check" wx:if="{{hero.alerts.length}}">
-        <view class="hero-summary-lead">{{hero.summary}}</view>
-        <view class="hero-alert {{item.ok ? 'is-ok' : (item.blocked ? 'is-unknown' : 'is-warn')}}" wx:for="{{hero.alerts}}" wx:key="name">
-          <text class="hero-alert-dot"></text>
-          <text class="hero-alert-text">{{item.name}} {{item.display}}</text>
-        </view>
-        <view class="hero-advice" wx:if="{{hero.topAdvice}}">{{hero.topAdvice}}</view>
+      <!-- 生成/重新生成入口（owner）：未生成时是主按钮，已生成时降为「重新生成」 -->
+      <view class="adv-cta" wx:if="{{!isShared}}">
+        <button class="adv-btn pressable {{analysisShow ? 'is-loading' : ''}}" bindtap="onDeepAnalysis" aria-label="{{deep ? '重新生成进阶报告' : '生成进阶报告'}}">{{analysisShow ? '正在生成…' : (deep ? '重新生成' : '生成进阶报告')}}</button>
+        <text class="adv-tone pressable" bindtap="onToggleTone" aria-label="切换分析语气">{{reportTone === 'warm' ? '语气：共情' : '语气：直白'}}</text>
       </view>
-      <!-- 风险预警 TOP-N（2026-10-13 报告结构 v2.0 ① 家庭总检结论）
-           排序口径（report/risk-alerts-builder）：等级 → gapPriority → 敞口金额降序 → 成员档案顺序，
-           **不按险种、不引入主观权重**；每条都可展开看依据（basis），给不出依据的结论不出现。
-           达标项（绿）同样展示，建立信任、不只制造焦虑。 -->
-      <view class="risk-list" wx:if="{{risks.items.length}}">
-        <view class="risk-item risk-{{item.level}}" wx:for="{{risks.items}}" wx:key="key" catchtap="onRiskTap" data-idx="{{index}}">
-          <view class="risk-head">
-            <text class="risk-dot"></text>
-            <text class="risk-level">{{item.levelLabel}}</text>
-            <text class="risk-title">{{item.title}}</text>
-          </view>
-          <text class="risk-detail">{{item.detail}}</text>
-          <!-- 依据：默认收起（避免首屏噪音），点击条目展开 —— 结论可追溯是"错误不对称"的落地方式 -->
-          <text class="risk-basis" wx:if="{{item.expanded && item.basis}}">依据：{{item.basis}}</text>
-        </view>
-        <view class="risk-more" wx:if="{{risks.more}}">另有 {{risks.more}} 项未展开{{risks.moreRed ? '（含高危 ' + risks.moreRed + ' 项）' : ''}}，共 {{risks.total}} 项</view>
-      </view>
-    </view>
-    <!-- 深度分析（可选项 2026-09-02）：未生成=结论下生成入口（owner）；已生成=折叠洞察摘要（owner）/完整展开（客户版叙事主内容） -->
-    <!-- 审计 C4（2026-09-02）：hints 死区块已删除（report 契约无 hints 键，恒空） -->
-    <view class="deep-entry" wx:if="{{hasPolicy && !deep && !isShared}}">
-      <view class="deep-head">
-        <text class="deep-title">保障分析</text>
-        <text class="deep-badge">AI 解读</text>
-        <text class="deep-tone pressable" bindtap="onToggleTone" aria-label="切换分析语气">{{reportTone === 'warm' ? '语气：共情' : '语气：直白'}}</text>
-      </view>
-      <text class="deep-entry-desc">系统会在信息更新后自动生成分析；也可点击立即生成。内容包括保障点评、缺口成因、配置建议与行动清单。</text>
-      <button class="deep-entry-btn pressable" bindtap="onDeepAnalysis" aria-label="立即生成保障分析">立即生成分析</button>
     </view>
     <view class="deep-analysis" wx:if="{{hasPolicy && deep}}">
       <view class="deep-head">
@@ -354,19 +328,15 @@
         </block>
       </view>
     </view>
-    </block>
-    <!-- 2026-10-14 布局修复（P0，用户实报"保障汇总表这些内容折叠在 AI 内容里面了"）：
-         折叠区的 `</block>` 原本远在页尾（原 367 行）才闭合，把下面这些**一并**包进了
-         「展开保障分析（AI 解读）」：report-markdown（章节目录 + 全 7 章正文，即保单整理报告的正文主体）、
-         预览客户版/标记成交、反馈行、免责声明、转发/导出 footer。
-         而 showLegacyBody 默认 false（pages/report/index.js:81）→ 首屏只剩页头 + 汇总卡 + 按成员整理；
-         **正文与页尾（含合规免责声明、转发/导出按钮）全部不可见**。
-         现收敛到 AI 材料自然结束处：
-           折叠区 = 空态 + AI 摘要卡（保障摘要/覆盖检查/风险预警）+ 深度解读 + 事实观察
-           常驻   = 整理汇总卡 + 按成员整理 + 待完善 + 章节目录与正文 + 页尾
-         改法仅为「提前闭合」——折叠区内容一字未删，回退成本为 0。
-         守卫：tests/report-layout.test.js（断言正文/免责/页尾不在折叠区行范围内）。 -->
-    <report-markdown wx:if="{{hasPolicy}}" chapters="{{chapters}}" readonly="{{isShared}}" bind:policytap="onPolicyTap" bind:statuschange="onStatusChange" bind:chapteredit="onChapterEdit" bind:riskcheck="onRiskCheck" bind:tocnav="onTocNav" />
+    <!-- 2026-10-18 IA 重构（用户决策）：**规则类内容整合为一份完整的保单整理报告**，
+         AI 分析整体移到报告尾部、由用户手动触发。
+         阅读顺序：页头 → 整理汇总卡 → 保障覆盖与风险 → 按成员整理 → 待完善
+                  → 章节正文（家庭结构/财务/保障汇总/缺口/期间/月历/附录）
+                  → 进阶报告（AI，手动生成）→ 页尾（预览/成交/反馈/免责/转发/导出）
+         依据：① 汇总/矩阵/缺口/期间都是本地规则计算，构成完整报告；
+               ② AI 是"加购层"，放在页尾符合"先看事实、再看解读"；
+               ③ 原实现每次数据变更自动调 reportAI（60s + 计费）而内容默认折叠 —— 为看不见的东西付费。
+         守卫：tests/report-layout.test.js（断言正文在进阶区之前、进阶区在正文之后、免责/页尾常驻）。 -->
     <!-- 2026-09-12 客户版预览入口（owner，有保单时才有意义）：不占 footer 主按钮位 -->
     <view class="preview-entry" wx:if="{{!isShared && hasPolicy}}">
       <text class="preview-entry-btn pressable" bindtap="onPreviewShared" aria-label="预览客户版效果">预览客户版效果</text>
