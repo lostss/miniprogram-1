@@ -484,6 +484,13 @@ Component({
         this.setData(flow.setFailed('已保存 ' + writtenN + '/' + totalN + ' 份，' + missN + ' 份未通过校验。可重试（已保存的不会重复）或放弃。'))
         return
       }
+      // 2026-10-18：服务端把"已落库但字段有问题"的保单回传（金额负值/险种未知/日期非法）。
+      // 这些不影响落库，但会让报告里的金额/矩阵/期间出错 → 必须当场告诉用户，
+      // 而不是等他自己在报告里发现空白。saved 相本身有文案区，这里只弹一条轻提示。
+      var warns = (ok && ok.warnings) || []
+      if (warns.length) {
+        wx.showToast({ title: warns.length + ' 份保单字段需核对（金额 / 险种 / 日期）', icon: 'none', duration: 2600 })
+      }
       // 写入成功后回写 familyId（_procRefresh 时匹配未定，_familyId 仍为空；
       // saved 事件依赖它跳转报告页，缺失会导致"缺少客户信息"）
       this._procFamilyId = familyId

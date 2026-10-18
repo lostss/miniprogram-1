@@ -15,6 +15,8 @@ const { detectInjection } = require('./_shared/guard')
 const { MANUAL_STATUSES } = require('./_shared/policy-status')
 const { desensitize } = require('./_shared/pii-rules')
 const { normalizeInsurer } = require('./_shared/insurer-normalize')
+// 险种规范词（跨树契约）：'医疗'→'医疗险'、'年金险'→'年金' —— 与 OCR/报告侧同一份映射
+const { canonCat } = require('./_shared/thresholds')
 const { writeSeam } = require('./_shared/writeSeam')
 const { logOperation } = require('./_shared/logSeam')
 const { locatePolicy } = require('./policy-locate')
@@ -45,13 +47,54 @@ function _toYuanAmount(v) {
 // updatePolicy 人工编辑仍走严格 400 校验（拒绝而非静默置空，提示更明确）。
 function _cleanEffectiveDate(v) {
   const s = String(v || '').trim()
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
-  const m = s.match(/^(\d{4})[年/.\-](\d{1,2})[月/.\-](\d{1,2})日?$/)
-  if (m) {
-    const pad = n => String(n).padStart(2, '0')
-    return m[1] + '-' + pad(m[2]) + '-' + pad(m[3])
+  let y, mo, d
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    y = Number(s.slice(0, 4)); mo = Number(s.slice(5, 7)); d = Number(s.slice(8, 10))
+  } else {
+    const m = s.match(/^(\d{4})[年/.\-](\d{1,2})[月/.\-](\d{1,2})日?$/)
+    if (!m) return ''
+    y = Number(m[1]); mo = Number(m[2]); d = Number(m[3])
   }
-  return ''
+  // 2026-10-18 修（被新增校验测试暴露）：原实现只比形状，不校验月/日范围 ——
+  // "2024年13月45日" 会被规范化成 `2024-13-45` 当合法日期入库。
+  // 这里补范围 + 日历回环校验（防 2 月 30 日这类"格式对但不存在"的日期）。
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return ''
+  const dt = new Date(y, mo - 1, d)
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return ''
+  const pad = n => String(n).padStart(2, '0')
+  return y + '-' + pad(mo) + '-' + pad(d)
+}
+
+// ---------- 写库兜底校验（2026-10-18）----------
+// 原实现只在 OCR 的 prompt 里约束 AI，写库路径比约束更宽松：负数金额、任意险种字符串、
+// 非法日期都原样入库（只有人工编辑 updatePolicy 才严格拒绝）。这里统一收口成纯函数，便于单测。
+//
+// 设计取舍：**不阻断写入**（识别费用已付，先落库），只把问题回传成 codes，由前端提示。
+const KNOWN_CATS = ['寿险', '重疾险', '医疗险', '意外险', '年金']
+function normalizePolicyInput(data) {
+  const d = data || {}
+  const warns = []
+
+  // ① 金额：数值化后 clamp ≥0（原 `_toYuanAmount` 的纯数字分支放行负数）
+  const saYuan = _toYuanAmount(d.sum_assured)
+  const apYuan = _toYuanAmount(d.annual_premium)
+  const sumAssured = isNaN(saYuan) ? 0 : Math.max(0, saYuan)
+  const annualPremium = isNaN(apYuan) ? 0 : Math.max(0, apYuan)
+  if (saYuan < 0) warns.push('negative_sum_assured')
+  if (apYuan < 0) warns.push('negative_premium')
+
+  // ② 险种：走契约规范词，白名单外归"其他"（否则矩阵/缺口整格落空且无人知道）
+  const catRaw = String(d.insurance_category || '').trim()
+  const catNorm = catRaw ? canonCat(catRaw) : ''
+  const category = !catNorm ? '' : (KNOWN_CATS.indexOf(catNorm) !== -1 ? catNorm : '其他')
+  if (catNorm && category === '其他' && catNorm !== '其他') warns.push('unknown_category')
+
+  // ③ 生效日期：规范失败时置空（保持原行为）+ 报告告警
+  const effRaw = String(d.effective_date || '').trim()
+  const effectiveDate = _cleanEffectiveDate(d.effective_date)
+  if (effRaw && !effectiveDate) warns.push('bad_effective_date')
+
+  return { sumAssured, annualPremium, category, effectiveDate, warnings: warns }
 }
 
 // ---------- writePolicy ----------
@@ -86,12 +129,13 @@ async function writePolicy(db, openid, event) {
     if (mRes.data && mRes.data.length > 0) resolvedMemberId = mRes.data[0].member_id
   }
   // H2：金额数字化 + 万/亿→元（人工编辑路径 "80万"→800000；OCR 直传元数字原样保留；NaN 兜底 0）
-  const saYuan = _toYuanAmount(sum_assured)
-  const apYuan = _toYuanAmount(annual_premium)
+  // 2026-10-18：同时做三项兜底校验（金额非负 / 险种白名单 / 日期合法），见 normalizePolicyInput
+  const norm = normalizePolicyInput(data)
+  const warns = norm.warnings
   const doc = {
-    product_name: product_name || '', insurance_category: insurance_category || '', insurance_type: insurance_type || '',
-    insurance_period: insurance_period || '', sum_assured: isNaN(saYuan) ? 0 : saYuan, annual_premium: isNaN(apYuan) ? 0 : apYuan,
-    policy_number: policy_number || '', insurer: normalizeInsurer(insurer), effective_date: _cleanEffectiveDate(effective_date),
+    product_name: product_name || '', insurance_category: norm.category, insurance_type: insurance_type || '',
+    insurance_period: insurance_period || '', sum_assured: norm.sumAssured, annual_premium: norm.annualPremium,
+    policy_number: policy_number || '', insurer: normalizeInsurer(insurer), effective_date: norm.effectiveDate,
     policyholder_name: policyholder_name || '', insured_name: resolvedInsuredName, beneficiary_name: beneficiary_name || '',
     special_agreement: safeSpecialAgreement, payment_method: payment_method || '', payment_period: payment_period || '',
     id: id || 'pol_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
@@ -124,7 +168,7 @@ async function writePolicy(db, openid, event) {
   // S2-1 修复：命中重复时返回库中已有保单的真实 id（doc.id 是新生成的，不存在于库中）
   // 否则下游 writePoliciesBatch 用这个 id 写入 p.id，再传给 matchOrphanCashValues，会指向不存在的保单
   // P1-B 修复：exist 提升为外层变量（原 const 块级作用域，dedup 命中时此处引用抛 ReferenceError）；policyId 双 fallback
-  if (isExisting) return { code: 200, data: { written: false, skipped: true, policyId: (exist.data[0].id || exist.data[0]._id) || doc.id } }
+  if (isExisting) return { code: 200, data: { written: false, skipped: true, policyId: (exist.data[0].id || exist.data[0]._id) || doc.id, warnings: warns } }
   // Phase 1：保单入库同步拆解为结构化三元组写入 facts（replace 旧单条 '购买了' 兜底；开放谓词 + policy 节点）
   // K-S2 修复：member_id 为空但有被保人姓名时也写 facts——"拥有保障"边由 addFact 按姓名解析，
   // 保单节点事实（保额/保费等）本就与成员无关；成员不存在时 addFact 返回 404，被下方 catch 兜底不阻断入库
@@ -196,7 +240,8 @@ function _writePolicyStep(db, openid, familyId) {
       // 全链路审计 S1：透出 skipped 标志（命中库中重复项）——重复项 member_id 已正确落库，
       // 若参与成员匹配会被 match sync 无条件覆盖污染正确值，调用方须排除
       const skipped = !!(res.data && res.data.skipped)
-      return { policyId: (res.data && res.data.policyId) || '', ok: true, skipped }
+      // warnings 透传给 ingestPolicies 汇总（金额负值/险种未知/日期非法），前端据此提示
+    return { policyId: (res.data && res.data.policyId) || '', ok: true, skipped, warnings: (res.data && res.data.warnings) || [] }
     }
     // S2-2 修复：writePolicy 返回非 200（如重复命中）记为失败并留痕
     logOperation(db, {
@@ -303,7 +348,15 @@ async function ingestPolicies(db, openid, event) {
   // 首页完整度圆环仍是旧值（用户以为没生效），得等打开报告或编辑一次才更新。
   // 按**批次**调用一次（不要放进逐条循环，见 completeness-sync 的成本说明）。
   await syncCompleteness(db, familyId, openid)
-  return { code: 200, data: { written: results.filter(r => r.ok).length, total: policies.length, dedupSkipped, results } }
+  // 2026-10-18：汇总"已落库但字段有问题"的保单（金额负值/险种未知/日期非法）。
+  // 不阻断写入（识别费用已付），但要回传→前端提示，否则用户只能等报告里发现空白。
+  const warnings = []
+  for (let i = 0; i < dedupedPolicies.length; i++) {
+    const codes = (results[i] && results[i].warnings) || []
+    if (!codes.length) continue
+    warnings.push({ product_name: (dedupedPolicies[i] && dedupedPolicies[i].product_name) || '', codes: codes })
+  }
+  return { code: 200, data: { written: results.filter(r => r.ok).length, total: policies.length, dedupSkipped, results, warnings } }
 }
 
 // 向后兼容入口：测试与外部调用仍用 writePoliciesBatch
@@ -653,4 +706,4 @@ async function linkCashValue(db, openid, event) {
   return { code: 200, data: { matched: true, policyId, product_name: policy.product_name || '' } }
 }
 
-module.exports = { writePolicy, writePoliciesBatch, ingestPolicies, _dedupPolicies, _runConcurrent, deletePolicy, updatePolicy, changePolicyStatus, writeCashValue, linkCashValue, POLICY_EDITABLE, POLICY_STATUS_CHANGEABLE }
+module.exports = { writePolicy, writePoliciesBatch, ingestPolicies, normalizePolicyInput, _dedupPolicies, _runConcurrent, deletePolicy, updatePolicy, changePolicyStatus, writeCashValue, linkCashValue, POLICY_EDITABLE, POLICY_STATUS_CHANGEABLE }

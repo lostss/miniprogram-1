@@ -351,7 +351,9 @@ async function confirmWritePolicies(familyId, policies, cashValues, setData) {
       // Bug-B（2026-09-09）：ingestPolicies 对校验失败项仍返回 200 → 透传 written/total 供上层对账，
       // 防"written=0 却显示保存成功"
       var d = r.data || {}
-      return { ok: true, written: d.written, total: d.total, dedupSkipped: d.dedupSkipped || 0 }
+      // 2026-10-18：透传服务端"已落库但字段有问题"的告警（金额负值/险种未知/日期非法），
+    // 由调用方提示 —— 否则用户只能在报告里发现空白，无从知道是哪一步出的问题。
+    return { ok: true, written: d.written, total: d.total, dedupSkipped: d.dedupSkipped || 0, warnings: d.warnings || [] }
     }
     // S4 修复：失败路径不 hide，由调用方决定 UI（保留确认卡让用户重试）
     return { ok: false, error: r.msg || '写入失败' }
