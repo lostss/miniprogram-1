@@ -1,17 +1,11 @@
 const { normalize: normalizeBlock } = require('../../utils/custom-blocks')
-// 目录激活态归约（2026-10-18）：纯函数，规则见该文件头注释
-const { pickActiveKey } = require('../../utils/toc-active')
+// 目录激活态（2026-10-18 第二版）：按滚动位置取"最后一个越过目录下沿的章节"，规则见该文件头注释
+const { pickActiveByOffset } = require('../../utils/toc-active')
 
 Component({
   properties: { chapters: { type: Array, value: [] }, readonly: { type: Boolean, value: false } },
   // activeKey：当前正在读的章节（目录标签高亮）；tocInto：把高亮标签滚进可视区
   data: { cards: [], toc: [], _detailOpen: {}, activeKey: '', tocInto: '' },
-  lifetimes: {
-    ready() { this._armTocObserver() },
-    detached() {
-      if (this._tocObs) { try { this._tocObs.disconnect() } catch (e) {} this._tocObs = null }
-    }
-  },
   observers: {
   chapters(arr) {
     if (!arr || !arr.length) return
@@ -26,41 +20,56 @@ Component({
       const customBlocks = c.customBlocks ? c.customBlocks.map(normalizeBlock) : null
       return { key: c.key, num: c.num || '', title: c.title || '', edit: c.edit || '', unit: c.unit || '', customBlocks, content: c.content || '', pre: c.pre || '', note: c.note || '', collapsible, collapsed, style }
     }), toc: arr.map(c => ({ key: c.key, num: c.num || '', title: c.title || '' })) })
-    // 章节变化后重新挂观察器（首屏数据晚到 / 报告刷新都会走到这里）
-    this._armTocObserver()
+    // 章节变了 → 旧的几何测量作废，等下一次滚动重新测
+    this._tocOffsets = null
   }
   },
   methods: {
     /**
-     * 目录激活态观察器（2026-10-18）
-     * 章节节点在组件内、滚动容器在页面 → 用 IntersectionObserver 让节点自报"是否在可视带"。
-     * 可视带：目录下方 96px 起、到视口底部上方 300px 止（避开底部输入栏与吸底条的遮挡区）。
-     * observeAll 一次观察全部章节；回调里只更新 seen 集合，归约交给 pickActiveKey。
+     * 目录激活态（2026-10-18 第二版）
+     *
+     * 第一版（IntersectionObserver + 可视带）在真机上错两处：回顶不回弹、以及章节标题被
+     * 吸顶目录挡住时高亮跳过一章。原因都是"用可见性近似阅读位置"。
+     * 现在改为确定性判定：页面把 scrollTop 通过 syncPageScroll 送进来（方法调用，不 setData），
+     * 本组件按"最后一个 top 越过目录下沿的章节"决定高亮。
+     *
+     * 测量只在需要时做（首屏 / 章节变化 / 折叠展开后）：目录是 sticky 的，其下沿屏幕坐标
+     * 在滚动中不变，所以只需测一次即可配合滚动增量使用。
      */
-    _armTocObserver() {
-      if (this._tocObs) { try { this._tocObs.disconnect() } catch (e) {} }
-      var self = this
-      // 等一帧：observers 触发时节点可能还没渲染（首屏 chapters 一到就 arm 会观察不到）
-      var arm = function() {
-        if (!self.data.cards || !self.data.cards.length) return
-        self._tocSeen = {}
-        self._tocObs = self.createIntersectionObserver({ observeAll: true })
-        self._tocObs.relativeToViewport({ top: -96, bottom: -300 })
-          .observe('.md-card', function(res) {
-            if (!res || !res.id) return
-            var key = String(res.id).replace(/^ch-/, '')
-            if (!key) return
-            if (res.intersectionRatio > 0) self._tocSeen[key] = true
-            else delete self._tocSeen[key]
-            var active = pickActiveKey(self.data.toc.map(function(t) { return t.key }), self._tocSeen, self.data.activeKey)
-            if (active && active !== self.data.activeKey) {
-              // tocInto 让高亮标签自动滚进可视区（章节多时标签会滚出屏幕）
-              self.setData({ activeKey: active, tocInto: 'toc-' + active })
-            }
-          })
+    // ⚠️ 方法名不能以 on 开头：本项目有守卫（wxml-binding-integrity）要求所有 onXxx 都必须
+    // 在 wxml 里绑定，而本方法由**父页面直接调用**（没有、也不需要 wxml 绑定）。
+    syncPageScroll(scrollTop) {
+      var s = Number(scrollTop) || 0
+      if (!this._tocOffsets) {
+        this._measureToc(s)
+        return // 本次先测，下一次滚动事件就能用上（滚动是连续的，不会漏帧）
       }
-      if (typeof wx !== 'undefined' && wx.nextTick) wx.nextTick(arm)
-      else setTimeout(arm, 50)
+      var dy = s - this._tocMeasuredAt
+      var active = pickActiveByOffset(this._tocOffsets, dy, this._tocLineY)
+      if (active && active !== this.data.activeKey) {
+        // tocInto 让高亮标签自动滚进可视区（章节多时标签会滚出屏幕）
+        this.setData({ activeKey: active, tocInto: 'toc-' + active })
+      }
+    },
+
+    _measureToc(scrollTop) {
+      var self = this
+      var q = this.createSelectorQuery()
+      q.select('.toc').boundingClientRect()
+      q.selectAll('.md-card').boundingClientRect()
+      q.exec(function(res) {
+        var toc = res && res[0]
+        var cards = (res && res[1]) || []
+        if (!cards.length) return
+        self._tocOffsets = cards.map(function(r) {
+          return { key: String(r.id || '').replace(/^ch-/, ''), top0: r.top }
+        }).filter(function(o) { return o.key })
+        // 目录下沿 + 4px 容差：标题越过这条线就算"当前章"
+        self._tocLineY = toc ? (toc.bottom + 4) : 72
+        self._tocMeasuredAt = Number(scrollTop) || 0
+        // 测完立刻按当前位置算一次，避免第一帧不高亮
+        self.syncPageScroll(self._tocMeasuredAt)
+      })
     },
 
     // V1.5 吸顶目录（2026-09-12）：长报告（十余屏）缺少跳转 → 章节 id（id="ch-{{key}}"）此前无人消费。
@@ -80,6 +89,8 @@ Component({
     toggleChapter(e) {
       const k = e.currentTarget.dataset.k
       const cards = this.data.cards.map(c => c.key === k ? Object.assign({}, c, { collapsed: !c.collapsed }) : c)
+      // 折叠/展开会改变其后所有章节的位置 → 几何测量作废
+      this._tocOffsets = null
       this.setData({ cards })
     },
     onPolicyTap(e) {

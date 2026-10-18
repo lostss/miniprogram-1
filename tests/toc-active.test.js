@@ -1,74 +1,89 @@
 /**
- * 目录激活态（2026-10-18）
+ * 目录激活态（2026-10-18，第二版）
  *
- * 目标：报告页顶部吸顶章节标签高亮"当前正在读哪一章"。
+ * 第一版用 IntersectionObserver 判断"哪些章节落在可视带里"，真机暴露两个问题：
+ *   ① 回到顶部不回弹（可视带里暂时没有章节时按"保留上一次"处理 → 标签停在中途）
+ *   ② 对应不准确（章节标题被吸顶目录挡住时该章已不在带内 → 高亮跳过一章）
  *
- * 为什么单独抽一个纯函数：判定依赖"哪些章节落在可视带里"，而"可视带"由组件用
- * IntersectionObserver 观察（滚动容器在页面、章节节点在组件内，组件拿不到 scrollTop）。
- * 观察是平台能力、测不了；**归约规则**能测，所以把它拿出来钉住。
+ * 第二版：按滚动位置取"最后一个越过目录下沿的章节"。几何规则纯函数化，便于钉住。
  */
-const { pickActiveKey } = require('../miniprogram/utils/toc-active')
+const { pickActiveByOffset } = require('../miniprogram/utils/toc-active')
 
-describe('pickActiveKey — 目录激活态归约', () => {
-  const keys = ['overview', 'family_structure', 'coverage_summary', 'gap_analysis']
+// 测量时刻各章标题的屏幕坐标（第一章在目录下方 200px 处，章间距 400px）
+const OFFSETS = [
+  { key: 'overview', top0: 200 },
+  { key: 'family_structure', top0: 600 },
+  { key: 'family_finance', top0: 1000 },
+  { key: 'coverage_summary', top0: 1400 }
+]
+const LINE = 80 // 目录下沿屏幕坐标
 
-  test('多个章节同时可见 → 取目录顺序里的第一个（视线在上方那章）', () => {
-    expect(pickActiveKey(keys, { coverage_summary: true, gap_analysis: true }, '')).toBe('coverage_summary')
+describe('pickActiveByOffset — 以"越过目录下沿"为准', () => {
+  test('未滚动 → 没有章节越过线，回弹到第一章（修"回到顶部不回弹"）', () => {
+    expect(pickActiveByOffset(OFFSETS, 0, LINE)).toBe('overview')
   })
 
-  test('只有一章可见 → 就是它', () => {
-    expect(pickActiveKey(keys, { gap_analysis: true }, '')).toBe('gap_analysis')
+  test('第二章标题刚越过线 → 第二章（即使第一章还占着大半屏）', () => {
+    // dy = 600 - 80 = 520 时，第二章正好压线
+    expect(pickActiveByOffset(OFFSETS, 520, LINE)).toBe('family_structure')
+    expect(pickActiveByOffset(OFFSETS, 519, LINE)).toBe('overview')
   })
 
-  test('一个都不可见 → 保留上一次（清空会让标签在滚动中闪一下）', () => {
-    expect(pickActiveKey(keys, {}, 'coverage_summary')).toBe('coverage_summary')
+  test('滚动超过最后一章 → 停在最后一章（不会越界成空）', () => {
+    expect(pickActiveByOffset(OFFSETS, 99999, LINE)).toBe('coverage_summary')
   })
 
-  test('首次进入且什么都不可见 → 空串（不高亮，避免默认亮一个错误项）', () => {
-    expect(pickActiveKey(keys, {}, '')).toBe('')
+  test('滚动回顶部（dy 归零）→ 一定回到第一章（修 ① 的直接判据）', () => {
+    const deep = pickActiveByOffset(OFFSETS, 1600, LINE)
+    expect(deep).toBe('coverage_summary')
+    expect(pickActiveByOffset(OFFSETS, 0, LINE)).toBe('overview')
   })
 
-  test('可见集合里有目录之外的 key（章节被删/顺序变化）→ 忽略，不返回野值', () => {
-    expect(pickActiveKey(keys, { removed_chapter: true }, 'overview')).toBe('overview')
+  test('章节标题被目录挡住 ≠ 下一章（修 ②：按"越过线"而不是"是否可见"）', () => {
+    // 第 2 章标题已滚到屏幕外（dy=700 → top=-100），但第 3 章还没到线（1000-700=300 > 80）
+    expect(pickActiveByOffset(OFFSETS, 700, LINE)).toBe('family_structure')
   })
 
-  test('入参缺失不崩（章节还没渲染时的回调）', () => {
-    expect(pickActiveKey(null, null, '')).toBe('')
-    expect(pickActiveKey(keys, null, 'overview')).toBe('overview')
+  test('入参异常不崩：空数组 / 缺 top0', () => {
+    expect(pickActiveByOffset([], 0, LINE)).toBe('')
+    expect(pickActiveByOffset([{ key: 'a' }], 0, LINE)).toBe('a')
   })
 })
 
-describe('接线守卫：组件确实用了它，且标签有激活样式', () => {
+describe('接线守卫：滚动位置由页面送入组件（组件拿不到 scrollTop）', () => {
   const fs = require('fs')
   const path = require('path')
-  const read = (p) => fs.readFileSync(path.join(__dirname, '..', 'miniprogram', 'components', 'report-markdown', p), 'utf8')
+  const readMin = (p) => fs.readFileSync(path.join(__dirname, '..', 'miniprogram', p), 'utf8')
 
-  test('组件用 IntersectionObserver 观察章节，并用 pickActiveKey 归约', () => {
-    const js = read('index.js')
-    expect(js).toContain('pickActiveKey')
-    expect(js).toContain('createIntersectionObserver')
-    expect(js).toContain('relativeToViewport')
-    // 组件销毁时必须断开，否则页面来回进出会累积观察器
-    expect(js).toMatch(/detached\(\)[\s\S]{0,200}disconnect/)
+  test('页面 bindscroll 已接到 onReportScroll，并调用组件方法（不 setData）', () => {
+    const wxml = readMin('pages/report/index.wxml')
+    expect(wxml).toContain('bindscroll="onReportScroll"')
+    expect(wxml).toContain('id="reportMarkdown"')
+    const js = readMin('pages/report/index.js')
+    const i = js.indexOf('onReportScroll(e)')
+    const body = js.slice(i, i + 500)
+    expect(body).toContain("selectComponent('#reportMarkdown')")
+    expect(body).toContain('syncPageScroll')
+    expect(body).not.toContain('setData') // 滚动高频，setData 会掉帧
   })
 
-  test('标签绑定 is-active，并且容器支持把高亮标签滚进可视区', () => {
-    const wxml = read('index.wxml')
+  test('组件用纯函数归约 + 折叠/章节变化后作废测量', () => {
+    const js = readMin('components/report-markdown/index.js')
+    expect(js).toContain('pickActiveByOffset')
+    // 方法名不能以 on 开头（否则被 wxml-binding-integrity 当作未绑定的事件处理器）
+    expect(js).toContain('syncPageScroll(scrollTop)')
+    expect(js).not.toContain('onPageScroll')
+    // 折叠会改变其后所有章节的位置
+    expect(js).toMatch(/toggleChapter[\s\S]{0,300}_tocOffsets = null/)
+    // 章节整体替换同样作废
+    expect(js).toMatch(/toc: arr\.map[\s\S]{0,200}_tocOffsets = null/)
+    // 第一版的观察器必须彻底移除（两套判定会互相打脸）
+    expect(js).not.toContain('createIntersectionObserver')
+  })
+
+  test('wxml 绑定 is-active 且容器支持把高亮标签滚进可视区', () => {
+    const wxml = readMin('components/report-markdown/index.wxml')
     expect(wxml).toContain("activeKey === item.key ? 'is-active' : ''")
     expect(wxml).toContain('scroll-into-view="{{tocInto}}"')
-    expect(wxml).toContain('id="toc-{{item.key}}"')
-  })
-
-  test('点击标签立即点亮（乐观更新），不等观察器回调', () => {
-    const js = read('index.js')
-    const i = js.indexOf('onTocTap(e)')
-    expect(i).toBeGreaterThan(-1)
-    const body = js.slice(i, i + 600)
-    expect(body).toMatch(/setData\(\{\s*activeKey:\s*k/)
-  })
-
-  test('激活态样式有实底高亮（浅色描边在横向滚动条里看不出来）', () => {
-    const wxss = read('index.wxss')
-    expect(wxss).toMatch(/\.toc-item\.is-active\s*\{[^}]*background:var\(--accent-deep\)/)
   })
 })

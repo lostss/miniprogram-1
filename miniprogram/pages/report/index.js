@@ -307,8 +307,12 @@ Page({
   },
 
   // 记录滚动位置（有意不入 data：滚动事件高频，setData 会造成掉帧）
+  // 2026-10-18：同时把位置送给目录做激活态判定（组件方法调用，同样不触发 setData）。
+  // 章节节点在组件内、滚动容器在页面，组件拿不到 scrollTop —— 这是唯一的传递通道。
   onReportScroll(e) {
     this._scrollTop = (e.detail && e.detail.scrollTop) || 0
+    const md = this.selectComponent('#reportMarkdown')
+    if (md && md.syncPageScroll) md.syncPageScroll(this._scrollTop)
   },
 
   // 深度分析（手工触发）：仅 BLOCK 级缺口先弹画像确认，WARN 直接开始（后端 422 兜底仍会拦截）
@@ -550,6 +554,17 @@ Page({
       // 对话空态预埋问题（"您可能想问"）：基于本次缺口引擎数据生成
       presetHints: this._buildPresetQuestions(view, c)
     }, extra || {}))
+    // 2026-10-18：章节被整体替换后，目录的几何测量需要重做（否则激活态停在旧位置）。
+    // 等一帧让组件完成 setData，再把当前滚动位置送过去。
+    const self = this
+    const reArm = function() {
+      if (self._disposed) return
+      const md = self.selectComponent('#reportMarkdown')
+      if (md && md.syncPageScroll) md.syncPageScroll(self._scrollTop || 0)
+    }
+    // 只用 nextTick（不挂 setTimeout）：单测里页面对象会被销毁，残留定时器会让 jest 报
+    // "worker process has failed to exit gracefully"。真机上 nextTick 一定存在。
+    if (typeof wx !== 'undefined' && wx.nextTick) wx.nextTick(reArm)
     // 活报告模型（2026-09）：owner 且数据已变更（stale）→ 自动触发保障分析。
     // 本方法是 OCR/编辑/对话/撤销/进场所有刷新路径的汇聚点，作为自动介入唯一挂载位。
     this._tryAutoAnalysis()

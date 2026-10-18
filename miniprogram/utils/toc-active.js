@@ -1,29 +1,42 @@
 /**
- * 目录激活态（2026-10-18）
+ * 目录激活态（2026-10-18，第二版）
  *
- * 目标：报告页顶部吸顶章节标签，高亮"当前正在读哪一章"。
+ * 第一版用 IntersectionObserver 判断"哪些章节落在可视带里"，真机暴露两个问题：
+ *   ① **回到顶部不回弹** —— 回滚时若可视带里暂时没有章节，规则是"保留上一次"，于是标签停在中途；
+ *   ② **对应不准确** —— 章节标题被吸顶目录挡住时，该章已不在带内、下一章在带内 → 高亮跳过一章。
  *
- * 为什么不用 scroll 事件算偏移：章节节点在 report-markdown 组件内部，滚动容器在**页面**上，
- * 组件拿不到 scrollTop。改用 IntersectionObserver（relativeToViewport），让节点自己报告
- * "我是否落在目录下方那条可视带里"，组件只做一次归约。
+ * 第二版改为**按滚动位置取"最后一个越过目录下沿的章节"**，这是阅读时人眼真正的判据：
+ * 只要某一章的标题已经滚到目录下方（哪怕整章还在屏幕里），当前章就是它；一直滚到顶时
+ * 没有任何章节越过这条线 → 回到第一章。
  *
- * 归约规则（纯函数，便于单测）：按目录顺序取**第一个**可见的章节 ——
- * 多个章节同时可见时（屏内能装两章），用户视线在上方那一章，取第一个才符合直觉。
- * 一个都不可见（章节全部折叠、或滚过末尾）时**保留上一次的激活项**，不要清空 ——
- * 清空会让标签在滚动中闪一下，比"稍微滞后"更糟。
+ * 输入：
+ *   offsets: [{ key, top0 }] —— 各章标题在"测量时刻"的屏幕坐标（视口坐标，含滚动量）
+ *   dy:      相对测量时刻的滚动增量（scrollTop − scrollTopAtMeasure，向下为正）
+ *   lineY:   目录下沿的屏幕坐标（吸顶后是常量，所以只需测一次）
+ * 判据： top0 − dy <= lineY
  *
- * @param {string[]} keys  目录顺序（章节 key）
- * @param {object}   seen  { [key]: true } 当前可见的章节集合
- * @param {string}   prev  上一次的激活 key（兜底）
- * @returns {string} 应当激活的 key（可能为空串：首次进入且什么都不可见）
+ * 为什么不在函数里做"容差/吸附"：容差属于渲染层的观感（目录高度），放在组件里用实测值，
+ * 这里只保留可测的几何规则。
+ *
+ * @param {Array}  offsets [{ key, top0 }]
+ * @param {number} dy      滚动增量
+ * @param {number} lineY   目录下沿屏幕坐标
+ * @returns {string} 激活的章节 key（空数组时返回 ''）
  */
-function pickActiveKey(keys, seen, prev) {
-  var list = keys || []
-  var map = seen || {}
+function pickActiveByOffset(offsets, dy, lineY) {
+  var list = offsets || []
+  if (!list.length) return ''
+  var d = Number(dy) || 0
+  var line = Number(lineY)
+  if (!isFinite(line)) line = 0
+  var active = list[0].key // 默认第一章：滚到顶部时"没有章节越过线"→ 回弹到概览
   for (var i = 0; i < list.length; i++) {
-    if (map[list[i]]) return list[i]
+    var top = Number(list[i].top0)
+    if (!isFinite(top)) continue
+    if (top - d <= line) active = list[i].key
+    else break // 章节按文档顺序排列：第一张还在线下的，后面都不可能越过
   }
-  return prev || ''
+  return active || ''
 }
 
-module.exports = { pickActiveKey }
+module.exports = { pickActiveByOffset }

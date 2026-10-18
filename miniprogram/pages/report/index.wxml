@@ -97,7 +97,8 @@
 
     <!-- 整理报告正文（章节目录 + 全 N 章）：纯规则计算，常驻。
          2026-10-18 IA 重构：正文从页尾上移到 AI 之前 —— **整理报告到此结束**，后面是进阶层。 -->
-    <report-markdown wx:if="{{hasPolicy}}" chapters="{{chapters}}" readonly="{{isShared}}" bind:policytap="onPolicyTap" bind:statuschange="onStatusChange" bind:chapteredit="onChapterEdit" bind:riskcheck="onRiskCheck" bind:tocnav="onTocNav" />
+    <!-- id 供目录激活态使用：页面把 scrollTop 通过方法调用送进组件（不走 setData，避免滚动掉帧） -->
+    <report-markdown id="reportMarkdown" wx:if="{{hasPolicy}}" chapters="{{chapters}}" readonly="{{isShared}}" bind:policytap="onPolicyTap" bind:statuschange="onStatusChange" bind:chapteredit="onChapterEdit" bind:riskcheck="onRiskCheck" bind:tocnav="onTocNav" />
 
     <!-- ===== 进阶报告（AI 分析）=====
          2026-10-18 用户决策：AI 内容统一收到报告尾部，**手动触发**，不再随数据变更自动生成。
