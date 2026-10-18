@@ -79,7 +79,7 @@
 | `dataQuery/share.js` | 客户版脱敏 |
 | `dataWrite/` | 保单/成员/家庭写入 |
 | `reportAI/` | 报告 AI：`prompts.js`（写作约束）/ `index.js`（调用+预算）/ `parse-ai-json.js`（三级容错） |
-| `ocrService/` | OCR + 条款提取 |
+| `ocrService/` | OCR + 条款提取。提取后有两道"事实校验"（`_shared/ocr-core.js`）：`applyNumericEvidence`（金额必须在 OCR 文本里出现）+ `applyEvidenceCheck`（AI 的 `field_evidence` 引用必须逐字存在、且值在引用内），任一失败把字段置信度压到 0.5 → 进待核对 |
 | `reportPdf/` | 导出 PDF |
 | `conversationAI/` | 对话 |
 | `login/` `cleanup/` | 登录 / 清理 |

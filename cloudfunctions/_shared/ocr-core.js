@@ -131,6 +131,72 @@ function applyNumericEvidence(products, fieldConf, ocrText) {
   return { fieldConf: out, flagged: flagged }
 }
 
+/**
+ * field_evidence 校验（2026-10-18）
+ *
+ * 上一层的置信度仍含"AI 自评"成分 —— 主观分救不了"模型抄错但很自信"。
+ * 真正可靠的判据是：**这句话在原文里到底有没有**。
+ * 因此让 AI 对 4 个关键字段（保额 / 保费 / 生效日 / 保单号）摘录原文片段，
+ * 由程序逐字回查，两条基本规则：
+ *   ① 片段在 OCR 文本里找不到 → 编造引用 → 该字段降级为待核对
+ *   ② 片段找到了，但字段值不在片段内 → 值与引用不匹配 → 同样降级
+ *   ③ 没给片段 → 本层不判（金额另有 `applyNumericEvidence` 做"值在不在原文"的独立校验）
+ *
+ * 为什么不强制"每个字段都必须有片段"：prompt 遵从度不是 100%，强硬制会把
+ * 正常识别大面积打成待核对，用户会直接忽略这个标记 —— 那等于防线失效。
+ */
+const EVIDENCE_FIELDS = ['sum_assured', 'annual_premium', 'effective_date', 'policy_number']
+function _normEvidence(s) {
+  return String(s || '')
+    .replace(/[０-９]/g, function(d) { return String.fromCharCode(d.charCodeAt(0) - 0xFEE0) })
+    // 空白/千分位 + **中英文标点**一律去掉：AI 摘录时经常把全角"："写成半角，
+    // 若按原样比会把真引用误判成编造（测试已覆盖这个 case）。
+    .replace(/[，,、\s：:]/g, '')
+}
+function _digits(s) { return String(s || '').replace(/[^0-9]/g, '') }
+
+function applyEvidenceCheck(products, contractBasic, fieldEvidence, ocrText, fieldConf) {
+  const out = Object.assign({}, fieldConf)
+  const flagged = []
+  const ev = (fieldEvidence && typeof fieldEvidence === 'object') ? fieldEvidence : null
+  if (!ev) return { fieldConf: out, flagged: flagged }
+  const hay = _normEvidence(ocrText)
+
+  const valueFor = function(f) {
+    if (f === 'effective_date') return String((contractBasic && contractBasic.contract_effective_date) || '')
+    if (f === 'policy_number') return String((contractBasic && contractBasic.policy_number) || '')
+    const p0 = (products && products[0]) || {}
+    return f === 'sum_assured' ? (p0.sum_assured || 0) : (p0.annual_premium || 0)
+  }
+
+  EVIDENCE_FIELDS.forEach(function(f) {
+    const raw = ev[f]
+    if (typeof raw !== 'string') return
+    const quote = _normEvidence(raw)
+    if (quote.length < 2) return // 空串/过于碎片：当作没给
+    const v = valueFor(f)
+    if (v === undefined || v === null || v === '' || v === 0) return // 没值不归这里管
+
+    let bad = false
+    if (hay.indexOf(quote) === -1) {
+      bad = true // ① 编造引用：这段文字原文里根本没有
+    } else if (f === 'sum_assured' || f === 'annual_premium') {
+      bad = !_hasNumericEvidence(raw, Number(v)) // ② 值不在它自己引用的那段里
+    } else if (f === 'effective_date') {
+      const dv = _digits(v)
+      bad = !!dv && _digits(raw).indexOf(dv) === -1 // 日期按数字串比（2024-01-15 ↔ 2024年01月15日）
+    } else {
+      bad = _normEvidence(v) !== '' && quote.indexOf(_normEvidence(v)) === -1
+    }
+
+    if (!bad) return
+    const cur = Number(out[f] == null ? 1 : out[f])
+    out[f] = Math.min(isFinite(cur) ? cur : 1, 0.5)
+    flagged.push(f)
+  })
+  return { fieldConf: out, flagged: flagged }
+}
+
 // 现价表片段拦截（2026-09-09）：单独上传的现价表需年度自 1 起连续且行数达标，
 // 否则视为截图残留片段不提取（提示词第零步的确定性兜底）
 const CASH_VALUE_MIN_ROWS = 5
@@ -208,7 +274,10 @@ function extractOne(extractRes, ocrConfInfo, ocrText) {
   const products = data.products || []
   // 2026-10-17：金额类字段做"原文可对齐"校验，对不上的压分 → 进待核对。
   // 同时取消 auto_confirmed（不能一边说"字段不可信"一边自动入库）。
-  const ev = applyNumericEvidence(products, base.fieldConf, ocrText)
+  const evNum = applyNumericEvidence(products, base.fieldConf, ocrText)
+  // 2026-10-18：AI 提供的"原文出处"逐字回查（编造引用 / 值与引用不符 → 降级）
+  const evQuote = applyEvidenceCheck(products, contractBasic, data.field_evidence, ocrText, evNum.fieldConf)
+  const ev = { fieldConf: evQuote.fieldConf, flagged: evNum.flagged.concat(evQuote.flagged.filter(function(f) { return evNum.flagged.indexOf(f) === -1 })) }
   const fieldConf = ev.fieldConf
   const overallConf = base.overallConf
   const ocrReliable = base.ocrReliable
@@ -363,4 +432,4 @@ async function aiPhase({ ocrText, ocrConfInfo, ocrErrorCode, fileId, t0, t1, t2,
 // aiExtractBatch 单图路径统一走 aiPhase（DeepSeek 直连），批量拼接编排（_callBatchAI/aiExtractBatchPhase）已删除。
 // 备份文件已随 docs 归档清理（2026-09-04）；原实现见 git 历史。
 
-module.exports = { ocrPhase, aiPhase, matchPoliciesToMembers, buildPolicyFromExtract, extractOne, applyNumericEvidence, _hasNumericEvidence, _toNum, _isCashValueFooterResidue, _cashValueTitleRatio }
+module.exports = { ocrPhase, aiPhase, matchPoliciesToMembers, buildPolicyFromExtract, extractOne, applyNumericEvidence, applyEvidenceCheck, _hasNumericEvidence, _toNum, _isCashValueFooterResidue, _cashValueTitleRatio }
