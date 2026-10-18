@@ -9,7 +9,7 @@
 // ============================================================
 const api = require('./apiClient')
 // 领域写薄层（候选 5）：批量保单写参数形状收口（cashValues → cash_values）
-const { writePoliciesBatch } = require('./domain-writes')
+const { writePoliciesBatch, savePolicyData } = require('./domain-writes')
 // 置信度判定（单一真相源，与 ocr-confidence 同步）
 const { assessPolicy, CONF_THRESHOLD } = require('./ocr-confidence')
 
@@ -377,7 +377,12 @@ async function confirmWritePolicies(familyId, policies, cashValues, setData) {
       var d = r.data || {}
       // 2026-10-18：透传服务端"已落库但字段有问题"的告警（金额负值/险种未知/日期非法），
     // 由调用方提示 —— 否则用户只能在报告里发现空白，无从知道是哪一步出的问题。
-    return { ok: true, written: d.written, total: d.total, dedupSkipped: d.dedupSkipped || 0, warnings: d.warnings || [] }
+    return {
+      ok: true, written: d.written, total: d.total, dedupSkipped: d.dedupSkipped || 0,
+      warnings: d.warnings || [],
+      // 2026-10-18：金额/生效日与库中不同（续保、批改）→ 由调用方问"覆盖 / 保留"
+      conflicts: d.conflicts || []
+    }
     }
     // S4 修复：失败路径不 hide，由调用方决定 UI（保留确认卡让用户重试）
     return { ok: false, error: r.msg || '写入失败' }
@@ -385,6 +390,27 @@ async function confirmWritePolicies(familyId, policies, cashValues, setData) {
     // S4 修复：异常路径不 hide，由调用方决定 UI
     return { ok: false, error: e.message || '写入异常' }
   }
+}
+
+// ============================================================
+// 续保 / 批改：按用户选择"覆盖为最新"
+// 2026-10-18：命中同保单号但金额/生效日不同时，服务端不自动改库而是回传 conflicts，
+// 由用户决定。覆盖走已有的 dataWrite.updatePolicy（字段白名单 + facts supersede），
+// 不在这里自己拼 update —— 否则会绕开事实层同步，报告与保单明细会不一致。
+// ============================================================
+async function overwritePolicies(familyId, conflicts) {
+  var list = conflicts || []
+  var ok = 0, fail = 0
+  for (var i = 0; i < list.length; i++) {
+    var c = list[i] || {}
+    if (!c.policyId || !c.incoming) { fail++; continue }
+    try {
+      var r = await savePolicyData({ familyId: familyId, policyId: c.policyId, data: c.incoming }, { timeout: 30000, retries: 0 })
+      if (r && r.ok) ok++
+      else fail++
+    } catch (e) { fail++ }
+  }
+  return { ok: ok, fail: fail }
 }
 
 // ============================================================
@@ -596,6 +622,7 @@ module.exports = {
   getCachedOcrText,
   saveCashValuesWithRetry,
   confirmWritePolicies,
+  overwritePolicies,
   errorToUI, errorLabel,
   cleanupTempFiles,
   rememberFailedFiles,

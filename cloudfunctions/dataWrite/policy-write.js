@@ -97,6 +97,41 @@ function normalizePolicyInput(data) {
   return { sumAssured, annualPremium, category, effectiveDate, warnings: warns }
 }
 
+// ---------- 续保 / 批改冲突判定（2026-10-18）----------
+// 原实现在"同保单号 + 同产品名"命中库中已有保单时**无条件 skip**。
+// 但续期/批改恰好就是这个场景：保单号与产品名都没变，只有保费/保额/生效日变了。
+// 静默 skip 的后果是用户以为已更新，库里仍是旧金额 —— 而缺口、保费占比、建议全部据此计算。
+// 判定原则：**只看本次真的读到的字段**（本次为空 ≠ 批改，那是 OCR 没读出来）。
+const CONFLICT_FIELDS = ['sum_assured', 'annual_premium', 'effective_date']
+function diffPolicyConflict(existing, incoming) {
+  const ex = existing || {}
+  const inc = incoming || {}
+  const changed = []
+  CONFLICT_FIELDS.forEach(function(k) {
+    const v = inc[k]
+    if (v === undefined || v === null || v === '') return
+    if (k === 'effective_date') {
+      if (String(ex[k] || '') !== String(v)) changed.push(k)
+      return
+    }
+    const a = Number(ex[k] || 0)
+    const b = Number(v || 0)
+    if (b > 0 && a !== b) changed.push(k)
+  })
+  return changed
+}
+
+// 冲突里回传给前端的"最新值"：只取可编辑字段，且非空
+function _pickEditable(src) {
+  const out = {}
+  POLICY_EDITABLE.forEach(function(k) {
+    const v = src && src[k]
+    if (v === undefined || v === null || v === '') return
+    out[k] = v
+  })
+  return out
+}
+
 // ---------- writePolicy ----------
 async function writePolicy(db, openid, event) {
   const { familyId, memberId, data } = event
@@ -170,7 +205,22 @@ async function writePolicy(db, openid, event) {
   // S2-1 修复：命中重复时返回库中已有保单的真实 id（doc.id 是新生成的，不存在于库中）
   // 否则下游 writePoliciesBatch 用这个 id 写入 p.id，再传给 matchOrphanCashValues，会指向不存在的保单
   // P1-B 修复：exist 提升为外层变量（原 const 块级作用域，dedup 命中时此处引用抛 ReferenceError）；policyId 双 fallback
-  if (isExisting) return { code: 200, data: { written: false, skipped: true, policyId: (exist.data[0].id || exist.data[0]._id) || doc.id, warnings: warns } }
+  if (isExisting) {
+    const prev = exist.data[0] || {}
+    const changed = diffPolicyConflict(prev, doc)
+    return {
+      code: 200,
+      data: {
+        written: false, skipped: true, policyId: (prev.id || prev._id) || doc.id, warnings: warns,
+        // 金额/生效日与库中不同 → 交给前端问"覆盖为最新 / 保留原值"（续保、批改）
+        conflict: changed.length ? {
+          fields: changed,
+          existing: { sum_assured: prev.sum_assured || 0, annual_premium: prev.annual_premium || 0, effective_date: prev.effective_date || '' },
+          incoming: _pickEditable(doc)
+        } : null
+      }
+    }
+  }
   // Phase 1：保单入库同步拆解为结构化三元组写入 facts（replace 旧单条 '购买了' 兜底；开放谓词 + policy 节点）
   // K-S2 修复：member_id 为空但有被保人姓名时也写 facts——"拥有保障"边由 addFact 按姓名解析，
   // 保单节点事实（保额/保费等）本就与成员无关；成员不存在时 addFact 返回 404，被下方 catch 兜底不阻断入库
@@ -242,8 +292,13 @@ function _writePolicyStep(db, openid, familyId) {
       // 全链路审计 S1：透出 skipped 标志（命中库中重复项）——重复项 member_id 已正确落库，
       // 若参与成员匹配会被 match sync 无条件覆盖污染正确值，调用方须排除
       const skipped = !!(res.data && res.data.skipped)
-      // warnings 透传给 ingestPolicies 汇总（金额负值/险种未知/日期非法），前端据此提示
-    return { policyId: (res.data && res.data.policyId) || '', ok: true, skipped, warnings: (res.data && res.data.warnings) || [] }
+      // warnings 透传给 ingestPolicies 汇总（金额负值/险种未知/日期非法），前端据此提示；
+    // conflict 透传给前端问"覆盖 / 保留"（续保、批改）
+    return {
+      policyId: (res.data && res.data.policyId) || '', ok: true, skipped,
+      warnings: (res.data && res.data.warnings) || [],
+      conflict: (res.data && res.data.conflict) || null
+    }
     }
     // S2-2 修复：writePolicy 返回非 200（如重复命中）记为失败并留痕
     logOperation(db, {
@@ -353,12 +408,25 @@ async function ingestPolicies(db, openid, event) {
   // 2026-10-18：汇总"已落库但字段有问题"的保单（金额负值/险种未知/日期非法）。
   // 不阻断写入（识别费用已付），但要回传→前端提示，否则用户只能等报告里发现空白。
   const warnings = []
+  const conflicts = []
   for (let i = 0; i < dedupedPolicies.length; i++) {
     const codes = (results[i] && results[i].warnings) || []
-    if (!codes.length) continue
-    warnings.push({ product_name: (dedupedPolicies[i] && dedupedPolicies[i].product_name) || '', codes: codes })
+    if (codes.length) {
+      warnings.push({ product_name: (dedupedPolicies[i] && dedupedPolicies[i].product_name) || '', codes: codes })
+    }
+    // 2026-10-18：金额/生效日与库中不同（续保、批改）→ 回报给前端做"覆盖 / 保留"确认
+    const cf = (results[i] && results[i].conflict) || null
+    if (cf) {
+      conflicts.push({
+        policyId: (results[i] && results[i].policyId) || '',
+        product_name: (dedupedPolicies[i] && dedupedPolicies[i].product_name) || '',
+        fields: cf.fields || [],
+        existing: cf.existing || null,
+        incoming: cf.incoming || null
+      })
+    }
   }
-  return { code: 200, data: { written: results.filter(r => r.ok).length, total: policies.length, dedupSkipped, results, warnings } }
+  return { code: 200, data: { written: results.filter(r => r.ok).length, total: policies.length, dedupSkipped, results, warnings, conflicts } }
 }
 
 // 向后兼容入口：测试与外部调用仍用 writePoliciesBatch
@@ -708,4 +776,4 @@ async function linkCashValue(db, openid, event) {
   return { code: 200, data: { matched: true, policyId, product_name: policy.product_name || '' } }
 }
 
-module.exports = { writePolicy, writePoliciesBatch, ingestPolicies, normalizePolicyInput, _dedupPolicies, _runConcurrent, deletePolicy, updatePolicy, changePolicyStatus, writeCashValue, linkCashValue, POLICY_EDITABLE, POLICY_STATUS_CHANGEABLE }
+module.exports = { writePolicy, writePoliciesBatch, ingestPolicies, normalizePolicyInput, diffPolicyConflict, _dedupPolicies, _runConcurrent, deletePolicy, updatePolicy, changePolicyStatus, writeCashValue, linkCashValue, POLICY_EDITABLE, POLICY_STATUS_CHANGEABLE }

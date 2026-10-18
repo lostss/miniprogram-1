@@ -502,6 +502,42 @@ Component({
         this.setData(flow.setFailed('已保存 ' + writtenN + '/' + totalN + ' 份，' + missN + ' 份未通过校验。可重试（已保存的不会重复）或放弃。'))
         return
       }
+      // 2026-10-18：续保 / 批改 —— 同保单号命中库中已有记录，但金额或生效日不同。
+      // 原来的行为是静默 skip（用户以为更新了，库里还是旧金额，缺口/保费占比全错）。
+      // 这里问一次：覆盖为本次识别值（走 updatePolicy，含 facts 同步）/ 保留库中原值。
+      var conflicts = (ok && ok.conflicts) || []
+      if (conflicts.length) {
+        var fieldZh = { sum_assured: '保额', annual_premium: '保费', effective_date: '生效日' }
+        var changedFields = []
+        conflicts.forEach(function(c) {
+          ;(c.fields || []).forEach(function(f) {
+            var z = fieldZh[f] || f
+            if (changedFields.indexOf(z) === -1) changedFields.push(z)
+          })
+        })
+        var preview = conflicts.slice(0, 2).map(function(c) { return c.product_name || '未命名保单' }).join('、')
+        var wantOverwrite = await new Promise(function(resolve) {
+          wx.showModal({
+            title: '发现 ' + conflicts.length + ' 份保单已存在',
+            content: '「' + preview + (conflicts.length > 2 ? ' 等' : '') + '」在库中已有记录，但' + changedFields.join(' / ') + '与本次识别不同（可能是续保或批改）。要覆盖为最新值吗？',
+            confirmText: '覆盖更新',
+            cancelText: '保留原值',
+            success: function(r) { resolve(!!(r && r.confirm)) },
+            fail: function() { resolve(false) }
+          })
+        })
+        if (this._disposed) return
+        if (wantOverwrite) {
+          var ow = await flow.overwritePolicies(familyId, conflicts)
+          if (this._disposed) return
+          wx.showToast({
+            title: ow.fail ? ('已覆盖 ' + ow.ok + ' 份，' + ow.fail + ' 份失败') : ('已覆盖 ' + ow.ok + ' 份'),
+            icon: 'none',
+            duration: 2200
+          })
+        }
+      }
+
       // 2026-10-18：服务端把"已落库但字段有问题"的保单回传（金额负值/险种未知/日期非法）。
       // 这些不影响落库，但会让报告里的金额/矩阵/期间出错 → 必须当场告诉用户，
       // 而不是等他自己在报告里发现空白。saved 相本身有文案区，这里只弹一条轻提示。
