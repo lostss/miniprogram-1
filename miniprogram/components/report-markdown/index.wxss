@@ -231,6 +231,11 @@
 .pc-card:active { opacity:0.6 }
 .pc-card-top { display:flex; align-items:center; justify-content:space-between; gap:var(--sp-3); }
 .pc-name-wrap { display:flex; align-items:center; gap:var(--sp-2); flex:1; min-width:0; }
+/* 2026-10-21：附加险缩进挂主险下。用左缩进 + 左侧细线表示从属关系（不是另一份独立合同）；
+   主险行尾标"含附加 N 项"，让"份数按主险计"在视觉上说得通。 */
+.pc-card--rider { margin-left:var(--sp-6); border-left:3rpx solid var(--border-accent); border-radius:0 var(--r-md) var(--r-md) 0; }
+.pc-rider-mark { font-size:var(--fs-tiny); color:var(--text-tertiary); margin-right:var(--sp-2); }
+.pc-rider-count { flex-shrink:0; font-size:var(--fs-tiny); color:var(--text-tertiary); }
 
 .pc-name { font-size:var(--fs-body); font-weight:var(--fw-semi); color:var(--text-primary); min-width:0; }
 .pc-cat { font-size:var(--fs-tiny); color:var(--text-secondary); font-weight:var(--fw-normal); }

@@ -28,6 +28,8 @@ var { yuanToWan, fmtYuan } = require('../amount')
 // 现价取行唯一事实源（2026-09-27 起：保单年度也在此契约内，勿再自行写年差公式）
 var { policyYearAt, cashAtYear, coverScale } = require('../cash-value-math')
 var createBlock = require('../custom-blocks').create
+// 附加险归属（2026-10-21）：附录里附加险缩进挂主险下
+var { linkRiders } = require('../rider-link')
 
 // 原文出处（2026-10-18，v2.0「结论可溯源」最小实现）：
 // 把 OCR 阶段 AI 摘录的 field_evidence 拼成一行给附录保单卡展示。
@@ -550,7 +552,8 @@ function buildChapters(family, report, gaps, opts) {
   var byMember = {}
     // 附录展示所有非软删保单（含失效/退保/理赔终止/到期终止），并带状态标签；
     // 保障汇总/缴费月历仍只使用 active（见 data-normalizer）
-    const displayPolicies = policies.filter(function(p) { return p.status !== 'deleted' })
+    // 2026-10-21：附加险归属（项目按产品入库 → 主险/附加险是两条文档），用于"缩进挂主险"
+    const displayPolicies = linkRiders(policies.filter(function(p) { return p.status !== 'deleted' })).items
 
   var sorted = [].concat(displayPolicies).sort(function(a, b) {
     var pa = String(a.policy_number || '')
@@ -558,6 +561,8 @@ function buildChapters(family, report, gaps, opts) {
     if (!pa && pb) return 1
     if (pa && !pb) return -1
     if (pa && pb && pa !== pb) return pa.localeCompare(pb, 'zh')
+    // 同一张保单内：主险排在附加险之前（否则"附加XX"按中文字序会跑到主险上面）
+    if (!!a.isRider !== !!b.isRider) return a.isRider ? 1 : -1
     return String(a.product_name || '').localeCompare(String(b.product_name || ''), 'zh')
   })
   for (var i = 0; i < sorted.length; i++) {
@@ -626,7 +631,11 @@ function buildChapters(family, report, gaps, opts) {
       meta3: meta3,
       // 2026-10-18（v2.0「结论可溯源」最小实现）：OCR 时 AI 摘录的原文片段。
       // 只拼一行、只取有值的，供代理人在附录里核对"这个数字是从哪句话读来的"。
-      evidence: _evidenceLine(p.field_evidence)
+      evidence: _evidenceLine(p.field_evidence),
+      // 2026-10-21：附加险在附录里缩进挂在主险下（项目按产品入库，两者本是独立文档）
+      isRider: !!p.isRider,
+      parentKey: p.parentKey || '',
+      rider_count: p.riderCount || 0
     })
   }
   Object.keys(byMember).sort(function(a, b) { return a.localeCompare(b, 'zh') }).forEach(function(n) {

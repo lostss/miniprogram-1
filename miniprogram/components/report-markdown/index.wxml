@@ -63,7 +63,7 @@
               <view class="gt-label">
                 <!-- 一年期标记放在产品行尾（该行本就 ellipsis，窄屏自动省略），
                      不放到右侧到期列 —— 到期列只留"年份/终身"，宽度才压得下来 -->
-                <text class="gt-prod">{{r.product}}{{r.cat ? ' · ' + r.cat : ''}}{{r.oneYear ? ' · 1年期' : ''}}{{r.singlePay ? ' · 趸交' : ''}}</text>
+                <text class="gt-prod">{{r.product}}{{r.cat ? ' · ' + r.cat : ''}}{{r.oneYear ? ' · 1年期' : ''}}{{r.singlePay ? ' · 趸交' : ''}}{{r.riderCount ? ' · 含附加' + r.riderCount + '项' : ''}}</text>
               </view>
               <view class="gt-track">
                 <view class="gt-now" wx:if="{{block.nowPct !== null}}" style="left:{{block.nowPct}}%"></view>
@@ -232,10 +232,13 @@
             <view class="pc-group-name">{{g.name}}</view>
             <view class="pc-subgroup" wx:for="{{g.subgroups}}" wx:for-item="sg" wx:key="name">
               <view class="pc-subgroup-name">{{sg.name}}</view>
-              <view class="pc-card {{p.status && p.status !== 'active' ? 'pc-card--inactive ' : ''}}{{readonly ? '' : 'pressable'}}" wx:for="{{sg.policies}}" wx:for-item="p" wx:key="policy_id" data-id="{{p.policy_id}}" catchtap="onPolicyTap" aria-label="{{readonly ? '' : '查看' + p.product_name + '保单明细'}}">
+              <!-- 2026-10-21：附加险缩进挂在主险下（项目按产品入库 → 两者本是独立文档，
+                   报告侧用同保单号推断关系；主险行尾标"含附加 N 项"）。 -->
+              <view class="pc-card {{p.status && p.status !== 'active' ? 'pc-card--inactive ' : ''}}{{p.isRider ? 'pc-card--rider ' : ''}}{{readonly ? '' : 'pressable'}}" wx:for="{{sg.policies}}" wx:for-item="p" wx:key="policy_id" data-id="{{p.policy_id}}" catchtap="onPolicyTap" aria-label="{{readonly ? '' : '查看' + p.product_name + '保单明细'}}">
                 <view class="pc-card-top">
                   <view class="pc-name-wrap">
-                    <text class="pc-name">{{p.product_name}}<text wx:if="{{p.category}}" class="pc-cat">（{{p.category}}）</text></text>
+                    <text class="pc-name"><text wx:if="{{p.isRider}}" class="pc-rider-mark">└ 附加</text>{{p.product_name}}<text wx:if="{{p.category}}" class="pc-cat">（{{p.category}}）</text></text>
+                    <text class="pc-rider-count" wx:if="{{!p.isRider && p.rider_count}}">含附加 {{p.rider_count}} 项</text>
                   </view>
                     <text class="pc-status pc-status--{{p.status}} {{readonly ? '' : 'pressable'}}" data-id="{{p.policy_id}}" catchtap="onStatusTap" aria-label="{{readonly ? '' : '快速更改' + p.product_name + '状态'}}">{{p.status_label}}</text>
 

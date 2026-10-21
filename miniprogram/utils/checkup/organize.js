@@ -22,6 +22,8 @@ const { canonCat } = require('../thresholds')
 const { OCR_RELIABLE_THRESHOLD, CORE_FIELDS } = require('../ocr-confidence')
 // 跨树契约：骨架成员判定（建档按人数造的「成员N」占位）——与后端认领判定同源，勿自写第二份正则
 const { isSkeletonName } = require('../member-skeleton')
+// 附加险归属（2026-10-21）：项目按产品入库 → 主险/附加险是两条文档，报告侧需要关系
+const { linkRiders } = require('../rider-link')
 
 const DASH = '—'
 
@@ -102,8 +104,13 @@ function toPolicyCard(p) {
     statusLabel: STATUS_LABELS[p.status] || _str(p.status) || DASH,
     shortTerm: !!isOneYearPolicy(p),
     lowConfidence: low.length > 0,
-    lowConfidenceFields: low
-  }
+    lowConfidenceFields: low,
+    // 2026-10-21：附加险归属（由 linkRiders 注入）—— 明细据此缩进，份数据此不重复计
+    isRider: !!p.isRider,
+    parentKey: _str(p.parentKey),
+    riderCount: _num(p.riderCount),
+    riderUnlinked: !!p.riderUnlinked
+    }
 }
 
 function _categoryList(policies) {
@@ -143,8 +150,15 @@ function buildCheckupReport(input) {
   // 而保额只有 30 万、成员行却写 130 万。
   // 失效/退保单不丢：`inactiveCount` 在卡上单列一行，明细仍在文末附录（附录本就显示全部并带状态标签）。
   const allPolicies = (src.policies || family.policies || []).filter((p) => p && p.status !== 'deleted')
-  const policies = allPolicies.filter((p) => p.status === 'active')
-  const inactiveCount = allPolicies.length - policies.length
+  // 2026-10-21：附加险归属。项目按产品入库（同保单号的主险/附加险是两条文档），
+  // 报告侧需要"份数按主险计 + 明细缩进挂主险"，关系在这里推断一次（见 utils/rider-link.js），
+  // 不落库、不改数据模型。失效保单也参与关联（同一张保单的主险失效时附加险通常一起失效）。
+  const linkedAll = linkRiders(allPolicies)
+  const policies = linkedAll.items.filter((p) => p.status === 'active')
+  const inactiveCount = linkedAll.items.length - policies.length
+  const mainCount = policies.filter((p) => !p.isRider).length
+  const riderCount = policies.filter((p) => p.isRider && p.parentKey).length
+  const unlinkedRiderCount = policies.filter((p) => p.isRider && !p.parentKey).length
 
   // 归属：member_id 优先；无 member_id 才按被保人姓名精确匹配（与保单入库口径一致）
   const byId = {}
@@ -180,7 +194,10 @@ function buildCheckupReport(input) {
       age: _str(m.age),
       birthDate: _str(m.birth_date),
       source: placeholder ? '待补信息' : (bucket.policies.length > 0 ? '来自保单' : '代理人补充'),
-      policyCount: bucket.policies.length,
+      // 2026-10-21：份数按**主险**计（附加险不增份数），另给附加险数；
+      // 保额仍含附加险（那是真实保障，且按自身险种归列）。
+      policyCount: bucket.policies.filter((c) => !c.isRider).length,
+      riderCount: bucket.policies.filter((c) => c.isRider).length,
       sumAssured: bucket.policies.reduce((s, c) => s + c.sumAssured, 0),
       sumAssuredText: fmtYuan(bucket.policies.reduce((s, c) => s + c.sumAssured, 0)),
       policies: bucket.policies
@@ -203,8 +220,12 @@ function buildCheckupReport(input) {
   // 合计里混入了非年交保单 → 金额口径不齐，必须提示（不静默相加）
   const nonAnnualCount = policies.filter((p) => ANNUAL_METHODS.indexOf(_str(p.payment_method)) === -1).length
   const summary = {
-    // 只统计 active（见上方 allPolicies / policies 的说明）
-    policyCount: policies.length,
+    // 只统计 active（见上方 allPolicies / policies 的说明）；
+    // 2026-10-21：份数按**主险**计 —— 同一张保单的附加险不额外算一份（它们本来就是同一份合同）。
+    policyCount: mainCount,
+    // 已归入主险的附加险项数（"含 N 项附加险"），以及没能关联的附加险（进待完善）
+    riderCount,
+    unlinkedRiderCount,
     memberCount: members.length,
     // 失效 / 退保 / 理赔终止：不计入任何统计，但必须让用户知道它们存在
     inactiveCount,
@@ -274,6 +295,11 @@ function buildCheckupReport(input) {
   })
   unassigned.forEach((c) => {
     pushPending(c.id, c.productName, 'unassigned', '被保人「' + c.insuredName + '」不在成员名单，未归入任何成员')
+  })
+  // 2026-10-21：附加险未能关联主险 —— 大多数是缺保单号。
+  // 不静默（明细里它会显示成独立一条，用户会问"为什么份数和明细对不上"）。
+  policies.filter((c) => c.isRider && !c.parentKey).forEach((c) => {
+    pushPending(c.id, c.productName, 'rider_unlinked', '疑似主险的附加险，但缺保单号无法关联（份数已按独立一 份计）')
   })
   const pending = Object.keys(pendingMap).map((k) => pendingMap[k])
 

@@ -23,6 +23,8 @@
 const { isLifetimeTerm, isOneYearPolicy, isSinglePayTerm } = require('../policy-status')
 // 双字段期限口径：直接引用跨树契约（不再经 timeline-builder 转出 —— 2026-10-14 收敛）
 const { coverTermYear, payTermYear } = require('../policy-terms')
+// 附加险归属（2026-10-21）：附加险不单独画条，并入主险行
+const { linkRiders } = require('../rider-link')
 
 // 极短保障期（如一年期）在整条时间轴上的可视宽度下限（%），否则会渲染成一条看不见的线
 const MIN_WIDTH_PCT = 3
@@ -82,8 +84,17 @@ function buildGantt(policies, members) {
   let missStart = 0   // 缺生效日期（无法定位起点）
   let missTerm = 0    // 有生效日期但无保障期间信息（无法定位终点）→ 均不入图，只在 notes 里标出
 
-  for (let i = 0; i < list.length; i++) {
-    const p = list[i] || {}
+  // 2026-10-21：附加险不单独画条 —— 它与主险共用同一份合同，画两条几乎重合的线只会让人
+  // 以为买了两份独立保障。关系由 rider-link 推断（同保单号 + 产品名以「附加」开头）。
+  const linked = linkRiders(list)
+  const riderCountByParent = {}
+  linked.items.forEach(function(it) {
+    if (it.isRider && it.parentKey) riderCountByParent[it.parentKey] = (riderCountByParent[it.parentKey] || 0) + 1
+  })
+  const mainItems = linked.items.filter(function(it) { return !(it.isRider && it.parentKey) })
+
+  for (let i = 0; i < mainItems.length; i++) {
+    const p = mainItems[i] || {}
     const eff = String(p.contract_effective_date || p.effective_date || '')
     const d = eff ? new Date(eff) : null
     const startY = d ? d.getFullYear() : NaN
@@ -114,6 +125,8 @@ function buildGantt(policies, members) {
       lifetime: lifetime,
       oneYear: isOneYearPolicy(p),
       singlePay: singlePay,
+      // 2026-10-21：该主险下已并入的附加险项数（渲染时行尾标"含附加 N 项"）
+      riderCount: riderCountByParent[p._linkKey] || 0,
       payEndY: payEndY,
       // 到期时被保人年龄（回答稿子那句"60 岁时还剩什么"）：当前年龄 + 距到期年数
       // 终身险无到期年 → null；年龄未知（未匹配到成员/未填出生日期）→ null（不猜）

@@ -182,6 +182,27 @@ describe('gantt-builder — 按成员分组（成员名只出现一次）', func
   })
 })
 
+describe('gantt-builder — 附加险不单独画条（2026-10-21）', function () {
+  test('同保单号的附加险并入主险行，行尾标"含附加 1 项"', function () {
+    const g = buildGantt([
+      pol({ id: 'm', product_name: 'XX终身重疾', policy_number: 'P1', sum_assured: 500000 }),
+      pol({ id: 'r', product_name: '附加住院补贴', policy_number: 'P1', sum_assured: 100000 })
+    ], [{ name: '张三', age: 40 }])
+    expect(g.rows.length).toBe(1)          // 只画主险一条
+    expect(g.rows[0].product).toBe('XX终身重疾')
+    expect(g.rows[0].riderCount).toBe(1)
+  })
+
+  test('没有保单号的附加险仍独立成行（不猜关系）', function () {
+    const g = buildGantt([
+      pol({ id: 'm', product_name: 'XX终身重疾', policy_number: '' }),
+      pol({ id: 'r', product_name: '附加住院补贴', policy_number: '' })
+    ], [{ name: '张三', age: 40 }])
+    expect(g.rows.length).toBe(2)
+    expect(g.rows.every(r => r.riderCount === 0)).toBe(true)
+  })
+})
+
 describe('gantt-builder — 年龄刻度（2026-10-18 用户提议：按年龄看时间轴）', function () {
   const thisYear = new Date().getFullYear()
 
@@ -214,7 +235,8 @@ describe('gantt-builder — 守卫：不做无字段支撑的判定（v2.0 评�
   const ALLOWED_BLOCK_KEYS = ['rows', 'ticks', 'startYear', 'endYear', 'nowPct', 'nowYear', 'notes', 'refName', 'refAge']
   // 2026-10-17 加 firstOfMember：纯渲染分组标记（同一成员的第一行），不属于"空白期/重叠"那类判定字段
   // 2026-10-18 payRatio → payEndPct / payEndAge（缴费期满竖线替换斜纹段）
-  const ALLOWED_ROW_KEYS = ['rowKey', 'name', 'product', 'cat', 'sumAssured', 'startY', 'endY', 'startPct', 'widthPct', 'payEndY', 'payEndPct', 'payEndAge', 'endAge', 'lifetime', 'oneYear', 'singlePay', 'firstOfMember']
+  // 2026-10-21 加 riderCount：附加险不单独画条，并进主险行的"含附加 N 项"标记
+  const ALLOWED_ROW_KEYS = ['rowKey', 'name', 'product', 'cat', 'sumAssured', 'startY', 'endY', 'startPct', 'widthPct', 'payEndY', 'payEndPct', 'payEndAge', 'endAge', 'lifetime', 'oneYear', 'singlePay', 'firstOfMember', 'riderCount']
 
   test('block 与 row 只暴露白名单字段（将来误加"空白期/重叠"字段会在此处红）', function () {
     const g = buildGantt([pol({}), pol({ insurance_period: '1年', coverage_term: 1, insured_name: '李四' })], [{ name: '张三' }, { name: '李四' }])
