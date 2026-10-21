@@ -107,6 +107,13 @@ function _policyFields(p) {
       { key: 'policyholder_name', label: '投保人', value: p.policyholder_name || '', placeholder: '姓名', tone: tone('policyholder_name') },
       { key: 'beneficiary_name', label: '受益人', value: p.beneficiary_name || '', placeholder: '姓名', tone: tone('beneficiary_name') }
     ] },
+    // 2026-10-21：核保信息（A4 除外承保）。用既有 selector 控件表达"是/否"，
+    // 不新增 switch 类型 —— 多一个控件类型就要同时改 sheet 渲染与取值映射，收益不成比例。
+    // 这条是**用户手动标记**：保单原文里的"除外责任"属条款内容，OCR 不解读，只由顾问录入。
+    { title: '核保信息', fields: [
+      { key: 'exclusion_marked', label: '除外承保', value: p.exclusion_marked ? '是' : '否', placeholder: '请选择', type: 'selector', options: ['否', '是'] },
+      { key: 'exclusion_note', label: '除外内容', value: p.exclusion_note || '', placeholder: '选填，如"乳腺除外"' }
+    ] },
     { title: '缴费信息', fields: [
       { key: 'payment_method', label: '缴费方式', value: p.payment_method || '', placeholder: '请选择', type: 'selector', options: PAYMENT_METHOD_OPTIONS, tone: tone('payment_method') },
       { key: 'payment_period', label: '缴费期限', value: p.payment_period || '', placeholder: '如20年/交至60岁/月交', type: 'text', tone: tone('payment_period') },
@@ -295,6 +302,14 @@ function buildUpdateData(mode, vals, family, editMemberIdx) {
     }
     if (vals.status_effective_date !== undefined) data.status_effective_date = vals.status_effective_date
     if (vals.status_reason !== undefined) data.status_reason = vals.status_reason
+    // 2026-10-21：除外承保（A4）。selector 存的是「是/否」文案 → 落库为布尔；
+    // 只在用户实际改动时下发（与 status 同一理由：picker 恒有值，无条件下发会覆盖原文）。
+    if (vals.exclusion_marked !== undefined) {
+      const nextMarked = vals.exclusion_marked === '是'
+      const origMarked = !!(((family && family.policies) || []).find(function(x) { return (x.id || x._id) === editMemberIdx }) || {}).exclusion_marked
+      if (nextMarked !== origMarked) data.exclusion_marked = nextMarked
+    }
+    if (vals.exclusion_note !== undefined) data.exclusion_note = vals.exclusion_note
 
     return { updatePolicy: { policyId: editMemberIdx || '', data: data } }
   }

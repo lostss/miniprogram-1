@@ -67,6 +67,11 @@ const BLOCK_REGISTRY = {
     required: ['items'],
     defaults: { items: [] }
   },
+  // 保费分布（2026-10-21）：成员×险种 + 按公司两张表（月份/年份由 calendar 与 premium_trend 承担）
+  premium_split: {
+    required: ['memberRows', 'insurerRows'],
+    defaults: { memberHeads: [], memberRows: [], memberTotal: '0', insurerRows: [], unitText: '', note: '' }
+  },
   // 年度保费柱（2026-10-18）：缴费与现金流章的"跨年"维度（月历负责"年内"）
   premium_trend: {
     required: ['years'],

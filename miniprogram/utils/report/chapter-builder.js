@@ -504,6 +504,76 @@ function buildChapters(family, report, gaps, opts) {
     var d = trend.drops[i]
     trendLines.push(d.y + ' 年起年缴保费降至 ' + d.toW + ' 万（' + d.products.join('、') + ' 缴费期满），每年减少支出 ' + d.reducedW + ' 万')
   })
+  // ======== 保费分布 7a 成员×险种 / 7b 按公司（2026-10-21）========
+  // 用户方案第三部分要求四段铺陈：成员×险种、公司、月份、年份。后两段已有
+  // （premium_trend 年度柱 + calendar 月历），这里补前两段。
+  // 口径：只计有效保单、按险种归列（附加险保费计入自身险种）；储蓄型不并入保障型。
+  var PREM_COLS = ['意外险', '医疗险', '重疾险', '寿险', '储蓄', '其他']
+  var SAVING_CATS = ['年金', '增额终身寿', '两全', '储蓄']
+  function _premCol(cat) {
+    var c = canonCat(cat || '')
+    if (!c) return '其他'
+    if (SAVING_CATS.indexOf(c) !== -1) return '储蓄'
+    if (PREM_COLS.indexOf(c) !== -1) return c
+    // 险种归一后仍不在六列内（如"其他"）→ 归"其他"，不硬塞进某个险种
+    return '其他'
+  }
+  var premByMember = {}
+  var premColTotal = {}
+  PREM_COLS.forEach(function(c) { premColTotal[c] = 0 })
+  members.forEach(function(m) { premByMember[m.name] = {} })
+  // 单位用**元**不用万元：800 元在"万元 / 1 位小数"下会显示成 0.1 万，
+  // 行合计再相加就与真实总额对不上（实测真值 1.42 万被算成 1.4 万）。
+  // 用元做整数求和，∑行 = 合计 = ∑公司 精确相等 —— 这张表的价值就是"能对上"。
+  active.forEach(function(p) {
+    var who = p.insured_name || '未指定被保人'
+    if (!premByMember[who]) premByMember[who] = {}
+    var col = _premCol(p.insurance_category)
+    var yuan = Math.round(Number(p.annual_premium) || 0)
+    premByMember[who][col] = (premByMember[who][col] || 0) + yuan
+    premColTotal[col] += yuan
+  })
+  var memberRows = Object.keys(premByMember).map(function(n) {
+    var rowTotal = 0
+    var cells = PREM_COLS.map(function(c) {
+      var v = premByMember[n][c] || 0
+      rowTotal += v
+      return { v: v > 0 ? String(v) : '—', s: v > 0 ? '' : 'none' }
+    })
+    return { name: n, cells: cells, total: String(rowTotal), totalNum: rowTotal }
+  }).sort(function(a, b) { return b.totalNum - a.totalNum })
+  var grandTotal = memberRows.reduce(function(s, r) { return s + r.totalNum }, 0)
+  // 按公司：份数用"独立份数"（附加险不重复计），金额含附加险（那是真实支出）
+  var insMap = {}
+  active.forEach(function(p) {
+    var key = p.insurer || '未知保司'
+    if (!insMap[key]) insMap[key] = { name: key, count: 0, premium: 0 }
+    if (!(p.isRider && p.parentKey)) insMap[key].count += 1
+    insMap[key].premium += Math.round(Number(p.annual_premium) || 0)
+  })
+  var insurerRows = Object.keys(insMap).map(function(k) { return insMap[k] })
+    .sort(function(a, b) { return b.premium - a.premium })
+    .map(function(x) {
+      return {
+        name: x.name, count: x.count, premiumText: String(x.premium),
+        pct: grandTotal > 0 ? Math.round(x.premium / grandTotal * 100) : 0
+      }
+    })
+  var premiumSplit = {
+    memberHeads: ['成员', '意外', '医疗', '重疾', '寿险', '储蓄', '其他', '合计'],
+    memberRows: memberRows,
+    // 合计行也做成"与列一一对应"的数组（模板里用 wx:for + wx:if 拼空单元格容易出错）
+    memberTotalCells: PREM_COLS.map(function(c) {
+      var v = premColTotal[c] || 0
+      return { v: v > 0 ? String(v) : '—', s: v > 0 ? '' : 'none' }
+    }),
+    memberTotal: String(grandTotal),
+    insurerRows: insurerRows,
+    // 单位与口径写在块内（不放 chapter content，避免与下方月历文案混在一起）
+    unitText: '单位：元 / 年',
+    note: '仅计有效保单；附加险保费计入自身险种；储蓄型单列'
+  }
+
   // 年度保费柱（2026-10-18 用户提议「做成保费年历、看到现金流释放」）：
   // 与甘特图的缴费期满竖线**不是重复**——甘特图是单张保单视角（这份何时缴完），
   // 这里是家庭合计视角（全家哪一年松一口气）。阶梯数据早已由 premium-trend 算出，
@@ -534,6 +604,8 @@ function buildChapters(family, report, gaps, opts) {
     // V1.5（2026-09-12）：明细型章节默认折叠——首屏只保留结论/缺口，月历与附录按需展开（保留手动展开能力）
     collapsible: true, defaultCollapsed: true,
     customBlocks: [
+      // 2026-10-21 用户方案「保费分布四段」：成员×险种 + 按公司（月份、年份由下方两块承担）
+      createBlock('premium_split', premiumSplit),
       // 年度柱：造型（哪几年高、哪一年掉一档）；精确金额仍写在下方文字里，图不重复标数字
       createBlock('premium_trend', { years: trendYears, maxW: trendMax, thisYear: trend.thisYear, currentW: trend.currentW }),
       createBlock('calendar', { items: months })

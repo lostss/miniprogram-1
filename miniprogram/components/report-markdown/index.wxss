@@ -275,6 +275,33 @@
 .pt-lg-item { display:inline-flex; align-items:center; gap:var(--sp-2); }
 .pt-lg-dot { width:16rpx; height:16rpx; border-radius:2rpx; background:var(--accent-deep); }
 
+/* ========== 保费分布 7a/7b（2026-10-21）==========
+   两张表共用一份数据：成员×险种（横滑，列多）+ 按公司（条形，纵向少）。
+   表格刻意不画竖线：8 列在 375pt 上画网格会压掉字，靠列宽与右对齐读。 */
+.ps-wrap { margin:var(--sp-3) 0 var(--sp-5); }
+.ps-sec-head { display:flex; align-items:baseline; justify-content:space-between; gap:var(--sp-3); }
+.ps-sec-head--gap { margin-top:var(--sp-6); }
+.ps-sec-title { font-size:var(--fs-caption); font-weight:var(--fw-semi); color:var(--text-primary); }
+.ps-sec-unit { font-size:var(--fs-tiny); color:var(--text-tertiary); }
+.ps-scroll { width:100%; margin-top:var(--sp-3); }
+.ps-table { display:inline-block; min-width:100%; }
+.ps-tr { display:flex; align-items:center; }
+.ps-tr--head { border-bottom:1rpx solid var(--border); }
+.ps-tr--total { border-top:1rpx solid var(--border); }
+.ps-th { flex:0 0 104rpx; padding:var(--sp-2) var(--sp-1); font-size:var(--fs-tiny); color:var(--text-tertiary); text-align:right; }
+.ps-th--first { flex:0 0 132rpx; text-align:left; }
+.ps-td { flex:0 0 104rpx; padding:var(--sp-2) var(--sp-1); font-size:var(--fs-tiny); color:var(--text-secondary); text-align:right; font-variant-numeric:tabular-nums; }
+.ps-td--first { flex:0 0 132rpx; text-align:left; color:var(--text-primary); }
+.ps-td--empty { color:var(--text-tertiary); }
+.ps-td--total { font-weight:var(--fw-semi); color:var(--text-primary); }
+.ps-ins { margin-top:var(--sp-4); }
+.ps-ins-line { display:flex; align-items:baseline; justify-content:space-between; gap:var(--sp-3); }
+.ps-ins-name { flex:1; min-width:0; font-size:var(--fs-caption); color:var(--text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ps-ins-num { flex-shrink:0; font-size:var(--fs-tiny); color:var(--text-tertiary); font-variant-numeric:tabular-nums; }
+.ps-ins-bar-wrap { margin-top:var(--sp-1); height:8rpx; background:var(--bg-input); border-radius:var(--r-full); overflow:hidden; }
+.ps-ins-bar { height:100%; background:var(--accent-deep); border-radius:var(--r-full); }
+.ps-note { display:block; margin-top:var(--sp-3); font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-snug); }
+
 /* ========== 异常与待核验 A1–A6（2026-10-21）==========
    编号用等宽 + 深金，便于口头引用（"看 A3"）；每条只占两行（谁·哪张 / 具体事实），
    不画卡片描边 —— 一屏能同时看到 6 类，才谈得上"清单"。 */

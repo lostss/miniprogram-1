@@ -107,6 +107,44 @@
           </view>
         </view>
         <!-- 家庭结构：成员卡片平铺流动布局（去代际分层） -->
+        <!-- 保费分布（2026-10-21）：成员×险种 + 按公司。两张表共用一份数据源，
+             小计与合计必须能对上（守卫断言 ∑成员×险种 === 年总保费 === ∑公司）。 -->
+        <view wx:if="{{block.t==='premium_split'}}" class="ps-wrap">
+          <view class="ps-sec-head">
+            <text class="ps-sec-title">按成员与险种</text>
+            <text class="ps-sec-unit">{{block.unitText}}</text>
+          </view>
+          <scroll-view class="ps-scroll" scroll-x enhanced show-scrollbar="{{false}}">
+            <view class="ps-table">
+              <view class="ps-tr ps-tr--head">
+                <text class="ps-th ps-th--first" wx:for="{{block.memberHeads}}" wx:key="*this" wx:for-item="h">{{h}}</text>
+              </view>
+              <view class="ps-tr" wx:for="{{block.memberRows}}" wx:key="name" wx:for-item="r">
+                <text class="ps-td ps-td--first">{{r.name}}</text>
+                <text class="ps-td {{c.s === 'none' ? 'ps-td--empty' : ''}}" wx:for="{{r.cells}}" wx:key="index" wx:for-item="c">{{c.v}}</text>
+                <text class="ps-td ps-td--total">{{r.total}}</text>
+              </view>
+              <view class="ps-tr ps-tr--total">
+                <text class="ps-td ps-td--first">合计</text>
+                <text class="ps-td {{c.s === 'none' ? 'ps-td--empty' : ''}}" wx:for="{{block.memberTotalCells}}" wx:key="index" wx:for-item="c">{{c.v}}</text>
+                <text class="ps-td ps-td--total">{{block.memberTotal}}</text>
+              </view>
+            </view>
+          </scroll-view>
+
+          <view class="ps-sec-head ps-sec-head--gap">
+            <text class="ps-sec-title">按保险公司</text>
+          </view>
+          <view class="ps-ins" wx:for="{{block.insurerRows}}" wx:key="name" wx:for-item="ins">
+            <view class="ps-ins-line">
+              <text class="ps-ins-name">{{ins.name}}</text>
+              <text class="ps-ins-num">{{ins.count}} 份 · {{ins.premiumText}} 万</text>
+            </view>
+            <view class="ps-ins-bar-wrap"><view class="ps-ins-bar" style="width:{{ins.pct}}%"></view></view>
+          </view>
+          <text class="ps-note">{{block.note}}</text>
+        </view>
+
         <!-- 年度保费柱（2026-10-18）：缴费与现金流的"跨年"维度 —— 哪几年压力大、哪一年掉一档。
              不画折线（每年一个柱、柱数不超过 40 年）：柱高即金额，掉档处用一枚小三角 + 竖线标出。
              精确金额不标在柱上（会挤），由章节文字给"X 年起降至 Y 万"。 -->

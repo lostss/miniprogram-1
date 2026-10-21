@@ -517,7 +517,9 @@ async function deletePolicy(db, openid, event) {
 // 现从契约派生 → 漂移在结构上不可能。新增/删除手动状态只改 `MANUAL_STATUSES` 一处。
 const POLICY_STATUS_CHANGEABLE = ['active', ...MANUAL_STATUSES]
 const POLICY_STATUS_META = ['status_reason', 'status_effective_date']
-const POLICY_EDITABLE = ['product_name', 'insurer', 'sum_assured', 'annual_premium', 'insurance_category', 'insurance_type', 'effective_date', 'insurance_period', 'payment_period', 'payment_method', 'premium_term', 'coverage_term', 'policyholder_name', 'beneficiary_name', 'insured_name', 'policy_number', 'status', ...POLICY_STATUS_META]
+// 2026-10-21：加除外承保两项（A4）。原文里的"除外责任"属条款内容、OCR 不解读，
+// 由顾问在编辑 Sheet 手动标记 → 落库为 exclusion_marked(bool) / exclusion_note(string)。
+const POLICY_EDITABLE = ['product_name', 'insurer', 'sum_assured', 'annual_premium', 'insurance_category', 'insurance_type', 'effective_date', 'insurance_period', 'payment_period', 'payment_method', 'premium_term', 'coverage_term', 'policyholder_name', 'beneficiary_name', 'insured_name', 'policy_number', 'status', 'exclusion_marked', 'exclusion_note', ...POLICY_STATUS_META]
 
 function _isActivePolicyStatus(status) {
   return !status || status === 'active' || status === 'unknown'
