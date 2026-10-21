@@ -231,6 +231,11 @@ function buildChapters(family, report, gaps, opts) {
         savingsText: os.savingsSumAssuredText,
         unknownText: os.unknownSumAssuredText,
         inactiveNote: os.inactiveNote || '',
+        // 2026-10-21（方案第一部分第 1 项）："谁没有保单"是给客户的第一个价值点，
+        // 不能只藏在家庭结构里 —— 它要出现在抬头事实那一屏。
+        noPolicyNote: (os.membersWithoutPolicy && os.membersWithoutPolicy.length)
+          ? '无任何保单：' + os.membersWithoutPolicy.join('、')
+          : '',
         categories: os.categories || [],
         // 覆盖检查（规则版，客户版已中性化）
         summaryLead: (ovHero && ovHero.summary) || '',

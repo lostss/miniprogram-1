@@ -87,7 +87,7 @@ const BLOCK_REGISTRY = {
     required: ['policyCount', 'payoutText', 'quotaText'],
     defaults: {
       policyCount: 0, memberCount: 0, premiumText: '',
-      payoutText: '', quotaText: '', savingsText: '', unknownText: '', inactiveNote: '',
+      payoutText: '', quotaText: '', savingsText: '', unknownText: '', inactiveNote: '', noPolicyNote: '',
       categories: [], summaryLead: '', alerts: [],
       risks: [], risksMore: 0, risksTotal: 0
     }

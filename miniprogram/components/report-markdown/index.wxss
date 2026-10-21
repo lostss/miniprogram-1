@@ -346,6 +346,8 @@
 .ov-cat-label { font-size:var(--fs-tiny); color:var(--text-tertiary); margin-right:var(--sp-1); }
 .ov-chip { font-size:var(--fs-tiny); color:var(--text-secondary); background:var(--bg-input); padding:var(--sp-1) var(--sp-3); border-radius:var(--r-full); }
 .ov-note { margin-top:var(--sp-2); font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-snug); }
+/* "无任何保单：母亲"是硬事实，不是脚注 —— 用深一档颜色，避免被下面的口径声明淹没 */
+.ov-note--alert { color:var(--text-secondary); font-weight:var(--fw-semi); }
 /* 覆盖检查：与风险条之间用分隔线，避免两块结论挤在一起 */
 .ov-check { margin-top:var(--sp-5); padding-top:var(--sp-4); border-top:1rpx solid var(--border); }
 .ov-check-lead { font-size:var(--fs-caption); color:var(--text-primary); margin-bottom:var(--sp-3); }

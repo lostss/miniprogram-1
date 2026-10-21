@@ -257,7 +257,11 @@
             <text class="ov-cat-label">已覆盖险种</text>
             <text class="ov-chip" wx:for="{{block.categories}}" wx:key="*this">{{item}}</text>
           </view>
+          <!-- 2026-10-21（方案）：无保单成员是"第一眼事实"之一，放在保额构成下方 -->
+          <view class="ov-note ov-note--alert" wx:if="{{block.noPolicyNote}}">{{block.noPolicyNote}}</view>
           <view class="ov-note" wx:if="{{block.savingsText}}">储蓄型（年金 / 增额寿 / 终身寿）合计 {{block.savingsText}}，与上述分列</view>
+          <!-- 口径声明（方案「阅读规则」）：所有保额为保单载明的名义保额 -->
+          <view class="ov-note">保额为保单载明的名义保额，未计分红递增；报销额度不可与给付金额相加。</view>
           <view class="ov-note" wx:if="{{block.unknownText}}">{{block.unknownText}} 的保单未标注险种，未计入上述分类</view>
           <view class="ov-note" wx:if="{{block.inactiveNote}}">{{block.inactiveNote}}</view>
 
