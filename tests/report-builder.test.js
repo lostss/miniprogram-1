@@ -63,9 +63,9 @@ describe('buildReportView — 报告聚合入口（候选 2 深模块）', () =>
   test('单接口返回全部视图数据（无告警时 10 章 + Hero + 摘要卡 + gaps + hints）', () => {
     const c = baseCustomer()
     const view = buildReportView(c, { conclusion: 'AI 结论', disclaimer: '免责' })
-    // 2026-10-21：概览 + 异常与待核验（A1–A6）+ 待完善 → owner 版 = 11 章
-    // （概览 + 异常 + 家庭结构 + 财务 + 保障汇总 + 缺口 + 期间 + 月历 + 收口 + 待完善 + 附录）
-    expect(view.chapters.length).toBe(11)
+    // 2026-10-21：概览 + 异常与待核验（A1–A6）+ 待完善；原「下一步行动」章已删除 → = 10 章
+    // （概览 + 异常 + 家庭结构 + 财务 + 保障汇总 + 缺口 + 期间 + 月历 + 待完善 + 附录）
+    expect(view.chapters.length).toBe(10)
     expect(view.chapters[0].key).toBe('overview')
     // 待完善必须是附录前最后一章（数据质量补录清单，不该插在诊断结论之间）
     const keys = view.chapters.map(x => x.key)
@@ -86,7 +86,7 @@ describe('buildReportView — 报告聚合入口（候选 2 深模块）', () =>
 
   test('无报告对象 → 视图仍完整（conclusion 空）', () => {
     const view = buildReportView(baseCustomer(), null)
-    expect(view.chapters.length).toBe(11)
+    expect(view.chapters.length).toBe(10)
     expect(view.hero.conclusion).toBe('')
     expect(view.hints).toEqual([])
   })
@@ -309,7 +309,8 @@ describe('buildHero — 保障覆盖检查（Hero 数据源）', () => {
     expect(ly.missing).toContain('寿险') // gap>0 即视为缺口
     expect(ly.display).toContain('缺少')
     expect(h.summary).toBe('3位成员中，3位存在缺口')
-    expect(h.topAdvice).toContain('补充')
+    // 2026-10-21：现阶段不做诊断 → hero 不再产出建议文案
+    expect(h).not.toHaveProperty('topAdvice')
   })
 
   test('无缺口成员显示覆盖完整', () => {
@@ -340,7 +341,7 @@ describe('buildHero — 保障覆盖检查（Hero 数据源）', () => {
     expect(lmy.blocked).toBe(true)
     expect(lmy.display).toContain('待确认')
     expect(h.summary).toContain('数据待补')
-    expect(h.topAdvice).toBe('')
+    expect(h).not.toHaveProperty('topAdvice')
   })
 })
 
@@ -363,14 +364,16 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     // 2026-10-17 用户评审后调整：缺口紧跟保障汇总（"有没有 → 够不够"），保障期间（时间维）后置。
     // 2026-10-21：新增「异常与待核验」章（A1–A6）。它在"有异常时"才出现，且固定紧跟概览，
     // 所以这里先剔除再比顺序，另单独断言它的位置（避免用例依赖"本次有没有异常"）。
-    expect(keys.filter(k => k !== 'anomalies')).toEqual(['family_structure', 'family_finance', 'coverage_summary', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'next_steps', 'appendix_policies'])
+    // 2026-10-21：next_steps 章已删除（规则层不给建议）
+    expect(keys.filter(k => k !== 'anomalies')).toEqual(['family_structure', 'family_finance', 'coverage_summary', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'appendix_policies'])
+    expect(keys).not.toContain('next_steps')
     if (keys.indexOf('anomalies') !== -1) {
       // buildChapters 直调时没有概览章（那需要 checkup），异常章应在第一位
       expect(keys[0]).toBe('anomalies')
     }
   })
 
-  test('缺口章：内容含缺口金额与优先级；收口章：行动清单收束；正式章编号连续 1..N', () => {
+  test('缺口章：内容含缺口金额与优先级；无行动建议章；正式章编号连续 1..N', () => {
     const ch = buildChapters(reportCustomer(), report)
     const gap = ch.find(x => x.key === 'gap_analysis')
     expect(gap).toBeDefined()
@@ -379,10 +382,10 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     expect(gap.content).toContain('缺口')
     expect(gap.content).toContain('万')
     expect(gap.content).toContain('优先级')
-    const next = ch.find(x => x.key === 'next_steps')
-    expect(next).toBeDefined()
-    expect(next.num).toBe(String(ch.indexOf(next) + 1)) // 编号按存在章顺延（异常章可能插入）
-    expect(next.content).toContain('优先为')
+    // 2026-10-21：原「下一步行动」章删除 —— 规则报告只陈述事实，建议归 AI 进阶报告
+    expect(ch.find(x => x.key === 'next_steps')).toBeUndefined()
+    // 排序依据作为事实留在缺口章尾注（不再派任务）
+    expect(gap.content).toContain('按缺口额与优先级排序')
     // 统一编号：正式章 1..N 连续（附录不编号）—— 不写死总数，只断言连续且从 1 开始
     const nums = ch.filter(x => x.key !== 'appendix_policies').map(x => x.num)
     expect(nums).toEqual(nums.map((_, i) => String(i + 1)))

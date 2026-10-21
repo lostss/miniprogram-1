@@ -43,12 +43,8 @@ function buildReportView(family, report, opts) {
   const uniOpts = Object.assign({}, opts, { view: 'owner' })
   const heroView = buildHero(family, gaps, uniOpts)
   const hero = Object.assign(heroView, { conclusion: String(report.conclusion || '') })
-  // V1.5 行动出口收敛（2026-09-12）：owner 版行动建议此前有 4 个出口
-  // （hero.topAdvice / next_steps 章 / deep.plan / deep.suggestions）→ 收敛为任一时刻只有一个：
-  //   已有 AI 分析 → deep.suggestions（行动清单）；无 AI 分析 → next_steps 章（含缺口金额与优先级排序）
-  // 客户版（shared）本就没有 next_steps 章，topAdvice 是其唯一行动指向，保持不变
-  // 注意：chapters 尚未构建（见上），所以这里只处理 hero；next_steps 的过滤挪到 chapters 之后
-  if (!shared) hero.topAdvice = ''
+  // 2026-10-21：行动建议已整体移出规则层（topAdvice 删除、next_steps 章删除）。
+  // 规则报告只陈述事实；建议只由 AI 进阶报告（页尾、手动生成）给出，来源明确可区分。
   const norm = normalizeFamilyData(family)
   // 保障人数：有至少一份有效保单的去重成员数（按 member_id 优先、insured_name 兜底；无归属保单不计入）
   //
@@ -104,8 +100,7 @@ function buildReportView(family, report, opts) {
   // PDF / 分享页 / 单测各自缺一章 —— 那正是"同一份报告多处实现"的老问题。
   const ck = opts.checkup || buildCheckupReport({ family: family, members: (family && family.members) || [], policies: (family && family.policies) || [] })
   let chapters = buildChapters(family, report, gaps, Object.assign({}, uniOpts, { hero: hero, risks: risks, checkup: ck }))
-  // V1.5 行动出口收敛：owner 已有 AI 分析时移除 next_steps（原在 chapters 构建前过滤，现后置）
-  if (!shared && deep) chapters = chapters.filter(c => c.key !== 'next_steps')
+  // 2026-10-21：next_steps 章已删除（规则层不出建议），此处不再需要按 deep 过滤。
   return { chapters: chapters, hero: hero, summaryCards: summaryCards, gaps: gaps, hints: hints, deep: deep, risks: risks }
 }
 
@@ -245,14 +240,11 @@ function buildHero(family, gaps, opts) {
           (unknownCount > 0 ? (missingCount > 0 ? '、' : '') + unknownCount + '位部分保障待确认' : '')
         : '保障覆盖完整')
     : members.length + '位成员中，' + missingCount + '位存在缺口' + (unknownCount > 0 ? '，' + unknownCount + '位数据待补' : '')
-  var top = null
-  var order = { high: 0, medium: 1, low: 2 }
-  for (var i = 0; i < gaps.length; i++) {
-    var g = gaps[i]
-    if (g.gap > 0 && (!top || (order[g.priority] < order[top.priority]))) top = g
-  }
-  var topAdvice = top ? (shared ? '建议关注' + top.member + '的' + top.category + '保障' : '建议优先为' + top.member + '补充' + top.category) : ''
-  return { alerts: alerts, summary: summary, topAdvice: topAdvice }
+  // 2026-10-21 用户决策（现阶段不做诊断、不给建议）：删除 topAdvice。
+  // 它原来的输出是「建议优先为 X 补充寿险」—— 主语是"建议"，属诊断层；
+  // 事实层已经有 alerts（谁缺什么/缺多少）与 gap_analysis 章，不需要再翻译成"该做什么"。
+  // 建议只在 AI 阶段出现（页尾进阶报告，手动生成，明确标注来源）。
+  return { alerts: alerts, summary: summary }
 }
 
 module.exports = {

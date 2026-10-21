@@ -63,7 +63,7 @@ Page({
     // 2026-09-11：孤儿现价表（自动匹配未中）→ 「待关联」入口数据源（owner 展示）
     unmatchedCashValues: [],
     disclaimer: '',
-    hero: { alerts: [], summary: '', topAdvice: '', conclusion: '' },
+    hero: { alerts: [], summary: '', conclusion: '' },
     // 风险预警 TOP-N（2026-10-13 报告结构 v2.0 ①）：默认空对象，渲染侧 wx:if 兜住
     risks: { items: [], counts: {}, more: 0, total: 0 },
     summaryCards: { premium: '', coverage: '', count: 0 },

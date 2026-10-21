@@ -229,7 +229,7 @@
               <text class="ov-dot"></text>
               <text class="ov-alert-text">{{item.name}} {{item.display}}</text>
             </view>
-            <view class="ov-advice" wx:if="{{block.topAdvice}}">{{block.topAdvice}}</view>
+            <!-- 2026-10-21：行动建议已移出规则层（现阶段不做诊断）。覆盖检查只到"谁缺什么"为止。 -->
           </view>
 
           <view class="ov-risks" wx:if="{{block.risks.length}}">

@@ -235,7 +235,7 @@ function buildChapters(family, report, gaps, opts) {
         // 覆盖检查（规则版，客户版已中性化）
         summaryLead: (ovHero && ovHero.summary) || '',
         alerts: (ovHero && ovHero.alerts) || [],
-        topAdvice: (ovHero && ovHero.topAdvice) || '',
+        // 2026-10-21：topAdvice 已从 hero 删除（规则层不给建议）
         // TOP-N 风险（红黄绿灯）：客户版不显示（与 risk_alerts 章同口径）。
         // 2026-10-18 真机修：概览只放前 3 条 —— 原实现把 12 项全塞进来，
         // 其中 3 条都是同一类"保单载明期限已过"，把概览撑成了风险列表页。
@@ -447,6 +447,11 @@ function buildChapters(family, report, gaps, opts) {
     // 活报告模型（2026-09）：客户版 blocked 克制说明（正向、不示弱、不泄公式）
     if (blockedGaps.length > 0 && shared) {
       gapLines.push('\n\n完善家庭收支信息后，本报告将自动补充额度测算')
+    }
+    // 2026-10-21：原「下一步行动」章的排序说明搬到这里 —— 只陈述"列表按什么排"，
+    // 不写"该补什么"。排序依据本身是事实（缺口额与优先级），不是建议。
+    if (gapLines.length) {
+      gapLines.push('\n\n以上按缺口额与优先级排序，金额随家庭收支信息更新而重算。')
     }
     ch.push({
       key: 'gap_analysis', title: '保障缺口',
@@ -661,22 +666,12 @@ function buildChapters(family, report, gaps, opts) {
     })
     groups.push({ name: n, subgroups: subgroups })
   })
-  // ======== 行动收口（审计·顾问视角 2026-09-04：报告以"下一步"收束，不再以折叠附录 + 免责结束） ========
-  // 取可行动缺口前 3 条（gaps 已按优先级 high→low、缺口额降序）；客户版中性措辞，与顶部 topAdvice 呼应
-  var topAct = actionable.slice(0, 3)
-  // 活报告模型（2026-09）：客户版移除⑧章——行动出口唯一化为 AI 行动清单（C1-suggestions）；owner 保留（结构化核对口径）
-  // 2026-09-06 措辞收敛：owner 尾注去话术/去销售引导，改中性状态提示
-  if (topAct.length > 0 && !shared) {
-    var actLines = topAct.map(function(g, i) {
-      var short = _shortCat(g.category)
-      return ((i + 1) + '. 优先为 ' + g.member + '补充' + short + '（缺口约 ' + _numW(g.gap) + ' 万）')
-    })
-    actLines.push('\n\n以上按缺口对家庭的影响程度排序；缺口金额将随家庭收支信息更新而重新计算。')
-    ch.push({
-      key: 'next_steps', title: '下一步行动',
-      content: actLines.join('\n')
-    })
-  }
+  // ======== 原「下一步行动」章已删除（2026-10-21 用户决策：现阶段报告不做诊断、不给建议）========
+  // 它原来输出的是"1. 优先为 X 补充寿险（缺口约 N 万）"—— 这是建议，不是事实。
+  // 事实层面的信息（谁的哪个险种有缺口、缺口多少）已经在 gap_analysis 章里按成员列出，
+  // 并带有优先级字段；把它再翻译成"该补什么"，就把报告从"化验单"变成了"处方"。
+  // AI 阶段（页尾进阶报告，手动生成）仍然给行动清单，那是明确标注来源的解读层，与事实层分开。
+  // 排序说明改为写在缺口章的尾注里（见 gap_analysis 的收尾），只陈述排序依据，不派任务。
 
   // 待完善（2026-10-18 第二步 IA）：原页面级「待完善」清单搬进正文，作为附录前的最后一章。
   // 数据源不变（organize 的 pending，已按保单聚合），只是换渲染位置 —— 页面不再自己列。
@@ -709,7 +704,8 @@ function buildChapters(family, report, gaps, opts) {
   // ⚠️ 必须列全：漏掉的章节会走下方"兜底追加"被推到附录之后（next_steps 曾经就漏了）
   // 待完善放最后（附录前）：它是"数据质量补录"清单，不该插在诊断结论之间。
   // 异常清单紧跟概览：它是"先看结论，再看哪几件事要处理"的第二眼
-  var CHAPTER_SEQ = ['overview', 'anomalies', 'family_structure', 'family_finance', 'coverage_summary', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'risk_alerts', 'next_steps', 'pending_data', 'appendix_policies']
+  // 2026-10-21：「下一步行动」章已删除（现阶段不做诊断/不给建议），排序说明并入缺口章尾注
+  var CHAPTER_SEQ = ['overview', 'anomalies', 'family_structure', 'family_finance', 'coverage_summary', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'risk_alerts', 'pending_data', 'appendix_policies']
   var ordered = []
   CHAPTER_SEQ.forEach(function(k) {
     ch.forEach(function(c) { if (c.key === k) ordered.push(c) })

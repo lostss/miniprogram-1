@@ -27,22 +27,22 @@ function family() {
 
 const hasKey = (chapters, key) => !!chapters.find(c => c.key === key)
 
-describe('V1.5 行动出口收敛（owner）', function () {
-  test('无 AI 分析：保留 next_steps 章，hero.topAdvice 置空（不再双份重复）', function () {
+describe('规则层不出建议（2026-10-21 用户决策：现阶段不做诊断）', function () {
+  test('无 AI 分析：也没有 next_steps 章，hero 不带 topAdvice', function () {
     const view = buildReportView(family(), { disclaimer: '免责' })
     expect(view.deep).toBeNull()
-    expect(hasKey(view.chapters, 'next_steps')).toBe(true)
-    expect(view.hero.topAdvice).toBe('')
-    // 规则版行动信息仍可从收口章读到（不因收敛而丢失）
-    const next = view.chapters.find(c => c.key === 'next_steps')
-    expect(next.content).toContain('优先为')
+    expect(hasKey(view.chapters, 'next_steps')).toBe(false)
+    expect(view.hero).not.toHaveProperty('topAdvice')
+    // 事实仍在：缺口列表里有金额与优先级
+    const gap = view.chapters.find(c => c.key === 'gap_analysis')
+    expect(gap.content).toContain('缺口')
   })
 
-  test('有 AI 分析：隐藏 next_steps 章（唯一出口 = deep.suggestions）', function () {
+  test('有 AI 分析：建议只出现在 deep.suggestions（来源明确、可区分）', function () {
     const view = buildReportView(family(), { portrait: '家庭画像', suggestions: '1. {{URGENT}}补充寿险' })
     expect(view.deep).not.toBeNull()
     expect(hasKey(view.chapters, 'next_steps')).toBe(false)
-    expect(view.hero.topAdvice).toBe('')
+    expect(view.hero).not.toHaveProperty('topAdvice')
     expect(view.deep.suggestions).toContain('补充寿险')
   })
 })
@@ -55,14 +55,14 @@ describe('内容统一（2026-10-18 用户决策）', function () {
     expect(shared.hero.alerts).toEqual(owner.hero.alerts)
   })
 
-  test('统一后行动指向仍只有一处：有 AI 分析时去掉 next_steps 章，无 AI 时保留', function () {
+  test('统一后行动指向仍只有一处：规则层一律不给建议（都没有 next_steps）', function () {
     const withDeep = buildReportView(family(), { portrait: '家庭画像' }, { view: 'shared' })
     expect(hasKey(withDeep.chapters, 'next_steps')).toBe(false)
-    expect(withDeep.hero.topAdvice).toBe('')
+    expect(withDeep.hero).not.toHaveProperty('topAdvice')
     expect(withDeep.deep).toBeTruthy()
 
     const noDeep = buildReportView(family(), {}, { view: 'shared' })
-    expect(hasKey(noDeep.chapters, 'next_steps')).toBe(true)
+    expect(hasKey(noDeep.chapters, 'next_steps')).toBe(false)
   })
 })
 
