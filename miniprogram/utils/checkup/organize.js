@@ -167,6 +167,16 @@ function buildCheckupReport(input) {
     if (m.member_id) byId[m.member_id] = m
     if (m.name) byName[_str(m.name)] = m
   })
+  // 失效/退保按成员计数（成员卡片要写"另有失效 N 份"，但统计本身只算 active）
+  const inactiveByMember = {}
+  ;(linkedAll.items || []).forEach((p) => {
+    if (!p || p.status === 'active') return
+    const hit = (p.member_id && byId[p.member_id]) || byName[_str(p.insured_name)]
+    if (!hit) return
+    const k = _str(hit.member_id || hit._id || hit.name)
+    inactiveByMember[k] = (inactiveByMember[k] || 0) + 1
+  })
+
   const buckets = {}
   const unassigned = []
   policies.forEach((p) => {
@@ -198,6 +208,8 @@ function buildCheckupReport(input) {
       // 保额仍含附加险（那是真实保障，且按自身险种归列）。
       policyCount: bucket.policies.filter((c) => !c.isRider).length,
       riderCount: bucket.policies.filter((c) => c.isRider).length,
+      // 2026-10-21：该成员名下失效/退保的保单数（方案「成员卡片」要求注明"失效 N 份，见 A1"）
+      inactiveCount: (inactiveByMember[_str(m.member_id || m._id || m.name)] || 0),
       sumAssured: bucket.policies.reduce((s, c) => s + c.sumAssured, 0),
       sumAssuredText: fmtYuan(bucket.policies.reduce((s, c) => s + c.sumAssured, 0)),
       policies: bucket.policies

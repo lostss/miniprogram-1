@@ -98,6 +98,15 @@ function buildCoverageMatrix(members, policies) {
   // 单元格状态：保障险空 → missing（红）；年金空 → 中性（不标红，见函数头口径）；保费 → 恒中性
   // 值：保额>0 → 数字；有保单但保额为 0/未填 → '0'（区别于"无此类保单"的 '—'）
   function cellOf(cat, v, n) {
+    // 2026-10-21（用户方案「全家保障横向对比表」）：
+    //   医疗险 —— 报销型，保额不可加总（400 万是报销上限，不是能拿到的钱）→ 只标"有无"，显示 ✓
+    //   年金   —— 储蓄型，很多保单没有"保额"概念（看的是年领/现价）→ 有保额给数字，没有就标"持有"
+    // 这两种表达都在数据里（counts 表示"有没有这类保单"），不需要新字段。
+    if (cat === '医疗险') return n > 0 ? { v: '✓', s: 'ok' } : { v: '—', s: 'missing' }
+    if (cat === '年金') {
+      if (v > 0) return { v: fmt(v), s: 'ok' }
+      return n > 0 ? { v: '持有', s: '' } : { v: '—', s: '' }
+    }
     if (v > 0) return { v: fmt(v), s: 'ok' }
     if (n > 0) return { v: '0', s: GAP_CATS.indexOf(cat) !== -1 ? 'missing' : '' }
     return { v: '—', s: GAP_CATS.indexOf(cat) !== -1 ? 'missing' : '' }

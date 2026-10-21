@@ -284,7 +284,12 @@ function buildChapters(family, report, gaps, opts) {
     return {
       key: (m.member_id || 'n') + '|' + i, name: m.name, role: role, age: m.age || '', member_id: m.member_id || '',
       display: m.age ? (role + '(' + m.age + ')') : role,
-      scaleText: g ? (g.policyCount + ' 张 · 保额 ' + g.sumAssuredText) : ''
+      // 2026-10-21：按方案「成员卡片」口径补两个事实 —— 含附加 N 项、失效 K 份。
+      // 失效不计入保额，但必须写在成员旁边（否则"6 张保单 1220 万"里少了那张失效的，没人知道）
+      scaleText: g
+        ? (g.policyCount + ' 张' + (g.riderCount ? '（含附加 ' + g.riderCount + ' 项）' : '') +
+           ' · 保额 ' + g.sumAssuredText + (g.inactiveCount ? ' · 失效 ' + g.inactiveCount + ' 份' : ''))
+        : ''
     }
   })
   // 去代际分层：成员卡片平铺流动布局（排序仍按角色分组序+中文名）

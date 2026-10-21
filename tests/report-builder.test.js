@@ -251,8 +251,9 @@ describe('buildCoverageMatrix — 保障覆盖矩阵（第 2 章数据源）', (
     ]
     const m = buildCoverageMatrix(c.members, c.policies)
     const ly = m.rows.find(r => r.name === '李阳勇')
-    // 年金列：有保单 → '0' 且中性（储蓄型不标红）；不能是 '—'（那会读成"没有年金"）
-    expect(ly.cells[4]).toEqual({ v: '0', s: '' })
+    // 年金列：有保单但没填保额 → 2026-10-21 起显示「持有」（方案：储蓄型列示年领/保额，
+    // 没有可加总的保额时只表达"有没有"）；不能是 '—'（那会读成"没有年金"）
+    expect(ly.cells[4]).toEqual({ v: '持有', s: '' })
     // 意外险列：确实没有这类保单 → 仍是 '—'
     expect(ly.cells[2]).toEqual({ v: '—', s: 'missing' })
   })
@@ -289,10 +290,11 @@ describe('buildCoverageMatrix — 保障覆盖矩阵（第 2 章数据源）', (
     ]
     const m = buildCoverageMatrix(c.members, c.policies)
     const xm = m.rows.find(r => r.name === '谢敏')
-    expect(xm.cells[1].v).toBe('50') // 医疗险 50 万（deleted 不计入）
+    // 2026-10-21（方案）：医疗险是报销型、保额不可加总 → 只标"有无"（✓），不再显示 50 万
+    expect(xm.cells[1].v).toBe('✓')
     expect(xm.cells[3].v).toBe('—') // 寿险无 active 保单 → 缺失格
     const total = m.rows[3]
-    expect(total.cells[1].v).toBe('50') // 医疗险列合计
+    expect(total.cells[1].v).toBe('✓') // 医疗险列合计同样只表达"有覆盖"
     expect(total.cells[3].v).toBe('—') // 寿险列无合计 → 缺失格
   })
 })

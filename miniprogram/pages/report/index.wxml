@@ -253,7 +253,9 @@
            导出 PDF 同理会得到一张空页。有第一张保单后再出现，这两个动作才有对象。 -->
       <block wx:if="{{!isShared && hasPolicy}}">
         <button class="footer-share pressable" open-type="share" aria-label="转发客户">转发给客户</button>
-        <button class="footer-export pressable" bindtap="onExportPdf" aria-label="导出 PDF">导出 PDF</button>
+        <!-- 2026-10-21 用户决策：PDF 是**保存模式**（打印/存档给客户），在线转发入口保留（上方 share）。
+             文案从"导出 PDF"改为"保存 PDF"，避免与"转发给客户"混为一谈。 -->
+        <button class="footer-export pressable" bindtap="onExportPdf" aria-label="保存 PDF 到手机">保存 PDF</button>
       </block>
       <block wx:if="{{isShared}}">
         <!-- 活报告模型（2026-09）挂载点③：沟通桥正向引导（不新增客户自助录入） -->
