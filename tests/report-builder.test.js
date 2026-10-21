@@ -63,9 +63,9 @@ describe('buildReportView — 报告聚合入口（候选 2 深模块）', () =>
   test('单接口返回全部视图数据（无告警时 10 章 + Hero + 摘要卡 + gaps + hints）', () => {
     const c = baseCustomer()
     const view = buildReportView(c, { conclusion: 'AI 结论', disclaimer: '免责' })
-    // 2026-10-18 IA：概览章 + 待完善章 → owner 版 = 10 章
-    // （概览 + 家庭结构 + 财务 + 保障汇总 + 缺口 + 期间 + 月历 + 收口 + 待完善 + 附录）
-    expect(view.chapters.length).toBe(10)
+    // 2026-10-21：概览 + 异常与待核验（A1–A6）+ 待完善 → owner 版 = 11 章
+    // （概览 + 异常 + 家庭结构 + 财务 + 保障汇总 + 缺口 + 期间 + 月历 + 收口 + 待完善 + 附录）
+    expect(view.chapters.length).toBe(11)
     expect(view.chapters[0].key).toBe('overview')
     // 待完善必须是附录前最后一章（数据质量补录清单，不该插在诊断结论之间）
     const keys = view.chapters.map(x => x.key)
@@ -86,7 +86,7 @@ describe('buildReportView — 报告聚合入口（候选 2 深模块）', () =>
 
   test('无报告对象 → 视图仍完整（conclusion 空）', () => {
     const view = buildReportView(baseCustomer(), null)
-    expect(view.chapters.length).toBe(10)
+    expect(view.chapters.length).toBe(11)
     expect(view.hero.conclusion).toBe('')
     expect(view.hints).toEqual([])
   })
@@ -361,24 +361,31 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     // 设计稿 v4 + 审计·顾问视角（2026-09-04）：缺口诊断独立成章，行动收口在附录前（报告以行动收束）。
     // 2026-10-13（报告结构 v2.0 ③）：保障期间（甘特图）提到保障汇总之后、缺口之前 ——
     // 2026-10-17 用户评审后调整：缺口紧跟保障汇总（"有没有 → 够不够"），保障期间（时间维）后置。
-    expect(keys).toEqual(['family_structure', 'family_finance', 'coverage_summary', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'next_steps', 'appendix_policies'])
+    // 2026-10-21：新增「异常与待核验」章（A1–A6）。它在"有异常时"才出现，且固定紧跟概览，
+    // 所以这里先剔除再比顺序，另单独断言它的位置（避免用例依赖"本次有没有异常"）。
+    expect(keys.filter(k => k !== 'anomalies')).toEqual(['family_structure', 'family_finance', 'coverage_summary', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'next_steps', 'appendix_policies'])
+    if (keys.indexOf('anomalies') !== -1) {
+      // buildChapters 直调时没有概览章（那需要 checkup），异常章应在第一位
+      expect(keys[0]).toBe('anomalies')
+    }
   })
 
   test('缺口章：内容含缺口金额与优先级；收口章：行动清单收束；正式章编号连续 1..N', () => {
     const ch = buildChapters(reportCustomer(), report)
     const gap = ch.find(x => x.key === 'gap_analysis')
     expect(gap).toBeDefined()
-    expect(gap.num).toBe('4')
+    // 编号按"存在哪些章"顺延：2026-10-21 起多了异常章（有异常时）→ 用位置断言而不是写死序号
+    expect(gap.num).toBe(String(ch.indexOf(gap) + 1))
     expect(gap.content).toContain('缺口')
     expect(gap.content).toContain('万')
     expect(gap.content).toContain('优先级')
     const next = ch.find(x => x.key === 'next_steps')
     expect(next).toBeDefined()
-    expect(next.num).toBe('7') // 无告警：收口在月历⑥之后、附录前
+    expect(next.num).toBe(String(ch.indexOf(next) + 1)) // 编号按存在章顺延（异常章可能插入）
     expect(next.content).toContain('优先为')
-    // 统一编号：正式章 1..7 连续（附录不编号）
+    // 统一编号：正式章 1..N 连续（附录不编号）—— 不写死总数，只断言连续且从 1 开始
     const nums = ch.filter(x => x.key !== 'appendix_policies').map(x => x.num)
-    expect(nums).toEqual(['1', '2', '3', '4', '5', '6', '7'])
+    expect(nums).toEqual(nums.map((_, i) => String(i + 1)))
   })
 
   // 2026-09-18 报告页审计：②章收入口径——未填写时曾直传 totalIncome=0 → 渲染"年收入 0万"，
@@ -402,15 +409,17 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
 
   test('家庭结构章：成员节点（角色分组排序）；财务独立成章', () => {
     const ch = buildChapters(reportCustomer(), report)
-    const ft = ch[0].customBlocks.find(b => b.t === 'family_tree')
+    // 2026-10-21：异常章可能插在首位 → 按 key 取，不按索引（索引会随"本次有无异常"漂移）
+    const ft = ch.find(x => x.key === 'family_structure').customBlocks.find(b => b.t === 'family_tree')
     expect(ft).toBeDefined()
     expect(ft.nodes.length).toBe(3)
     expect(ft.nodes[0].name).toBe('李阳勇') // 本人组排前
     expect(ft.nodes[0].display).toBe('本人')
     // 财务已拆为独立章（家庭结构之后）
-    const fin = ch[1]
+    const fin = ch.find(x => x.key === 'family_finance')
     expect(fin.key).toBe('family_finance')
-    expect(fin.num).toBe('2')
+    // 编号按存在章顺延（异常章可能插入），因此比位置而不是写死 '2'
+    expect(fin.num).toBe(String(ch.indexOf(fin) + 1))
     expect(fin.customBlocks[0].t).toBe('finance')
     expect(fin.customBlocks[0].income).toBe(30) // 2026-09-06 修复：家庭财务章取家庭收入源（family_income/financial_snapshot.income），非成员收入合计(30+15)
     expect(ft.finance).toBeUndefined()
@@ -419,7 +428,8 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
   test('家庭结构章：成员平铺（nodes 数组，角色分组排序），无 levels 分层', () => {
     // fixture 成员：本人/配偶/子女 → 平铺 3 节点（本人→配偶→子女 按角色组序）
     const ch = buildChapters(reportCustomer(), report)
-    const ft = ch[0].customBlocks.find(b => b.t === 'family_tree')
+    // 2026-10-21：异常章可能插在首位 → 按 key 取，不按索引（索引会随"本次有无异常"漂移）
+    const ft = ch.find(x => x.key === 'family_structure').customBlocks.find(b => b.t === 'family_tree')
     expect(ft.levels).toBeUndefined()
     expect(ft.nodes.length).toBe(3)
     expect(ft.nodes[0].role).toBe('本人')
@@ -429,7 +439,7 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
 
   test('保障汇总章：覆盖矩阵（成员×险种 + 合计行）+ 缺失提示', () => {
     const ch = buildChapters(reportCustomer(), report)
-    const cs = ch[2]
+    const cs = ch.find(x => x.key === 'coverage_summary')
     const pano = cs.customBlocks.find(b => b.t === 'panorama')
     expect(pano).toBeDefined()
     expect(pano.heads).toEqual(['成员', '重疾险', '医疗险', '意外险', '寿险', '年金', '年保费'])

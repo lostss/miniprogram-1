@@ -275,6 +275,23 @@
 .pt-lg-item { display:inline-flex; align-items:center; gap:var(--sp-2); }
 .pt-lg-dot { width:16rpx; height:16rpx; border-radius:2rpx; background:var(--accent-deep); }
 
+/* ========== 异常与待核验 A1–A6（2026-10-21）==========
+   编号用等宽 + 深金，便于口头引用（"看 A3"）；每条只占两行（谁·哪张 / 具体事实），
+   不画卡片描边 —— 一屏能同时看到 6 类，才谈得上"清单"。 */
+.an-wrap { padding:var(--sp-1) 0; }
+.an-group { padding:var(--sp-4) 0; border-bottom:1rpx solid var(--border); }
+.an-group:last-child { border-bottom:none; }
+.an-head { display:flex; align-items:baseline; gap:var(--sp-2); }
+.an-code { font-size:var(--fs-tiny); font-weight:var(--fw-semi); color:var(--accent-deep); font-variant-numeric:tabular-nums; letter-spacing:0.5rpx; }
+.an-title { flex:1; font-size:var(--fs-caption); font-weight:var(--fw-semi); color:var(--text-primary); }
+.an-count { font-size:var(--fs-tiny); color:var(--text-tertiary); }
+.an-item { margin-top:var(--sp-3); }
+.an-line { display:flex; align-items:baseline; gap:var(--sp-2); }
+.an-who { flex-shrink:0; font-size:var(--fs-caption); color:var(--text-primary); }
+.an-prod { flex:1; min-width:0; font-size:var(--fs-caption); color:var(--text-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.an-act { flex-shrink:0; font-size:var(--fs-tiny); color:var(--accent-deep); padding:var(--sp-1) var(--sp-2); }
+.an-detail { display:block; margin-top:var(--sp-1); font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-snug); }
+
 /* ========== 待完善清单（2026-10-18 第二步 IA）==========
    密度接近表格：一行保单 + 若干问题点；不画卡片描边（一章里可能有 5~10 条，
    每条都描边会比数据本身更重）。 */

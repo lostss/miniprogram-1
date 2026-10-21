@@ -166,6 +166,26 @@
           </view>
         </view>
         <!-- 附录保单卡片（按成员分组，点击弹明细） -->
+        <!-- 异常与待核验 A1–A6（2026-10-21）：编号固定，AI 导读与面谈按编号引用。
+             每行一条事实（成员 · 保单 · 具体到什么状态/哪天到期），点「查看」直达保单明细。 -->
+        <view wx:if="{{block.t==='anomaly_list'}}" class="an-wrap">
+          <view class="an-group" wx:for="{{block.items}}" wx:key="code" wx:for-item="g">
+            <view class="an-head">
+              <text class="an-code">{{g.code}}</text>
+              <text class="an-title">{{g.title}}</text>
+              <text class="an-count">{{g.count}} 项</text>
+            </view>
+            <view class="an-item" wx:for="{{g.items}}" wx:key="policyId" wx:for-item="it">
+              <view class="an-line">
+                <text class="an-who">{{it.member}}</text>
+                <text class="an-prod">{{it.product}}</text>
+                <text class="an-act pressable" wx:if="{{it.policyId && !readonly}}" data-id="{{it.policyId}}" catchtap="onPolicyTap">查看</text>
+              </view>
+              <text class="an-detail">{{it.detail}}</text>
+            </view>
+          </view>
+        </view>
+
         <!-- 待完善清单（2026-10-18 第二步 IA）：原页面级「待完善」，按保单聚合后进正文最后一章。
              每张保单一行 +「去补」直达该保单的编辑 Sheet（复用 policytap 事件，不新增链路）。 -->
         <view wx:if="{{block.t==='pending_list'}}" class="pd-wrap">

@@ -30,6 +30,8 @@ var { policyYearAt, cashAtYear, coverScale } = require('../cash-value-math')
 var createBlock = require('../custom-blocks').create
 // 附加险归属（2026-10-21）：附录里附加险缩进挂主险下
 var { linkRiders } = require('../rider-link')
+// 异常与待核验 A1–A6（2026-10-21）：只列有字段支撑的事实，不下诊断
+var { buildAnomalies } = require('./anomaly-list')
 
 // 原文出处（2026-10-18，v2.0「结论可溯源」最小实现）：
 // 把 OCR 阶段 AI 摘录的 field_evidence 拼成一行给附录保单卡展示。
@@ -242,6 +244,20 @@ function buildChapters(family, report, gaps, opts) {
         risksMore: (!shared && ovRisks && ovRisks.more) || 0,
         risksTotal: (!shared && ovRisks && ovRisks.total) || 0
       })]
+    })
+  }
+
+  // ======== 异常与待核验（A1–A6，2026-10-21）========
+  // 用户方案「家庭保单化验单」的第一部分第 4 项：编号固定，供 AI 导读与面谈引用（"见 A3"）。
+  // 只列有字段支撑的事实（见 utils/report/anomaly-list.js 头注释）；本次为空的事项不出现（缺号=无此事项）。
+  var ageByName = {}
+  members.forEach(function(m) { if (m && m.name) ageByName[String(m.name)] = Number(m.age) || 0 })
+  var anomalies = buildAnomalies({ policies: linkRiders(active).items, now: new Date(), ageByName: ageByName })
+  if (anomalies.length) {
+    ch.push({
+      key: 'anomalies', title: '异常与待核验',
+      customBlocks: [createBlock('anomaly_list', { items: anomalies })],
+      unit: anomalies.length + ' 项'
     })
   }
 
@@ -692,7 +708,8 @@ function buildChapters(family, report, gaps, opts) {
   // ⚠️ 必须列全：漏掉的章节会走下方"兜底追加"被推到附录之后（next_steps 第一次就漏了）
   // ⚠️ 必须列全：漏掉的章节会走下方"兜底追加"被推到附录之后（next_steps 曾经就漏了）
   // 待完善放最后（附录前）：它是"数据质量补录"清单，不该插在诊断结论之间。
-  var CHAPTER_SEQ = ['overview', 'family_structure', 'family_finance', 'coverage_summary', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'risk_alerts', 'next_steps', 'pending_data', 'appendix_policies']
+  // 异常清单紧跟概览：它是"先看结论，再看哪几件事要处理"的第二眼
+  var CHAPTER_SEQ = ['overview', 'anomalies', 'family_structure', 'family_finance', 'coverage_summary', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'risk_alerts', 'next_steps', 'pending_data', 'appendix_policies']
   var ordered = []
   CHAPTER_SEQ.forEach(function(k) {
     ch.forEach(function(c) { if (c.key === k) ordered.push(c) })
