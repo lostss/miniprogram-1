@@ -202,6 +202,40 @@ function buildChapters(family, report, gaps, opts) {
   var policyCount = norm.policyCount
 
   var matrix = buildCoverageMatrix(members, active)
+
+  // ======== 分险种保额合计表（2026-10-21，方案第一部分第 3 项）========
+  // 矩阵是"成员 × 险种"（回答谁有什么），这张表是"险种为行"的汇总（回答每类保障总量、覆盖几人、几份）。
+  // 两类不可加总的必须在表内直接说明，否则客户会把报销上限当成可领取金额：
+  //   · 医疗险（报销型）→ 不汇总，只给份数与覆盖成员
+  //   · 储蓄型（年金等）→ 不汇总保额（看的是年领/现价）
+  var CAT_ORDER = ['寿险', '重疾险', '意外险', '医疗险', '年金']
+  var catAgg = {}
+  CAT_ORDER.forEach(function(c) { catAgg[c] = { sum: 0, count: 0, members: [], riders: 0 } })
+  active.forEach(function(p) {
+    var c = canonCat(p.insurance_category || '其他')
+    if (!catAgg[c]) return // 未标注险种单独提示，不硬塞进某类
+    var a = catAgg[c]
+    if (!(p.isRider && p.parentKey)) a.count += 1
+    else a.riders += 1
+    a.sum += Number(p.sum_assured) || 0
+    var who = p.insured_name || ''
+    if (who && a.members.indexOf(who) === -1) a.members.push(who)
+  })
+  var catRows = CAT_ORDER.filter(function(c) {
+    var a = catAgg[c]
+    return a.count > 0 || a.riders > 0
+  }).map(function(c) {
+    var a = catAgg[c]
+    var noSum = (c === '医疗险' || c === '年金')
+    return {
+      cat: c,
+      sumText: noSum ? '—' : _fmtAmount(a.sum),
+      membersText: a.members.join('、') || '—',
+      countText: a.count + (a.riders ? '（含附加 ' + a.riders + ' 项）' : ''),
+      note: c === '医疗险' ? '报销型，保额不可加总' : (c === '年金' ? '储蓄型，不汇总保额' : '名义保额')
+    }
+  })
+
   var ch = []
   // 缺口分组（供 ④ 保障缺口章与「下一步」收口章共用）：可行动（有缺口金额）vs 信息缺失（无法计算）
   var actionable = gaps.filter(function(g) { return g.gap > 0 && g.reliability !== 'blocked' })
@@ -348,7 +382,11 @@ function buildChapters(family, report, gaps, opts) {
     key: 'coverage_summary', title: '保障汇总', num: '3',
     unit: '单位：万元',
     pre: missingLines.length > 0 ? ('⚠️ ' + missingLines.join('\n⚠️ ')) : '',
-    customBlocks: [createBlock('panorama', { heads: matrix.heads, cats: matrix.cats, rows: matrix.rows })]
+    customBlocks: [
+      createBlock('panorama', { heads: matrix.heads, cats: matrix.cats, rows: matrix.rows }),
+      // 分险种合计（方案第一部分第 3 项）：矩阵回答"谁有什么"，这张表回答"每类保障总量/覆盖几人/几份"
+      createBlock('cat_table', { rows: catRows })
+    ]
   })
 
   // ======== ④ 保障期间（甘特图 + 未来关键时点）========
@@ -403,10 +441,22 @@ function buildChapters(family, report, gaps, opts) {
     })
   })
   var ganttData = buildGantt(active, members)
+  // 2026-10-21（方案第四部分第 9 项）：节点清单按"距今"分三组，而不是一条长列表。
+  // 分组的价值是读者知道"哪些要现在处理、哪些是十年后的事"；逐条时间线读起来像流水账。
+  var nowY = new Date().getFullYear()
+  var TL_GROUPS = [
+    { key: 'now', title: '未来 12 个月', test: function(y) { return y <= nowY + 1 } },
+    { key: 'mid', title: '中期（1–5 年）', test: function(y) { return y > nowY + 1 && y <= nowY + 5 } },
+    { key: 'far', title: '长期（5 年以上）', test: function(y) { return y > nowY + 5 } },
+    { key: 'past', title: '已过（核对状态）', test: function(y) { return y < nowY } }
+  ]
+  var tlGroups = TL_GROUPS.map(function(g) {
+    return { key: g.key, title: g.title, items: timelineItems.filter(function(it) { return g.test(it.y) }) }
+  }).filter(function(g) { return g.items.length > 0 })
   ch.push({
     key: 'premium_timeline', title: '保障期间',
     customBlocks: (ganttData.rows.length ? [createBlock('gantt', ganttData)] : [])
-      .concat([createBlock('timeline', { items: timelineItems })])
+      .concat([createBlock('timeline', { items: timelineItems, groups: tlGroups })])
   })
 
   // ======== ⑤ 保障缺口（审计·顾问视角 2026-09-04：缺口诊断独立成章） ========

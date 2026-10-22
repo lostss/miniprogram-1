@@ -88,17 +88,35 @@
             <text class="tl-legend-dot tl-green"></text><text class="tl-legend-txt">交费期满</text>
             <text class="tl-legend-dot tl-red"></text><text class="tl-legend-txt">保障期满</text>
           </view>
-          <!-- 年份为第一层节点；年份下多产品归类；单产品同年多节点 note 以/分隔 -->
-          <view class="tl-item" wx:for="{{block.items}}" wx:for-item="e" wx:key="y">
-            <view class="tl-dot {{e.type === 'expiry' ? 'tl-red' : 'tl-green'}}"></view>
-            <view class="tl-content">
-              <text class="tl-year">{{e.date || (e.y + '年')}}</text>
-              <view class="tl-prod" wx:for="{{e.policies}}" wx:for-item="p" wx:key="name">
-                <text class="tl-label">{{p.name}}</text>
-                <text class="tl-note">{{p.note}}</text>
+          <!-- 2026-10-21（方案第四部分第 9 项）：按"距今"分三组后再按年份列 —— 一条长流水账
+               读不出"哪些现在要处理、哪些是十年后的事"。groups 缺失时（老数据）退回平铺。 -->
+          <block wx:if="{{block.groups.length}}">
+            <view class="tl-group" wx:for="{{block.groups}}" wx:key="key" wx:for-item="g">
+              <text class="tl-group-title">{{g.title}}</text>
+              <view class="tl-item" wx:for="{{g.items}}" wx:for-item="e" wx:key="y">
+                <view class="tl-dot {{e.type === 'expiry' ? 'tl-red' : 'tl-green'}}"></view>
+                <view class="tl-content">
+                  <text class="tl-year">{{e.date || (e.y + '年')}}</text>
+                  <view class="tl-prod" wx:for="{{e.policies}}" wx:for-item="p" wx:key="name">
+                    <text class="tl-label">{{p.name}}</text>
+                    <text class="tl-note">{{p.note}}</text>
+                  </view>
+                </view>
               </view>
             </view>
-          </view>
+          </block>
+          <block wx:else>
+            <view class="tl-item" wx:for="{{block.items}}" wx:for-item="e" wx:key="y">
+              <view class="tl-dot {{e.type === 'expiry' ? 'tl-red' : 'tl-green'}}"></view>
+              <view class="tl-content">
+                <text class="tl-year">{{e.date || (e.y + '年')}}</text>
+                <view class="tl-prod" wx:for="{{e.policies}}" wx:for-item="p" wx:key="name">
+                  <text class="tl-label">{{p.name}}</text>
+                  <text class="tl-note">{{p.note}}</text>
+                </view>
+              </view>
+            </view>
+          </block>
         </view>
         <view wx:if="{{block.t==='calendar'}}" class="cal-grid">
           <view class="cal-cell {{item.h === 2 ? 'cal-peak' : ''}}" wx:for="{{block.items}}" wx:key="m">
@@ -221,6 +239,26 @@
               </view>
               <text class="an-detail">{{it.detail}}</text>
             </view>
+          </view>
+        </view>
+
+        <!-- 分险种保额合计（2026-10-21，方案第一部分第 3 项）：险种为行 —— 矩阵回答"谁有什么"，
+             这张表回答"每类保障多少、覆盖几人、几份"。医疗/储蓄不可加总的在备注列直接写明。 -->
+        <view wx:if="{{block.t==='cat_table' && block.rows.length}}" class="ct-wrap">
+          <view class="ct-tr ct-tr--head">
+            <text class="ct-th ct-th--cat">险种</text>
+            <text class="ct-th ct-th--sum">保额合计</text>
+            <text class="ct-th ct-th--mem">覆盖成员</text>
+            <text class="ct-th ct-th--cnt">份数</text>
+          </view>
+          <view class="ct-row" wx:for="{{block.rows}}" wx:key="cat" wx:for-item="r">
+            <view class="ct-tr">
+              <text class="ct-td ct-td--cat">{{r.cat}}</text>
+              <text class="ct-td ct-td--sum">{{r.sumText}}</text>
+              <text class="ct-td ct-td--mem">{{r.membersText}}</text>
+              <text class="ct-td ct-td--cnt">{{r.countText}}</text>
+            </view>
+            <text class="ct-note">{{r.note}}</text>
           </view>
         </view>
 

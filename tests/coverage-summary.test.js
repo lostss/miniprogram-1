@@ -112,7 +112,10 @@ describe('保额拆分接线（防第四份实现 / 防只改一处）', () => {
   test('概览（正文第 1 章）不再展示单一"保额合计"，改为给付型 + 报销额度两队', () => {
     // 2026-10-18 IA 重构：汇总卡从页面搬进 chapters.overview，由 report-markdown 渲染
     const comp = fs.readFileSync(path.join(root, 'miniprogram', 'components', 'report-markdown', 'index.wxml'), 'utf8')
-    expect(comp).not.toContain('>保额合计<')
+    // 2026-10-21：分险种合计表（方案第一部分第 3 项）里**每行**有一个"保额合计"列 ——
+    // 那不是"单一总保额"（它按险种分行，且医疗/储蓄明确给 —）。所以这里断言的是
+    // 「不存在跨险种的单一合计」，而不是字面禁掉"保额合计"四个字。
+    expect(comp).not.toContain('总保额')
     expect(comp).not.toContain('保障型保额合计')
     expect(comp).toContain('block.payoutText')
     expect(comp).toContain('block.quotaText')

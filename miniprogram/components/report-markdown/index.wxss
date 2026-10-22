@@ -319,6 +319,27 @@
 .an-act { flex-shrink:0; font-size:var(--fs-tiny); color:var(--accent-deep); padding:var(--sp-1) var(--sp-2); }
 .an-detail { display:block; margin-top:var(--sp-1); font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-snug); }
 
+/* ========== 分险种保额合计（2026-10-21）==========
+   4 列固定宽度 + 备注行。备注不占列（否则"报销型不可加总"会把表挤爆），
+   而是作为该行下方一行 tiny 说明 —— 它解释的是"为什么这里是 —"。 */
+.ct-wrap { margin-top:var(--sp-6); padding-top:var(--sp-4); border-top:1rpx solid var(--border); }
+.ct-tr { display:flex; align-items:baseline; }
+.ct-tr--head { border-bottom:1rpx solid var(--border); padding-bottom:var(--sp-2); }
+.ct-row { padding:var(--sp-3) 0; border-bottom:1rpx solid var(--border); }
+.ct-row:last-child { border-bottom:none; }
+.ct-th { font-size:var(--fs-tiny); color:var(--text-tertiary); }
+.ct-td { font-size:var(--fs-caption); color:var(--text-primary); font-variant-numeric:tabular-nums; }
+.ct-th--cat, .ct-td--cat { flex:0 0 120rpx; }
+.ct-th--sum, .ct-td--sum { flex:0 0 140rpx; text-align:right; font-weight:var(--fw-semi); }
+.ct-th--mem, .ct-td--mem { flex:1; min-width:0; padding-left:var(--sp-3); color:var(--text-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ct-th--cnt, .ct-td--cnt { flex:0 0 150rpx; text-align:right; color:var(--text-secondary); }
+.ct-note { display:block; margin-top:var(--sp-1); font-size:var(--fs-tiny); color:var(--text-tertiary); }
+
+/* 时间线分组标题（2026-10-21）：比年份更弱、比正文更小，只起分隔作用 */
+.tl-group { margin-top:var(--sp-5); }
+.tl-group:first-child { margin-top:0; }
+.tl-group-title { display:block; margin-bottom:var(--sp-2); font-size:var(--fs-tiny); color:var(--accent-deep); letter-spacing:var(--ls-wide); }
+
 /* ========== 待完善清单（2026-10-18 第二步 IA）==========
    密度接近表格：一行保单 + 若干问题点；不画卡片描边（一章里可能有 5~10 条，
    每条都描边会比数据本身更重）。 */

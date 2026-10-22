@@ -69,8 +69,8 @@ describe('classifyBatchResults — 识别结果分流分组（收编 _procRefres
 })
 
 describe('custom-blocks 注册表', function () {
-  test('SUPPORTED_TYPES 声明 13 种类型（+anomaly_list / premium_split 2026-10-21）', function () {
-    expect(cb.SUPPORTED_TYPES.sort()).toEqual(['anomaly_list', 'calendar', 'family_tree', 'finance', 'gantt', 'overview', 'panorama', 'pending_list', 'policy_cards', 'premium_split', 'premium_trend', 'risk_alerts', 'timeline'])
+  test('SUPPORTED_TYPES 声明 14 种类型（+cat_table 2026-10-21）', function () {
+    expect(cb.SUPPORTED_TYPES.sort()).toEqual(['anomaly_list', 'calendar', 'cat_table', 'family_tree', 'finance', 'gantt', 'overview', 'panorama', 'pending_list', 'policy_cards', 'premium_split', 'premium_trend', 'risk_alerts', 'timeline'])
   })
 
   test('gantt 默认字段补齐（rows/ticks/startYear/endYear/notes）', function () {

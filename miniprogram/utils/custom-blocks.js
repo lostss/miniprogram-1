@@ -36,7 +36,8 @@ const BLOCK_REGISTRY = {
   },
   timeline: {
     required: ['items'],
-    defaults: { items: [] }
+    // groups（2026-10-21）：按"距今"分三组的视图；缺失时组件退回平铺 items
+    defaults: { items: [], groups: [] }
   },
   calendar: {
     required: ['items'],
@@ -76,6 +77,11 @@ const BLOCK_REGISTRY = {
   premium_trend: {
     required: ['years'],
     defaults: { years: [], maxW: 0, thisYear: 0, currentW: 0 }
+  },
+  // 分险种保额合计表（2026-10-21）：险种为行的汇总（矩阵是成员×险种的转置视图）
+  cat_table: {
+    required: ['rows'],
+    defaults: { rows: [] }
   },
   // 待完善清单（2026-10-18 第二步 IA）：原页面级「待完善」，按保单聚合后的条目
   pending_list: {
