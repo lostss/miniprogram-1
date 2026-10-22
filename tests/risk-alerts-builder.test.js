@@ -256,8 +256,10 @@ const SRC_COMPONENT = fs.readFileSync(path.join(__dirname, '..', 'miniprogram', 
   })
 
   test('三个等级的样式类都有定义（红黄绿不得只定义其一）', () => {
-    ;['.risk-red', '.risk-yellow', '.risk-green'].forEach(sel => {
-      expect(SRC_WXSS).toContain(sel)
+    // 2026-10-22：风险条随概览章进入组件（页面级 .risk-* 已成为死样式被清理）
+    const compWxss = fs.readFileSync(path.join(__dirname, '..', 'miniprogram', 'components', 'report-markdown', 'index.wxss'), 'utf8')
+    ;['.ov-risk--red', '.ov-risk--yellow', '.ov-risk--ok'].forEach(sel => {
+      expect(compWxss).toContain(sel)
     })
   })
 })

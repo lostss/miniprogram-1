@@ -125,6 +125,8 @@ function buildGantt(policies, members) {
       lifetime: lifetime,
       oneYear: isOneYearPolicy(p),
       singlePay: singlePay,
+      // 2026-10-21：失效/退保/理赔终止 → 灰条 + 空心终点（"这张已经不能用了"要看得见）
+      inactive: !!(p.status && p.status !== 'active'),
       // 2026-10-21：该主险下已并入的附加险项数（渲染时行尾标"含附加 N 项"）
       riderCount: riderCountByParent[p._linkKey] || 0,
       payEndY: payEndY,
@@ -211,6 +213,7 @@ function buildGantt(policies, members) {
   if (missTerm) notes.push(missTerm + ' 张保单未填写保障期间，未在时间轴上显示')
   // 缴费期满竖线的图例（替代原斜纹段；斜纹在 20rpx 条高下不可读，已移除）
   if (rows.some(function(r) { return r.payEndPct !== null })) notes.push('条内竖线 = 缴费期满，其后只保留保障（不用再交钱）')
+  if (rows.some(function(r) { return r.inactive })) notes.push('灰条 = 已失效 / 退保 / 理赔终止，不计入汇总与缺口')
   if (rows.some(function(r) { return r.oneYear })) notes.push('一年期短险每年需续保，条形表示当前保单年度')
   if (rows.some(function(r) { return r.lifetime })) notes.push('"终身"保单无固定到期日，条形画至右端')
 

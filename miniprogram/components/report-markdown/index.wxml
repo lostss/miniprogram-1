@@ -67,7 +67,7 @@
               </view>
               <view class="gt-track">
                 <view class="gt-now" wx:if="{{block.nowPct !== null}}" style="left:{{block.nowPct}}%"></view>
-                <view class="gt-bar {{r.lifetime ? 'gt-bar--life' : ''}} {{r.oneYear ? 'gt-bar--short' : ''}}" style="left:{{r.startPct}}%;width:{{r.widthPct}}%"></view>
+                <view class="gt-bar {{r.lifetime ? 'gt-bar--life' : ''}} {{r.oneYear ? 'gt-bar--short' : ''}} {{r.inactive ? 'gt-bar--inactive' : ''}}" style="left:{{r.startPct}}%;width:{{r.widthPct}}%"></view>
                 <!-- 2026-10-18：缴费期满标记（替代原条内斜纹）。按时间轴百分比定位，
                      只在"缴费期满早于保障期满"时出现 —— 两者同时结束时画在条尾是噪音。 -->
                 <view class="gt-payend" wx:if="{{r.payEndPct !== null}}" style="left:{{r.payEndPct}}%"></view>
@@ -279,6 +279,8 @@
              数据全部由 chapter-builder 备好（本组件不做计算）。 -->
         <view wx:if="{{block.t==='overview'}}" class="ov-wrap">
           <view class="ov-meta">{{block.policyCount}} 张保单 · {{block.memberCount}} 位成员 · 年保费 {{block.premiumText}}</view>
+          <!-- 经济支柱（2026-10-21）：口径可推断就必须写明来源，否则读者会当成人工设定 -->
+          <view class="ov-note" wx:if="{{block.pillarNote}}">{{block.pillarNote}}</view>
           <view class="ov-pair">
             <view class="ov-pair-item">
               <view class="ov-pair-val">{{block.payoutText}}</view>

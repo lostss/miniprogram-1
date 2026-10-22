@@ -139,6 +139,10 @@
 .gt-bar--life { background:linear-gradient(90deg, var(--accent-deep) 0%, var(--accent-deep) 55%, var(--border-accent) 100%); }
 /* 一年期短险：琥珀色（每年需续保，与长期险区分；沿用项目"琥珀 = 需留意"的语义） */
 .gt-bar--short { background:var(--amber-deep); }
+/* 失效 / 退保 / 理赔终止（2026-10-21）：灰条 + 虚线描边 —— 形状仍是"曾经保障到哪一年"，
+   但一眼能看出它已经不作数（不计入汇总与缺口）。 */
+.gt-bar--inactive { background:var(--border); border:1rpx dashed var(--text-tertiary); }
+.gt-bar--inactive::after { content:''; }
 .gt-side { flex:0 0 160rpx; display:flex; flex-direction:column; align-items:flex-end; gap:2rpx; }
 .gt-end { font-size:var(--fs-tiny); color:var(--text-secondary); font-variant-numeric:tabular-nums; }
 .gt-end--life { color:var(--accent-deep); }

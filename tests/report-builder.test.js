@@ -518,10 +518,11 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     const pc = ap.customBlocks.find(b => b.t === 'policy_cards')
     expect(pc).toBeDefined()
     expect(pc.groups.length).toBe(1)
-    expect(pc.groups[0].name).toBe('李阳勇')
-    // 二级分组：保司子组（无 insurer 数据归「未知保司」）
+    // 2026-10-21（方案第五部分）：一级分组改为**状态**（失效在前、有效在后），
+    // 二级才是成员（原来一级是成员、保司是二级）→ 保司下沉到卡片 meta3。
+    expect(pc.groups[0].name).toBe('有效（1 张）')
     expect(pc.groups[0].subgroups.length).toBe(1)
-    expect(pc.groups[0].subgroups[0].name).toBe('未知保司')
+    expect(pc.groups[0].subgroups[0].name).toBe('李阳勇')
     const p = pc.groups[0].subgroups[0].policies[0]
     expect(p.sum_display).toBe('100万')
     expect(p.premium_display).toBe('8000元')

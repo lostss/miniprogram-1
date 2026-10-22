@@ -104,6 +104,52 @@ function completeHint(cat, hasIncome, hasDebt) {
  * @returns {array} rows[{ id, member, role, category, existing, reference, gap, satisfied,
  *                         reliability, reliabilityLabel, priority, priorityLabel, basis, completeHint, why }]
  */
+/**
+ * 经济支柱认定（2026-10-21，用户方案「经济支柱认定」）
+ *
+ * 原来只认 role（`本人` / `经济支柱`）—— 而"本人"是建档时的相对关系，
+ * 一个家庭里祖父投保、孙辈被保时，被标为"本人"的未必是经济支柱。
+ * 现在按方案改成三级：
+ *   ① 手动标注（role 含「经济支柱」）优先，来源记为 manual
+ *   ② 未标注 → 按**投保人**推断：单一投保人直接认定；多个投保人取"为最多成员投保"者，
+ *      并列时取"保费贡献最高"者（仍并列则保持成员顺序，不猜）
+ *   ③ 连投保人都没有 → 退回 role=本人；再没有 → members[0]（保持旧兜底，不产生空支柱）
+ *
+ * ⚠️ 这条口径直接影响缺口金额（支柱才能用家庭年收入兜底测算），
+ *    所以**必须把来源一并带回**，报告里要写明"按投保人推断"，否则用户会以为是人工设定。
+ */
+function resolvePillar(members, policies) {
+  const list = (members || []).filter(Boolean)
+  const manual = list.find(function(m) { return /经济支柱/.test((m && m.role) || '') })
+  if (manual) return { member: manual, source: 'manual', label: '手动标注' }
+
+  const active = (policies || []).filter(function(p) { return p && p.status === 'active' })
+  const byPh = {}
+  active.forEach(function(p) {
+    const ph = String((p && p.policyholder_name) || '').trim()
+    const insured = String((p && p.insured_name) || '').trim()
+    if (!ph || !insured || ph === insured) return // 自己给自己投保不算"为他人投保"
+    if (!byPh[ph]) byPh[ph] = { name: ph, insured: {}, premium: 0 }
+    byPh[ph].insured[insured] = 1
+    byPh[ph].premium += Number(p.annual_premium) || 0
+  })
+  const candidates = Object.keys(byPh).map(function(k) { return byPh[k] })
+  if (candidates.length) {
+    candidates.sort(function(a, b) {
+      const d = Object.keys(b.insured).length - Object.keys(a.insured).length
+      if (d !== 0) return d
+      return b.premium - a.premium
+    })
+    const top = candidates[0]
+    const member = list.find(function(m) { return m.name === top.name })
+    if (member) return { member: member, source: 'policyholder', label: '按投保人推断' }
+  }
+
+  const byRole = list.find(function(m) { return /本人/.test((m && m.role) || '') })
+  if (byRole) return { member: byRole, source: 'role', label: '' }
+  return { member: list[0] || null, source: 'fallback', label: '' }
+}
+
 function evaluateCoverage(input) {
   const src = input || {}
   const members = src.members || []
@@ -113,7 +159,8 @@ function evaluateCoverage(input) {
   const hasDebt = debt > 0
   const active = policies.filter(p => p.status === 'active')
 
-  const pillar = members.find(m => /本人|经济支柱/.test((m && m.role) || '')) || members[0] || null
+  const pillarInfo = resolvePillar(members, active)
+  const pillar = pillarInfo.member
   const memberIdToName = {}
   for (const m of members) {
     if (m && m.member_id) memberIdToName[m.member_id] = m.name
@@ -183,4 +230,4 @@ function evaluateCoverage(input) {
   return rows
 }
 
-module.exports = { evaluateCoverage, neededCats }
+module.exports = { evaluateCoverage, neededCats, resolvePillar }

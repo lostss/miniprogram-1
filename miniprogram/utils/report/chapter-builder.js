@@ -19,6 +19,8 @@
 
 var { normalizeFamilyData } = require('./data-normalizer')
 var { buildCoverageMatrix } = require('./gap-engine')
+// 经济支柱口径（2026-10-21）：与缺口测算同源 —— 否则会出现"报告写张三、缺口按李四算"
+var { resolvePillar } = require('../gap-core')
 var { buildTimeline } = require('./timeline-builder')
 var { buildGantt } = require('./gantt-builder')
 var { canonCat, premiumRatioVerdict } = require('../thresholds')
@@ -270,6 +272,13 @@ function buildChapters(family, report, gaps, opts) {
         noPolicyNote: (os.membersWithoutPolicy && os.membersWithoutPolicy.length)
           ? '无任何保单：' + os.membersWithoutPolicy.join('、')
           : '',
+        // 2026-10-21（方案「经济支柱认定」）：支柱口径改为可推断，就必须把来源写出来 ——
+        // "按投保人推断"与"手动标注"对读者是两件事，不能混成一句"经济支柱：张三"。
+        pillarNote: (function() {
+          var pi = resolvePillar(members, active)
+          if (!pi || !pi.member) return ''
+          return '经济支柱：' + pi.member.name + (pi.label ? '（' + pi.label + '）' : '')
+        })(),
         categories: os.categories || [],
         // 覆盖检查（规则版，客户版已中性化）
         summaryLead: (ovHero && ovHero.summary) || '',
@@ -440,7 +449,10 @@ function buildChapters(family, report, gaps, opts) {
       policies: policiesOfYr
     })
   })
-  var ganttData = buildGantt(active, members)
+  // 2026-10-21（方案第四部分）：失效保单也进甘特图，画成灰条 + 空心终点 ——
+  // "这张已经不能用了"本身是重要事实，之前只在 A1 与附录里，时间轴上完全看不见。
+  // 节点清单（timeline）仍只用 active：已失效保单的期满日不是"待办"。
+  var ganttData = buildGantt(policies, members)
   // 2026-10-21（方案第四部分第 9 项）：节点清单按"距今"分三组，而不是一条长列表。
   // 分组的价值是读者知道"哪些要现在处理、哪些是十年后的事"；逐条时间线读起来像流水账。
   var nowY = new Date().getFullYear()
@@ -702,7 +714,10 @@ function buildChapters(family, report, gaps, opts) {
   // 组名排序：被保人/保司均按名称排序
   // 组内排序：保单号升序为主键（同号主险+附加险自然相邻），同号内按产品名，空保单号排最后
   var groups = []
-  var byMember = {}
+  // 2026-10-21（方案第五部分）：先按**状态**分组 —— 失效/异常组在前、有效组在后，组内再按成员。
+  // 原实现只有"成员 → 保司"两级，失效保单混在有效里只靠一个小标签区分，
+  // 读者要逐张看完才知道"哪些已经不能用了"。
+  var byStatus = { inactive: {}, active: {} }
     // 附录展示所有非软删保单（含失效/退保/理赔终止/到期终止），并带状态标签；
     // 保障汇总/缴费月历仍只使用 active（见 data-normalizer）
     // 2026-10-21：附加险归属（项目按产品入库 → 主险/附加险是两条文档），用于"缩进挂主险"
@@ -718,12 +733,21 @@ function buildChapters(family, report, gaps, opts) {
     if (!!a.isRider !== !!b.isRider) return a.isRider ? 1 : -1
     return String(a.product_name || '').localeCompare(String(b.product_name || ''), 'zh')
   })
+  // 主险索引：附加险的"状态/受益人/节点随主险"（方案「附加险口径」第 3 条）
+  var byLinkKey = {}
+  sorted.forEach(function(x) { byLinkKey[x._linkKey] = x })
+
   for (var i = 0; i < sorted.length; i++) {
     var p = sorted[i]
     var n = p.insured_name || '未归属'
     var ins = p.insurer || '未知保司'
-    if (!byMember[n]) byMember[n] = {}
-    if (!byMember[n][ins]) byMember[n][ins] = []
+    // 附加险：状态与受益人取自挂靠的主险（同一份合同，主险失效时附加险不可能仍有效）
+    var parent = (p.isRider && p.parentKey && byLinkKey[p.parentKey]) || null
+    var effStatus = parent ? (parent.status || 'active') : (p.status || 'active')
+    var effBeneficiary = parent ? (parent.beneficiary_name || '') : p.beneficiary_name
+    var bucket = (effStatus && effStatus !== 'active') ? 'inactive' : 'active'
+    if (!byStatus[bucket][n]) byStatus[bucket][n] = {}
+    if (!byStatus[bucket][n][ins]) byStatus[bucket][n][ins] = []
     var eff = (p.contract_effective_date || p.effective_date || '').substring(0, 10)
     var sumD = _fmtAmount(p.sum_assured)
     var premD = _fmtAmount(p.annual_premium)
@@ -746,9 +770,11 @@ function buildChapters(family, report, gaps, opts) {
     // "未知 · 未知 · 未知" 的纯噪音。改为只拼接有值项，全缺时 meta3 为空串 → WXML 整行不渲染。
     // （投保人通常是本人，故多数卡片只有「保单号」项。）
     var meta3Parts = []
+    // 2026-10-21：分组改为"状态 → 成员"后，保司不再出现在组名里 → 下沉到卡片
+    if (p.insurer) meta3Parts.push('保司 ' + p.insurer)
     if (p.policy_number) meta3Parts.push('保单号 ' + p.policy_number)
     if (p.policyholder_name) meta3Parts.push('投保人 ' + p.policyholder_name)
-    if (p.beneficiary_name) meta3Parts.push('受益人 ' + p.beneficiary_name)
+    if (effBeneficiary) meta3Parts.push('受益人 ' + effBeneficiary)
     var meta3 = meta3Parts.join(' · ')
     // 当前年份现金价值（代理人/客户均展示；仅储蓄型保单有现价表，其余为空串）
     var cashW = _currentCashValue(p, family.cashValues)
@@ -756,12 +782,13 @@ function buildChapters(family, report, gaps, opts) {
     if (cashW !== null && cashW > 0) {
       cashDisp = '当前现价 ' + String(Math.round(cashW * 10) / 10) + '万'
     }
-    byMember[n][ins].push({
+    byStatus[bucket][n][ins].push({
       policy_id: p.id || p._id || '',
       product_name: p.product_name || '未知产品',
       category: _shortCat(canonCat(p.insurance_category || '其他')),
-        status: p.status || 'active',
-        status_label: POLICY_STATUS_LABELS[p.status || 'active'] || (p.status || '有效'),
+        // 附加险显示主险状态（同一份合同；主险失效时附加险不可能仍有效）
+        status: effStatus,
+        status_label: POLICY_STATUS_LABELS[effStatus] || effStatus || '有效',
       // 2026-09-10：移除「保障期已过」标记（用户决策：一年期产品默认有效，除非手动改状态）。
       // ⚠️ 2026-09-22 交叉引用：本条**不移除**后来新增的"载明期限已过"提醒（PDF `_expiryNote` /
       // AI 上下文 `_renderExpiryAlerts`），两者词面相似但语义相反，勿据本条去删它们：
@@ -791,12 +818,23 @@ function buildChapters(family, report, gaps, opts) {
       rider_count: p.riderCount || 0
     })
   }
-  Object.keys(byMember).sort(function(a, b) { return a.localeCompare(b, 'zh') }).forEach(function(n) {
-    var subgroups = []
-    Object.keys(byMember[n]).sort(function(a, b) { return a.localeCompare(b, 'zh') }).forEach(function(ins) {
-      subgroups.push({ name: ins, policies: byMember[n][ins] })
+  // 状态分组：失效/异常在前（方案第五部分），有效在后；组内按成员，成员内按保司
+  ;[['inactive', '失效 / 异常'], ['active', '有效']].forEach(function(pair) {
+    var bucketKey = pair[0]
+    var bucketLabel = pair[1]
+    var map = byStatus[bucketKey]
+    var memberNames = Object.keys(map).sort(function(a, b) { return a.localeCompare(b, 'zh') })
+    if (!memberNames.length) return
+    var total = memberNames.reduce(function(s, n) {
+      return s + Object.keys(map[n]).reduce(function(s2, ins) { return s2 + map[n][ins].length }, 0)
+    }, 0)
+    var subgroups = memberNames.map(function(n) {
+      var insurers = Object.keys(map[n]).sort(function(a, b) { return a.localeCompare(b, 'zh') })
+      var policies = []
+      insurers.forEach(function(ins) { policies = policies.concat(map[n][ins]) })
+      return { name: n, policies: policies }
     })
-    groups.push({ name: n, subgroups: subgroups })
+    groups.push({ name: bucketLabel + '（' + total + ' 张）', subgroups: subgroups })
   })
   // ======== 原「下一步行动」章已删除（2026-10-21 用户决策：现阶段报告不做诊断、不给建议）========
   // 它原来输出的是"1. 优先为 X 补充寿险（缺口约 N 万）"—— 这是建议，不是事实。

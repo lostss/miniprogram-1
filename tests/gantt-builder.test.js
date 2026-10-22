@@ -236,7 +236,8 @@ describe('gantt-builder — 守卫：不做无字段支撑的判定（v2.0 评�
   // 2026-10-17 加 firstOfMember：纯渲染分组标记（同一成员的第一行），不属于"空白期/重叠"那类判定字段
   // 2026-10-18 payRatio → payEndPct / payEndAge（缴费期满竖线替换斜纹段）
   // 2026-10-21 加 riderCount：附加险不单独画条，并进主险行的"含附加 N 项"标记
-  const ALLOWED_ROW_KEYS = ['rowKey', 'name', 'product', 'cat', 'sumAssured', 'startY', 'endY', 'startPct', 'widthPct', 'payEndY', 'payEndPct', 'payEndAge', 'endAge', 'lifetime', 'oneYear', 'singlePay', 'firstOfMember', 'riderCount']
+  // 2026-10-21 加 inactive：失效/退保单画灰条（方案第四部分），仍不进汇总与缺口
+  const ALLOWED_ROW_KEYS = ['rowKey', 'name', 'product', 'cat', 'sumAssured', 'startY', 'endY', 'startPct', 'widthPct', 'payEndY', 'payEndPct', 'payEndAge', 'endAge', 'lifetime', 'oneYear', 'singlePay', 'firstOfMember', 'riderCount', 'inactive']
 
   test('block 与 row 只暴露白名单字段（将来误加"空白期/重叠"字段会在此处红）', function () {
     const g = buildGantt([pol({}), pol({ insurance_period: '1年', coverage_term: 1, insured_name: '李四' })], [{ name: '张三' }, { name: '李四' }])
