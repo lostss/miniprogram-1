@@ -29,6 +29,8 @@ const { breakEvenYear } = require('./_shared/cash-value-math')
 const { recordReportFile } = require('./_shared/report-files')
 // 版式纯函数（2026-10-22）：列宽/双列配对可单测，剩下只有"字有没有压线"要真机看
 const { twoColumnRows, columnWidth } = require('./layout')
+// A1–A6 异常清单（2026-10-22）：与页面同一份契约，PDF 不再"纸上没有异常提示"
+const { buildAnomalies } = require('./_shared/anomaly-list')
 
 const FONT_FILE = path.join(__dirname, 'fonts', 'NotoSansSC-Regular.otf')
 // 2026-09-25 PDF 审计：原措辞「基于OCR识别结果自动生成」对**手工录入 / 对话录入**的保单不成立，
@@ -243,7 +245,7 @@ function buildPdf(ctx) {
   const deep = !!(report && (report.review || report.analysis || report.plan || report.suggestions || (report.core_insights && report.core_insights.length)))
   const tocTitles = ['保障摘要']
     .concat(deep ? ['深度分析（AI 解读）'] : [])
-    .concat(['家庭成员', '保单明细', '保障期间（谁保到什么时候）', '保障节点（未来关键时点）', '缴费与现金流（每年固定缴费月）', '经济状况'])
+    .concat(['家庭成员', '保单明细', '异常与待核验', '保障期间（谁保到什么时候）', '保障节点（未来关键时点）', '缴费与现金流（每年固定缴费月）', '经济状况'])
   const now = new Date()
   const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
   const act = policies.filter(p => p.status === 'active')
@@ -387,6 +389,23 @@ function buildPdf(ctx) {
     _policyTable(policies)
   }
   _rule()
+
+  // 异常与待核验 A1–A6（2026-10-22）：与页面同一份契约（_shared/anomaly-list），
+  // 编号固定，顾问面谈可直接引用"见 A3"。本次无异常 → 整段不出现（不印空标题）。
+  const anomalies = buildAnomalies({ policies: policies, now: new Date() })
+  if (anomalies.length) {
+    _sec('异常与待核验')
+    _para('只列基于保单基本信息可核对的事实与提示，不涉及条款、不构成诊断。编号固定（A1–A6）。', 8, { color: '#999999', gap: 4 })
+    for (const g of anomalies) {
+      _ensure(22)
+      _para(g.code + '　' + g.title + '（' + g.count + ' 项）', 10)
+      for (const it of g.items) {
+        _ensure(14)
+        _para('　' + it.member + '　' + it.product + '　' + it.detail, 9, { color: '#666666', gap: 2 })
+      }
+    }
+    _rule()
+  }
 
   // 保障期间（2026-10-13 报告结构 v2.0 ③）：与页面甘特图**同源数据**，纸面以表格呈现。
   // 位置与页面一致——紧邻"保障节点"之前（同一章里先看全局期间，再看未来关键时点）。

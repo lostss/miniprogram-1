@@ -33,7 +33,9 @@ var createBlock = require('../custom-blocks').create
 // 附加险归属（2026-10-21）：附录里附加险缩进挂主险下
 var { linkRiders } = require('../rider-link')
 // 异常与待核验 A1–A6（2026-10-21）：只列有字段支撑的事实，不下诊断
-var { buildAnomalies } = require('./anomaly-list')
+// 2026-10-22：升为跨树契约（_shared/anomaly-list.js），页面与 PDF 共用同一份 ——
+// 之前只在 utils/report 下，PDF 无从引用，纸上就没有 A1–A6。
+var { buildAnomalies } = require('../anomaly-list')
 
 // 原文出处（2026-10-18，v2.0「结论可溯源」最小实现）：
 // 把 OCR 阶段 AI 摘录的 field_evidence 拼成一行给附录保单卡展示。

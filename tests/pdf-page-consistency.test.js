@@ -32,6 +32,15 @@ describe('PDF 与页面同源', () => {
     expect(PDF).not.toContain('缴费月历（每年固定缴费月）')
   })
 
+  test('A1–A6 进 PDF：与页面同一份契约（_shared/anomaly-list），且空则整段不出现', () => {
+    expect(PDF).toContain("require('./_shared/anomaly-list')")
+    expect(PDF).toContain('buildAnomalies({ policies')
+    // 段名进目录（否则页内小节与目录对不上）
+    expect(PDF).toContain('异常与待核验')
+    // 空数组不印空标题：必须包在 if (anomalies.length) 里
+    expect(PDF).toMatch(/if \(anomalies\.length\) \{[\s\S]{0,200}_sec\('异常与待核验'\)/)
+  })
+
   test('家庭成员两列并排（方案第六部分：成员卡片两列）', () => {
     expect(PDF).toContain('twoColumnRows(members)')
     // 列宽必须走 layout 计算，不能手写魔法数（否则总宽一改就溢出）

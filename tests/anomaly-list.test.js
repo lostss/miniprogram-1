@@ -7,7 +7,9 @@
  *   - 本次为空的事项不出现（不制造空标题），但编号不重排
  *   - 附加险不单独占一行（同一份合同的两个状态分列会让份数对不上）
  */
-const { buildAnomalies, parseEndDate } = require('../miniprogram/utils/report/anomaly-list')
+// 2026-10-22：升为跨树契约后从 _shared 同步到 miniprogram/utils/anomaly-list.js
+// （源文件在 cloudfunctions/_shared/anomaly-list.js，页面与 PDF 共用）
+const { buildAnomalies, parseEndDate } = require('../miniprogram/utils/anomaly-list')
 
 const NOW = new Date('2026-10-21T00:00:00')
 const P = (o) => Object.assign({

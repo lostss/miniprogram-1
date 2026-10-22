@@ -13,11 +13,14 @@
  *   A5 未来 2 年内到期的长期险 —— 非终身、非一年期，止期落在 [今天, 今天+24 个月]
  *   A6 短期险续保日临近 —— 一年期产品且止期 ≤ 60 天（这是**提示**，不是风险判定）
  *
+ * ⚠️ 2026-10-22：本文件已升为跨树契约（_shared），页面与 PDF 共用同一份 ——
+ * 之前只在 miniprogram/utils/report 下，PDF 无从引用，导致纸上没有 A1–A6。
+ *
  * 附加险：并入主险条目里表述（"含附加 N 项"），不单独占一行 —— 同一份合同的两个状态
  * 分开列会让"份数"看起来对不上。
  */
-const { STATUS_LABELS, isOneYearPolicy, isLifetimeTerm } = require('../policy-status')
-const { coverTermYear } = require('../policy-terms')
+const { STATUS_LABELS, isOneYearPolicy, isLifetimeTerm } = require('./policy-status')
+const { coverTermYear } = require('./policy-terms')
 
 const DAY = 24 * 3600 * 1000
 
