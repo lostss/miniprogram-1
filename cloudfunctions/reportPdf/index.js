@@ -241,7 +241,7 @@ function buildPdf(ctx) {
   const deep = !!(report && (report.review || report.analysis || report.plan || report.suggestions || (report.core_insights && report.core_insights.length)))
   const tocTitles = ['保障摘要']
     .concat(deep ? ['深度分析（AI 解读）'] : [])
-    .concat(['家庭成员', '保单明细', '保障期间（谁保到什么时候）', '保障节点（未来关键时点）', '缴费月历（每年固定缴费月）', '经济状况'])
+    .concat(['家庭成员', '保单明细', '保障期间（谁保到什么时候）', '保障节点（未来关键时点）', '缴费与现金流（每年固定缴费月）', '经济状况'])
   const now = new Date()
   const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
   const act = policies.filter(p => p.status === 'active')
@@ -415,7 +415,8 @@ function buildPdf(ctx) {
   _rule()
 
   // 缴费月历（每年固定缴费月：active 保单按生效月分组）
-  _sec('缴费月历（每年固定缴费月）')
+  // 2026-10-22：节名与页面章节对齐（页面已改名「缴费与现金流」，因为该章同时有年度趋势与月历）
+  _sec('缴费与现金流（每年固定缴费月）')
   const months = ctx.payMonths || []
   const filledMonths = months.filter(m => m.items.length)
   if (!filledMonths.length) {
