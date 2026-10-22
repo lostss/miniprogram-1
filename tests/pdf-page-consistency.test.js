@@ -32,6 +32,12 @@ describe('PDF 与页面同源', () => {
     expect(PDF).not.toContain('缴费月历（每年固定缴费月）')
   })
 
+  test('家庭成员两列并排（方案第六部分：成员卡片两列）', () => {
+    expect(PDF).toContain('twoColumnRows(members)')
+    // 列宽必须走 layout 计算，不能手写魔法数（否则总宽一改就溢出）
+    expect(PDF).toContain('columnWidth(W, 2')
+  })
+
   test('PDF 不产出新的诊断/建议文案（方案：只做格式转换）', () => {
     // 规则层的建议已删除；PDF 侧同样不得出现"建议补充/建议优先"这类句子
     expect(PDF).not.toMatch(/建议(优先)?为|建议补充/)

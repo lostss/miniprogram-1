@@ -102,12 +102,14 @@ describe('缺口章呈现（统一后不再有客户版专用措辞）', functio
 })
 
 describe('V1.5 明细型章节默认折叠', function () {
-  test('缴费月历与附录保单明细 defaultCollapsed=true，且仍可手动展开（collapsible）', function () {
+  test('缴费章默认**展开**（2026-10-22 方案：非必要不折叠），附录仍默认折叠', function () {
     const ch = buildChapters(family(), {})
     const cal = ch.find(c => c.key === 'premium_calendar')
     const apx = ch.find(c => c.key === 'appendix_policies')
+    // 缴费章承载"钱花在哪"（四段分布），折起来等于让客户多点一次
     expect(cal.collapsible).toBe(true)
-    expect(cal.defaultCollapsed).toBe(true)
+    expect(cal.defaultCollapsed).toBe(false)
+    // 附录是明细型（列表摘要 + 点击展开），方案明确允许折叠
     expect(apx.collapsible).toBe(true)
     expect(apx.defaultCollapsed).toBe(true)
   })

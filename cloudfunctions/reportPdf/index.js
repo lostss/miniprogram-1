@@ -27,6 +27,8 @@ const { summarizeCoverage } = require('./_shared/coverage-summary')
 const { breakEvenYear } = require('./_shared/cash-value-math')
 // 导出文件登记（2026-09-20 复核批次 B）：云存储无列举 API，不登记就永远找不到这个文件
 const { recordReportFile } = require('./_shared/report-files')
+// 版式纯函数（2026-10-22）：列宽/双列配对可单测，剩下只有"字有没有压线"要真机看
+const { twoColumnRows, columnWidth } = require('./layout')
 
 const FONT_FILE = path.join(__dirname, 'fonts', 'NotoSansSC-Regular.otf')
 // 2026-09-25 PDF 审计：原措辞「基于OCR识别结果自动生成」对**手工录入 / 对话录入**的保单不成立，
@@ -344,18 +346,34 @@ function buildPdf(ctx) {
     _rule()
   }
 
-  // 家庭成员
+  // 家庭成员（2026-10-22 版式：两列并排 —— 方案要求"成员卡片两列并排"，1~5 口人时省一半纵向空间）
   _sec('家庭成员')
   if (!members.length) {
     _para('尚未录入家庭成员', 10, { color: '#999999' })
   } else {
-    for (const m of members) {
+    const memberLine = (m) => {
       const age = m.age || (m.birth_date ? calcAge(m.birth_date) : '')
-      const line = (m.name || '未命名') + '（' + (m.role || '成员') + '）' +
+      return (m.name || '未命名') + '（' + (m.role || '成员') + '）' +
         (age ? ' · ' + age + '岁' : ' · 年龄待补') +
         (m.occupation ? ' · ' + m.occupation : '') +
         (m.health ? ' · 健康：' + m.health : '')
-      _para(line, 10)
+    }
+    const COL_GAP = 16
+    const colW = columnWidth(W, 2, COL_GAP)
+    for (const row of twoColumnRows(members)) {
+      const y0 = y
+      let h = 0
+      ;[row.left, row.right].forEach((m, ci) => {
+        if (!m) return
+        const line = memberLine(m)
+        _cn(10)
+        doc.fillColor('#333333')
+        const x = M + ci * (colW + COL_GAP)
+        doc.text(line, x, y0, { width: colW })
+        // 同一行两列取较高的那个，避免长名字/健康备注把下一行压住
+        h = Math.max(h, doc.heightOfString(line, { width: colW }))
+      })
+      y = y0 + h + 4
     }
   }
   _rule()

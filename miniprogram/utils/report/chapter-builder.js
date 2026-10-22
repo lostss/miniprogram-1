@@ -674,7 +674,10 @@ function buildChapters(family, report, gaps, opts) {
     // 原名只描述了后者。
     key: 'premium_calendar', title: '缴费与现金流', num: '5',
     // V1.5（2026-09-12）：明细型章节默认折叠——首屏只保留结论/缺口，月历与附录按需展开（保留手动展开能力）
-    collapsible: true, defaultCollapsed: true,
+    // 2026-10-22（方案阅读规则「非必要不折叠」）：本章改为**默认展开** —— 它现在承载
+    // 保费分布四段（构成/公司/月份/年份），是"钱花在哪"的主答案，折起来等于让客户多点一次。
+    // 附录仍默认折叠（方案明确允许：保单明细为"列表摘要 + 点击展开"）。
+    collapsible: true, defaultCollapsed: false,
     customBlocks: [
       // 2026-10-21 用户方案「保费分布四段」：成员×险种 + 按公司（月份、年份由下方两块承担）
       createBlock('premium_split', premiumSplit),
