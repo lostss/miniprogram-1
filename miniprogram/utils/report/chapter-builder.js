@@ -344,7 +344,18 @@ function buildChapters(family, report, gaps, opts) {
   // 审计·顾问视角（2026-09-04）：客户版跳过①②——成员结构与收入是顾问的核对工作底稿（带 [编辑] 入口），
   // 客户无需被重新告知自家信息；结论摘要之后直接进入保障汇总/缺口诊断
   if (!shared) {
+  // 2026-10-24（方案「经济支柱认定」+ 成员顺序规则）：**支柱优先，其余按年龄降序**，
+  // 同年龄再按角色组/姓名。原实现只按角色组（本人→配偶→子女→父母→其他）+ 姓名，
+  // 当支柱不是"本人"（例如祖父投保、子女被保）时，支柱会排到后面 —— 与方案「支柱优先」相反。
+  var pillarForSort = resolvePillar(members, active)
+  var pillarName = (pillarForSort && pillarForSort.member && pillarForSort.member.name) || ''
   var sortedMembers = [].concat(members).sort(function(a, b) {
+    var ap = a.name === pillarName ? 0 : 1
+    var bp = b.name === pillarName ? 0 : 1
+    if (ap !== bp) return ap - bp
+    var aa = Number(a.age) || 0
+    var ba = Number(b.age) || 0
+    if (aa !== ba) return ba - aa // 年龄降序（年长靠前）
     return (_roleGroup(a.role) - _roleGroup(b.role)) || String(a.name).localeCompare(String(b.name), 'zh')
   })
   // 2026-10-18 第二步 IA：把原页面「按成员整理」的规模（N 张 · 保额）并入家庭结构节点 ——

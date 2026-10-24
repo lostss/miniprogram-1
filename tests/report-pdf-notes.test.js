@@ -433,7 +433,8 @@ describe('保单明细几何接线（防「格子换行压到下一行」回归�
   })
 
   test('页脚不再印内部构建标记（客户可见文档）', () => {
-    const footLine = SRC.split('\n').find(l => l.indexOf("'保小秘生成 · 家庭保障检视报告 · 第 '") !== -1)
+    // 2026-10-24：报告改名「家庭保单化验单」（方案定位：只列事实，不叫"检视/分析"）
+    const footLine = SRC.split('\n').find(l => l.indexOf("'保小秘生成 · 家庭保单化验单 · 第 '") !== -1)
     expect(footLine).toBeTruthy()
     expect(footLine).not.toContain('_BUILD')
     expect(SRC).toContain("Keywords: 'baoxiaomi build ' + _BUILD")

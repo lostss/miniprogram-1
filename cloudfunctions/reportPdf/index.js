@@ -114,7 +114,7 @@ function _finalize() {
   for (let i = 0; i < total; i++) {
     doc.switchToPage(range.start + i)
     doc.save(); _cn(8); doc.fillColor('#999999')
-    doc.text('保小秘生成 · 家庭保障检视报告 · 第 ' + (i + 1) + ' / ' + total + ' 页', M, doc.page.height - 44, { width: W, align: 'right', lineBreak: false })
+    doc.text('保小秘生成 · 家庭保单化验单 · 第 ' + (i + 1) + ' / ' + total + ' 页', M, doc.page.height - 44, { width: W, align: 'right', lineBreak: false })
     doc.restore()
   }
   if (_tocEntries.length) {
@@ -264,7 +264,7 @@ function buildPdf(ctx) {
   const memberIncome = members.reduce(function (s, m) { return s + (m.income || 0) }, 0)
 
   // 标题
-  _title(name + ' · 家庭保障检视报告')
+  _title(name + ' · 家庭保单化验单')
   _sub('生成时间：' + dateStr + '　|　家庭成员 ' + members.length + ' 人　|　保单 ' + policies.length + ' 份（有效 ' + act.length + '）')
   _rule()
 

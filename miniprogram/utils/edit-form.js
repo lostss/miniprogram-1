@@ -11,7 +11,10 @@
  *  - buildUpdateData：按模式构建 updateFamily 的 updateData（不含 familyId）
  */
 const { yuanToWan, wanToYuan } = require('./amount')
-const ROLE_OPTIONS = ['本人', '配偶', '子女', '父母', '其他']
+// 2026-10-24（方案「经济支柱认定」）：角色里补「经济支柱」——
+// 支柱口径已支持"按投保人推断"，但**手动修正没有入口**（resolvePillar 只认 role 含"经济支柱"）。
+// 保留"本人"是因为它承载亲属关系语义（谁是被保家庭的中心人），两者不是同一维度。
+const ROLE_OPTIONS = ['本人', '经济支柱', '配偶', '子女', '父母', '其他']
 const CATEGORY_OPTIONS = ['重疾险', '医疗险', '意外险', '寿险', '年金', '其他']
 // 缴费方式选项（对齐 DB policies.payment_method）
 const PAYMENT_METHOD_OPTIONS = ['趸交', '年交', '月交', '季交', '半年交']

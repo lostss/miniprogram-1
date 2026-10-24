@@ -37,7 +37,8 @@
         <!-- 副标题行：标题与报告更新时间两端对齐（2026-09-12：familyTag 已移除，分析时间不占主 meta 位） -->
         <view class="title-subrow">
           <!-- 2026-10-17：无保单时报告还不存在，标题点明"待生成"，避免"有报告但空的"错觉 -->
-        <text class="title-sub">{{hasPolicy ? '家庭保障检视报告' : '家庭保障检视报告 · 待生成'}}</text>
+        <!-- 2026-10-24（方案定位）：改名「家庭保单化验单」——"检视/分析"暗示结论，而本报告只列事实 -->
+        <text class="title-sub">{{hasPolicy ? '家庭保单化验单' : '家庭保单化验单 · 待生成'}}</text>
           <!-- 2026-09-18 报告页审计：`dataAt` 早在 report-share.js L38 构造（注释自述"页头时效标识"）
                却从未被渲染 → 页头只有一个无标签的时间戳。此处接线给出语义（updated_at = 数据更新；
                AI 分析新鲜度由 deep 区的 analysisAt 承担，两个时间不再语义打架）。 -->
@@ -59,7 +60,9 @@
         <!-- 2026-10-17：空报告没有 AI 内容 → 前置声明无对象可指（页尾完整声明仍常驻，合规不缺口）。
              ⚠️ 条件只允许 hasPolicy：**不得按 isShared 分支** —— 合规声明不分 owner/客户版。
              守卫：tests/report-disclaimer.test.js。 -->
-        <view class="title-ai-note" wx:if="{{hasPolicy}}">AI 辅助生成 · 仅供参考 · 以保险公司条款为准</view>
+        <!-- 2026-10-24：去掉"AI 辅助生成"——规则内容全部由本地规则算出，AI 只在页尾进阶报告里出现。
+         抬头挂 AI 会让读者以为这份事实清单是模型写的。 -->
+    <view class="title-ai-note" wx:if="{{hasPolicy}}">依据保单摘要自动整理 · 以保险公司条款为准</view>
       </view>
     </view>
     <!-- 标题区域与正文分隔线 -->
