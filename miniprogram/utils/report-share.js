@@ -14,7 +14,7 @@
 function buildShareTitle(name, dateTime) {
   const familyName = String(name || '家庭').replace(/家庭$/, '') + '家庭'
   const dt = String(dateTime || '')
-  return (familyName + '保障检视报告\n保障一览\n' + dt).slice(0, 60)
+  return (familyName + '保单化验单\n保障一览\n' + dt).slice(0, 60)
 }
 
 function buildSharePath(token, familyId) {

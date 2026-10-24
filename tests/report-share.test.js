@@ -6,18 +6,18 @@ const { buildShareTitle, buildSharePath, buildReportMeta, ensureShareToken, shar
 describe('buildShareTitle — 分享标题（三行中性化）', () => {
   test('家庭名 + 日期 → 三行标题', () => {
     const t = buildShareTitle('李阳勇家庭', '2026年08月08日 14:30')
-    expect(t).toBe('李阳勇家庭保障检视报告\n保障一览\n2026年08月08日 14:30')
+    expect(t).toBe('李阳勇家庭保单化验单\n保障一览\n2026年08月08日 14:30')
   })
 
   test('家庭名已含"家庭"后缀不重复拼接', () => {
     const t = buildShareTitle('李**家庭', '2026-08-08')
-    expect(t.startsWith('李**家庭保障检视报告')).toBe(true)
+    expect(t.startsWith('李**家庭保单化验单')).toBe(true)
     expect(t.indexOf('家庭家庭')).toBe(-1)
   })
 
   test('空名称兜底"家庭"', () => {
     const t = buildShareTitle('', '')
-    expect(t.startsWith('家庭保障检视报告')).toBe(true)
+    expect(t.startsWith('家庭保单化验单')).toBe(true)
   })
 
   test('超长截断至 60 字', () => {

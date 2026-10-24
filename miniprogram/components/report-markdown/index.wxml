@@ -129,11 +129,16 @@
             </view>
           </block>
         </view>
-        <view wx:if="{{block.t==='calendar'}}" class="cal-grid">
-          <view class="cal-cell {{item.h === 2 ? 'cal-peak' : ''}}" wx:for="{{block.items}}" wx:key="m">
-            <text class="cal-m">{{item.m}}月</text>
-            <text class="cal-v {{item.h ? '' : 'cal-none'}}">{{item.v}}</text>
+        <view wx:if="{{block.t==='calendar'}}" class="cal-wrap">
+          <view class="cal-grid">
+            <view class="cal-cell {{item.h === 2 ? 'cal-peak' : ''}}" wx:for="{{block.items}}" wx:key="m">
+              <text class="cal-m">{{item.m}}月</text>
+              <text class="cal-v {{item.h ? '' : 'cal-none'}}">{{item.v}}</text>
+            </view>
           </view>
+          <!-- 2026-10-24：格外的两行 —— "月份未知"桶 + 口径说明（按生效月估算） -->
+          <text class="cal-note" wx:if="{{block.unknownText}}">{{block.unknownText}}</text>
+          <text class="cal-note cal-note--weak" wx:if="{{block.basisText}}">{{block.basisText}}</text>
         </view>
         <!-- 家庭结构：成员卡片平铺流动布局（去代际分层） -->
         <!-- 保费分布（2026-10-21）：成员×险种 + 按公司。两张表共用一份数据源，
@@ -262,6 +267,9 @@
               <text class="mc-role" wx:if="{{m.role || m.age}}">{{m.role}}{{m.age ? ' · ' + m.age + '岁' : ''}}</text>
               <text class="mc-total">年缴 {{m.premiumTotalText}}</text>
             </view>
+            <!-- 无任何保单：一句事实，不给五行空表（全是 — 会被读成"数据没读到"） -->
+            <view class="mc-empty" wx:if="{{m.noPolicy}}">无任何保单</view>
+            <block wx:else>
             <view class="mc-tr mc-tr--head">
               <text class="mc-th mc-th--cat">险种</text>
               <text class="mc-th mc-th--sum">保额</text>
@@ -276,6 +284,7 @@
               <text class="mc-td mc-td--period">{{r.periodText}}</text>
               <text class="mc-td mc-td--pay">{{r.payText}}</text>
             </view>
+            </block>
             <text class="mc-foot">{{m.footNote}}</text>
           </view>
         </view>
@@ -356,7 +365,7 @@
               <view class="ov-mix-item" wx:for="{{block.mixBars}}" wx:key="key">
                 <text class="ov-mix-dot ov-mix-dot--{{item.key}}"></text>
                 <text class="ov-mix-name">{{item.label}}</text>
-                <text class="ov-mix-val">{{item.text}} · {{item.pct}}%</text>
+                <text class="ov-mix-val">{{item.text}}</text>
               </view>
             </view>
           </view>

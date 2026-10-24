@@ -194,6 +194,9 @@
 .cal-peak { background:var(--accent-dim); }
 .cal-peak .cal-m { color:var(--accent-deep); }
 .cal-peak .cal-v { color:var(--accent-deep); }
+/* 月历下方注记（2026-10-24）：月份未知桶 + 口径说明；后者更弱一档 */
+.cal-note { display:block; margin-top:var(--sp-2); font-size:var(--fs-tiny); color:var(--text-secondary); line-height:var(--lh-snug); }
+.cal-note--weak { color:var(--text-tertiary); }
 
 /* 时间轴增强：日期/保费/节点备注 */
 .tl-note { font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-body); }
@@ -349,6 +352,8 @@
 .mc-th--period, .mc-td--period { flex:1; min-width:0; padding-left:var(--sp-3); }
 .mc-th--pay, .mc-td--pay { flex:1; min-width:0; padding-left:var(--sp-3); }
 .mc-foot { display:block; margin-top:var(--sp-2); font-size:var(--fs-tiny); color:var(--text-tertiary); }
+/* 无任何保单（2026-10-24）：一句事实代替五行空表 */
+.mc-empty { padding:var(--sp-3) 0; font-size:var(--fs-caption); color:var(--text-secondary); }
 
 /* ========== 分险种保额合计（2026-10-21）==========
    4 列固定宽度 + 备注行。备注不占列（否则"报销型不可加总"会把表挤爆），

@@ -41,7 +41,8 @@ const BLOCK_REGISTRY = {
   },
   calendar: {
     required: ['items'],
-    defaults: { items: [] }
+    // unknownText / basisText（2026-10-24）：月份未知桶 + "按生效月估算"的口径说明
+    defaults: { items: [], unknownText: '', basisText: '' }
   },
   family_tree: {
     required: ['nodes'],

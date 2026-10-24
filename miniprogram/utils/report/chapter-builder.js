@@ -304,20 +304,24 @@ function buildChapters(family, report, gaps, opts) {
         // 2026-10-24（方案第一部分 2）：保障型 / 储蓄型构成。
         // 方案要求环形图；小程序 WebView 对 conic-gradient 支持不稳，改用**两段横向条 + 图例**——
         // 同一个信息（各占多少）在不引入 canvas 的前提下能稳定渲染，且横条比环更容易读绝对值。
+        // ⚠️ 2026-10-24 修：口径必须是**年缴保费**（方案第 2 项就是"年缴保费合计"），
+        // 之前用了 sum_assured（保额）—— 那是第 3 张表的事，两张表混用同一组颜色会互相打脸。
+        // 也不标百分比（方案原文"环心标合计，不标百分比"）：百分比对客户没有行动意义，
+        // 金额才是他要核对的数。
         protectionText: os.protectionSumAssuredText || '',
         mixBars: (function() {
-          var protW = 0, savW = 0
+          var protY = 0, savY = 0
           active.forEach(function(p) {
             var c = canonCat(p.insurance_category || '其他')
-            var yuan = Number(p.sum_assured) || 0
-            if (c === '年金') savW += yuan
-            else if (c !== '其他' && CAT_ORDER.indexOf(c) !== -1) protW += yuan
+            var yuan = Number(p.annual_premium) || 0
+            if (c === '年金') savY += yuan
+            else if (c !== '其他' && CAT_ORDER.indexOf(c) !== -1) protY += yuan
           })
-          var total = protW + savW
+          var total = protY + savY
           if (total <= 0) return []
           return [
-            { key: 'prot', label: '保障型', text: _fmtAmount(protW), pct: Math.round(protW / total * 100) },
-            { key: 'sav', label: '储蓄型', text: _fmtAmount(savW), pct: Math.round(savW / total * 100) }
+            { key: 'prot', label: '保障型', text: _fmtAmount(protY), pct: Math.round(protY / total * 100) },
+            { key: 'sav', label: '储蓄型', text: _fmtAmount(savY), pct: Math.round(savY / total * 100) }
           ]
         })(),
         // 被保人数 / 登记人数（方案第一部分第 1 项："4 人持有 / 5 人登记"）
@@ -530,25 +534,41 @@ function buildChapters(family, report, gaps, opts) {
     arr.forEach(function(v) { if (v && out.indexOf(v) === -1) out.push(v) })
     return out
   }
-  var memberCards = members.map(function(m) {
+  // 2026-10-24 四修（审计 2.4）：
+  //   ① 顺序用 sortedMembers（支柱优先、其余年龄降序），不再用 members 原序；
+  //   ② 无任何保单的成员**也出卡片**（"母亲：无任何保单"本身是给客户的第一个价值点）；
+  //   ③ 固定五行：没有该险种也占一行（显示 "—"），否则 5 人 5 张卡行的位置各不相同，没法横着比；
+  //   ④ 储蓄行的金额优先取年金年领（annuity_payout），没有才退回保额 —— 年领是客户真正关心的数。
+  var memberCards = sortedMembers.map(function(m) {
     var mine = linkedActive.filter(function(p) { return String(p.insured_name || '') === String(m.name || '') })
     var rows = []
     MEMBER_ROWS.forEach(function(pair) {
       var cat = pair[0], label = pair[1]
       var inCat = mine.filter(function(p) { return canonCat(p.insurance_category || '') === cat })
-      if (!inCat.length) return
+      if (!inCat.length) {
+        rows.push({ cat: label, sumText: '—', premiumText: '—', periodText: '—', payText: '—', inactive: false })
+        return
+      }
       var mains = inCat.filter(function(p) { return !(p.isRider && p.parentKey) })
       var riders = inCat.length - mains.length
       var sumYuan = inCat.reduce(function(s, p) { return s + (Number(p.sum_assured) || 0) }, 0)
       var premYuan = inCat.reduce(function(s, p) { return s + (Number(p.annual_premium) || 0) }, 0)
+      // 年金：优先年领（有该字段时），否则退回保额
+      var payoutYuan = inCat.reduce(function(s, p) { return s + (Number(p.annuity_payout) || 0) }, 0)
       var periods = _distinct(inCat.map(function(p) { return _periodText(p) }))
       var pays = _distinct(inCat.map(function(p) { return _payTermText(p) }))
+      var sumText
+      if (cat === '医疗险') {
+        // 报销型，保额不可加总 → 只给份数（与分险种表同一口径）
+        sumText = mains.length + ' 份' + (riders ? '（含附加 ' + riders + ' 项）' : '')
+      } else if (cat === '年金' && payoutYuan > 0) {
+        sumText = '年领 ' + _fmtAmount(payoutYuan)
+      } else {
+        sumText = sumYuan > 0 ? _fmtAmount(sumYuan) : '—'
+      }
       rows.push({
         cat: label,
-        // 医疗险是报销型，保额不可加总 → 只给份数（与分险种表同一口径）
-        sumText: cat === '医疗险'
-          ? (mains.length + ' 份' + (riders ? '（含附加 ' + riders + ' 项）' : ''))
-          : (sumYuan > 0 ? _fmtAmount(sumYuan) : '—'),
+        sumText: sumText,
         premiumText: premYuan > 0 ? _fmtAmount(premYuan) : '—',
         periodText: periods.length === 1 ? periods[0] : (periods.length ? '多种（见附录）' : '未知'),
         payText: pays.length === 1 ? pays[0] : (pays.length ? '多种（见附录）' : '未知'),
@@ -573,16 +593,22 @@ function buildChapters(family, report, gaps, opts) {
     var activeCount = mine.filter(function(p) { return !(p.isRider && p.parentKey) }).length
     var riderCount = mine.length - activeCount
     var premTotal = mine.reduce(function(s, p) { return s + (Number(p.annual_premium) || 0) }, 0)
+    var noPolicy = mine.length === 0 && inactiveMine.length === 0
     return {
       name: m.name || '待补姓名',
       role: m.role || '',
       age: m.age || '',
-      rows: rows,
+      // 无保单成员：不给五行空表（五行全是 — 只会让人以为是数据没读出来），
+      // 直接一句事实 + 底部注（方案原文"母亲（65 岁）｜年缴保费 0 元：无任何保单"）
+      noPolicy: noPolicy,
+      rows: noPolicy ? [] : rows,
       premiumTotalText: _fmtAmount(premTotal),
-      footNote: '有效 ' + activeCount + ' 份' + (riderCount ? '（含附加 ' + riderCount + ' 项）' : '') +
-        (inactiveMine.length ? ' · 失效 ' + inactiveMine.length + ' 份' : '')
+      footNote: noPolicy
+        ? '无任何保单'
+        : ('有效 ' + activeCount + ' 份' + (riderCount ? '（含附加 ' + riderCount + ' 项）' : '') +
+           (inactiveMine.length ? ' · 失效 ' + inactiveMine.length + ' 份' : ''))
     }
-  }).filter(function(c) { return c.rows.length > 0 })
+  })
   if (memberCards.length) {
     ch.push({
       key: 'member_cards', title: '成员卡片',
@@ -650,17 +676,37 @@ function buildChapters(family, report, gaps, opts) {
   }
 
   // ======== ⑥ 缴费月历（审计 L1：每年重复信息，明细型默认折叠） ========
+  // 2026-10-24（审计 2.6）：加"月份未知"桶。
+  // 现状是按**生效月**估算缴费月（数据模型没有 payment_month）—— 这是个未声明的假设，
+  // 直接画成"每年 3 月要交 9,600"会让客户按错的日子准备钱。两件事一起做：
+  //   ① 没有可解析日期 / 已缴费清的保单 → 单独一桶，不混进 12 格；
+  //   ② 章首注明"按生效月估算"，并为将来接 payment_month 留出优先取值。
+  var monthUnknownYuan = 0
+  var monthUnknownCount = 0
   var months = (function() {
     var arr = []
-    for (var i = 0; i < 12; i++) {
-      var t = active.reduce(function(s, p) {
-        var mo = -1
+    for (var i = 0; i < 12; i++) arr.push({ m: i + 1, v: '-', h: 0 })
+    active.forEach(function(p) {
+      var prem = Number(p.annual_premium) || 0
+      if (prem <= 0) return // 趸交/已缴清不占月份
+      // 优先真实缴费月（字段存在时），否则退回生效月
+      var mo = -1
+      var payMonth = Number(p.payment_month)
+      if (payMonth >= 1 && payMonth <= 12) {
+        mo = payMonth - 1
+      } else {
         var dt = p.contract_effective_date || p.effective_date || ''
         if (dt) { var d = new Date(dt); if (!isNaN(d.getTime())) mo = d.getMonth() }
-        return mo === i ? s + (p.annual_premium || 0) : s
-      }, 0)
-      arr.push({ m: i + 1, v: t > 0 ? t + '元' : '-', h: t > 0 ? 1 : 0 })
-    }
+      }
+      if (mo < 0) {
+        monthUnknownYuan += prem
+        monthUnknownCount += 1
+        return
+      }
+      var cur = parseInt(arr[mo].v, 10) || 0
+      arr[mo].v = (cur + prem) + '元'
+      arr[mo].h = 1
+    })
     var max = Math.max.apply(null, arr.map(function(x) { return x.h === 1 ? x.v : 0 }).map(function(v) { return parseInt(v, 10) || 0 }))
     if (max > 0) {
       for (var j = 0; j < arr.length; j++) {
@@ -799,7 +845,14 @@ function buildChapters(family, report, gaps, opts) {
       createBlock('premium_split', premiumSplit),
       // 年度柱：造型（哪几年高、哪一年掉一档）；精确金额仍写在下方文字里，图不重复标数字
       createBlock('premium_trend', { years: trendYears, maxW: trendMax, thisYear: trend.thisYear, currentW: trend.currentW }),
-      createBlock('calendar', { items: months })
+      // 月份未知桶（2026-10-24）：不混进 12 格，单独一行给"未记录缴费月"的金额与份数
+      createBlock('calendar', {
+        items: months,
+        unknownText: monthUnknownCount > 0
+          ? ('月份未知 ' + _fmtAmount(monthUnknownYuan) + '，' + monthUnknownCount + ' 份保单未记录缴费月')
+          : '',
+        basisText: '月份按保单生效月估算（缴费月字段尚未采集）'
+      })
     ],
     // 下方提示：无列表垂直排列（年保费 → 峰值月），markdown-render 以 <br> 换行
     // 客户版：占收入比标注"家庭年收入占比，仅供参考"（数据保留，缓解"推销感"顾虑）

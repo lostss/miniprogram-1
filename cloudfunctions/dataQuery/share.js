@@ -147,6 +147,13 @@ async function getSharedFamily(db, openid, event) {
     family.policies = _maskPolicies(policies)
     // 叙事映射须在清理 last_* 之前执行：toReadReport 读 last_* 生成 report 副本，后续删除不影响副本
     family.report = toReadReport(family)
+    // 2026-10-24（用户决策：报告只列事实、AI 仅作代理端独立入口）：
+    // 分享给客户的 payload **不得携带 AI 叙事** —— portrait/suggestions/plan 是"诊断与建议"，
+    // 一旦随分享下发，客户手里的报告就不再是化验单，且与页面"移出报告正文"的口径互相矛盾。
+    // 页面在客户版也不再渲染进阶区（report 页 isShared 分支），这里是数据层的最后一道闸。
+    ;['portrait', 'review', 'plan', 'suggestions', 'conclusion', 'analysis', 'core_insights'].forEach(function(k) {
+      if (family.report && k in family.report) delete family.report[k]
+    })
     // 活报告模型（2026-09）：时效标识——清理 last_* 前透传分析生成时间标量（客户版页头展示）
     family.analysisAt = family.last_analysis_at || ''
     family.shared = true

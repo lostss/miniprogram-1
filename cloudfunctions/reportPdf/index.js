@@ -648,7 +648,7 @@ function _policyTable(policies) {
     begin: function (fname) {
       // bufferPages：页脚要写「第 N / 总页数 页」、首页要回填目录页码 —— 两者都必须在文档渲染完之后
       // 用 switchToPage 回头补画，故必须开缓冲（文档仅 3~6 页，内存开销可忽略）。
-      doc = new PDFDocument({ size: 'A4', margin: 0, bufferPages: true, info: { Title: fname + '保障检视报告', Keywords: 'baoxiaomi build ' + _BUILD } })
+      doc = new PDFDocument({ size: 'A4', margin: 0, bufferPages: true, info: { Title: fname + '家庭保单化验单', Keywords: 'baoxiaomi build ' + _BUILD } })
       y = 60
       _tocTop = 0
       _tocEntries = []
