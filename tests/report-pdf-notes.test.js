@@ -86,9 +86,10 @@ describe('_analysisNote — 分析时点 + 数据口径', () => {
 describe('披露接线（防"函数定义了但 buildPdf 没调用"）', () => {
   const SRC = fs.readFileSync(path.join(__dirname, '../cloudfunctions/reportPdf/index.js'), 'utf8')
 
-  test('buildPdf 内确实渲染两条披露', () => {
+  test('buildPdf 内渲染定性披露（分析时点披露随 AI 节一起移除）', () => {
     expect(SRC).toContain('const qualNote = _qualitativeNote(family)')
-    expect(SRC).toContain('const anaNote = _analysisNote(family)')
+    // 2026-10-24：AI 节已删 → 其"分析时点"披露也不该再被调用（函数保留给单测）
+    expect(SRC).not.toContain('const anaNote = _analysisNote(family)')
   })
 
   test('定性披露位于正文最前（保障摘要之前，与报告页页头卡片同位置）', () => {
@@ -98,11 +99,15 @@ describe('披露接线（防"函数定义了但 buildPdf 没调用"）', () => {
     expect(sumIdx).toBeGreaterThan(qualIdx)
   })
 
-  test('分析时点披露位于深度分析节内', () => {
-    const deepIdx = SRC.indexOf("_sec('深度分析（AI 解读）')")
-    const anaIdx = SRC.indexOf('const anaNote = _analysisNote(family)')
-    expect(deepIdx).toBeGreaterThan(-1)
-    expect(anaIdx).toBeGreaterThan(deepIdx)
+  test('PDF 不再渲染 AI 节（2026-10-24 用户决策：纸面只列事实）', () => {
+    // 三件事都不该再出现：AI 小节标题、分析时点披露的调用点、AI 正文分块
+    expect(SRC).not.toContain("_sec('深度分析（AI 解读）')")
+    expect(SRC).not.toContain('const anaNote = _analysisNote(family)')
+    expect(SRC).not.toContain("'配置建议'")
+    // `_analysisNote` 函数本身保留（导出给单测）→ 只允许出现"定义"这一处，不能再有调用
+    // （正则要排除 `function _analysisNote(family) {` 这一行）
+    const calls = SRC.split('\n').filter((l) => l.includes('_analysisNote(family)') && !/function\s+_analysisNote/.test(l))
+    expect(calls).toEqual([])
   })
 })
 
@@ -490,12 +495,13 @@ describe('版面接线（目录 / 总页数 / 免责声明可读性）', () => {
     expect(labels.length).toBeGreaterThanOrEqual(6)
     // 2026-10-13 增「保障期间（谁保到什么时候）」（报告结构 v2.0 ③，页面甘特图的纸面同源节）
     // 2026-10-22：节名与页面章节对齐（页面该章已含年度趋势，"月历"不足以描述 → 缴费与现金流）
-    const staticToc = ['保障摘要', '家庭成员', '保单明细', '异常与待核验', '保障期间（谁保到什么时候）', '保障节点（未来关键时点）', '缴费与现金流（每年固定缴费月）', '经济状况']
+    // 2026-10-24：删「深度分析（AI 解读）」，加「成员卡片」「保费分布」
+    const staticToc = ['保障摘要', '成员卡片', '家庭成员', '保单明细', '异常与待核验', '保障期间（谁保到什么时候）', '保障节点（未来关键时点）', '保费分布', '缴费与现金流（每年固定缴费月）', '经济状况']
     labels.forEach(l => {
       if (l === '深度分析（AI 解读）') return   // 条件小节：按 deep 动态进目录
       expect(staticToc).toContain(l)
     })
-    expect(SRC).toContain("['家庭成员', '保单明细', '异常与待核验', '保障期间（谁保到什么时候）', '保障节点（未来关键时点）', '缴费与现金流（每年固定缴费月）', '经济状况']")
+    expect(SRC).toContain("['成员卡片', '家庭成员', '保单明细', '异常与待核验', '保障期间（谁保到什么时候）', '保障节点（未来关键时点）', '保费分布', '缴费与现金流（每年固定缴费月）', '经济状况']")
   })
 
   test('页脚含总页数且走 bufferPages + switchToPage 回填', () => {

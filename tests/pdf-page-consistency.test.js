@@ -32,6 +32,21 @@ describe('PDF 与页面同源', () => {
     expect(PDF).not.toContain('缴费月历（每年固定缴费月）')
   })
 
+  test('PDF 与页面同步：成员卡片 / 保费分布 7a · 7b 都在，AI 节已移除', () => {
+    expect(PDF).toContain("_sec('成员卡片')")
+    expect(PDF).toContain("_sec('保费分布')")
+    expect(PDF).toContain("'7a 按成员与险种'")
+    expect(PDF).toContain("'7b 按公司'")
+    // 纸面只列事实：AI 小节不得回归（注释里可以提"已删除"，所以断言 `_sec(...)` 调用形态）
+    expect(PDF).not.toContain("_sec('深度分析（AI 解读）')")
+    expect(PDF).not.toContain("'配置建议'")
+  })
+
+  test('成员卡片按 canonCat 归行（与页面同一份险种归一，防"增额寿在纸上算成另一种险"）', () => {
+    expect(PDF).toContain("require('./_shared/thresholds')")
+    expect(PDF).toContain('_memberCardData(members, act, policies)')
+  })
+
   test('A1–A6 进 PDF：与页面同一份契约（_shared/anomaly-list），且空则整段不出现', () => {
     expect(PDF).toContain("require('./_shared/anomaly-list')")
     expect(PDF).toContain('buildAnomalies({ policies')

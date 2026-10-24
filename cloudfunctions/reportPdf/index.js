@@ -29,6 +29,8 @@ const { breakEvenYear } = require('./_shared/cash-value-math')
 const { recordReportFile } = require('./_shared/report-files')
 // 版式纯函数（2026-10-22）：列宽/双列配对可单测，剩下只有"字有没有压线"要真机看
 const { twoColumnRows, columnWidth } = require('./layout')
+// 险种归一（成员卡片按险种归行）：与页面同一份跨树契约，避免"PDF 把增额寿当成另一种险"
+const { canonCat } = require('./_shared/thresholds')
 // A1–A6 异常清单（2026-10-22）：与页面同一份契约，PDF 不再"纸上没有异常提示"
 const { buildAnomalies } = require('./_shared/anomaly-list')
 
@@ -241,11 +243,10 @@ function buildPdf(ctx) {
   // 2026-09-25 PDF 审计：封面用「<经济支柱>家庭」，不再直接印代理人的档案名（见 _displayName）
   const name = _displayName(family)
   // 章节目录（2026-09-25 审计新增）：小节清单必须**在正文渲染之前**固定下来 ——
-  // 首页要按它预留高度、最后再回填页码。deep 因此提前到这里求值（原先在保障摘要之后）。
-  const deep = !!(report && (report.review || report.analysis || report.plan || report.suggestions || (report.core_insights && report.core_insights.length)))
+  // 首页要按它预留高度、最后再回填页码。
+  // 2026-10-24：目录里不再有「深度分析（AI 解读）」—— PDF 已不含 AI 章节（只列事实）。
   const tocTitles = ['保障摘要']
-    .concat(deep ? ['深度分析（AI 解读）'] : [])
-    .concat(['家庭成员', '保单明细', '异常与待核验', '保障期间（谁保到什么时候）', '保障节点（未来关键时点）', '缴费与现金流（每年固定缴费月）', '经济状况'])
+    .concat(['成员卡片', '家庭成员', '保单明细', '异常与待核验', '保障期间（谁保到什么时候）', '保障节点（未来关键时点）', '保费分布', '缴费与现金流（每年固定缴费月）', '经济状况'])
   const now = new Date()
   const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
   const act = policies.filter(p => p.status === 'active')
@@ -321,32 +322,45 @@ function buildPdf(ctx) {
   if (expNote) { _para(expNote, 8.5, { color: '#8a6d2f' }); y += 2 }
   _rule()
 
-  // 深度分析（AI 解读）
-  if (deep) {
-    _sec('深度分析（AI 解读）')
-    // 2026-09-20（PDF 审计 P2-1）：标注分析时点与数据口径差（空串不渲染）
-    const anaNote = _analysisNote(family)
-    if (anaNote) { _para(anaNote, 8, { color: '#777777' }); y += 2 }
-    if (report.core_insights && report.core_insights.length) {
-      _para('核心洞察', 11, { color: '#8a6d2f' })
-      for (const ins of report.core_insights) _para('• ' + ins, 10, { indent: 4 })
-      y += 2
+  // 成员卡片（2026-10-24，方案第二部分第 6 项）：每人一张五行表，两列并排。
+  // 只给「险种 / 保额 / 年缴」三列 —— 保险期间与缴费期间在「保单明细」节按保单逐条已给，
+  // 这里重复一遍会把纸面撑长而不增信息（PDF 的目标是 1–2 页）。
+  if (members.length) {
+    _sec('成员卡片')
+    _para('每人五行（意外/医疗/重疾/寿险/储蓄）；期间明细见「保单明细」。无保单成员照常列出。', 8, { color: '#999999', gap: 4 })
+    const COL_GAP2 = 20
+    const colW2 = columnWidth(W, 2, COL_GAP2)
+    const cards = _memberCardData(members, act, policies)
+    for (const row of twoColumnRows(cards)) {
+      const y0 = y
+      let h = 0
+      ;[row.left, row.right].forEach((c, ci) => {
+        if (!c) return
+        const x = M + ci * (colW2 + COL_GAP2)
+        let yy = y0
+        _cn(9.5); doc.fillColor('#1a1a1a')
+        doc.text(c.title, x, yy, { width: colW2 })
+        yy = doc.y + 1
+        _cn(8); doc.fillColor('#555555')
+        c.lines.forEach((ln) => {
+          doc.text(ln, x, yy, { width: colW2 })
+          yy = doc.y + 1
+        })
+        _cn(8); doc.fillColor('#888888')
+        doc.text(c.foot, x, yy, { width: colW2 })
+        h = Math.max(h, doc.y - y0)
+      })
+      y = y0 + h + 8
     }
-    const blocks = [['现有保障点评', report.review], ['保障缺口分析', report.analysis], ['配置建议', report.plan], ['行动清单', report.suggestions]]
-    for (const b of blocks) {
-      // 2026-09-25 审计：AI 正文常以 markdown 标题开头（如「## 保障缺口分析」），而本函数
-      // 已在上面印了同名小节标题 → 客户拿到纸面会看到标题连印两次（本次审计已复现）。
-      // 只剥掉**首行**标题（见 _stripLeadHeading）：小节标题由 PDF 自己承担；正文中间的标题
-      // 仍按普通行保留（那可能是 AI 的子分段，不能一起吞掉）。
-      const txt = mdPlain(_stripLeadHeading(b[1]))
-      if (!txt) continue
-      _cn(11); doc.fillColor('#444444'); doc.text(b[0], M, y, { width: W }); y = doc.y + 2
-      _block(txt, 10, { color: '#333333' })
-    }
-    // 同上：AI 自带的免责声明也属法律相关文本，一并加深（8pt→8.5pt / #777）
-    if (report.disclaimer) _para(mdPlain(report.disclaimer), 8.5, { color: '#777777' })
     _rule()
   }
+
+  // 2026-10-24（用户决策）：PDF **不再包含 AI 深度分析**。
+  // 报告定位是"家庭保单化验单：只列事实"，而 AI 的 review/analysis/plan/suggestions 是诊断与建议；
+  // 纸面件是拿去面谈、甚至直接留给客户的，一旦印上建议，定位就破了。
+  // AI 仍保留为 App 内的独立入口（页尾手动生成），与纸质件彻底分开。
+  void deep
+  void report
 
   // 家庭成员（2026-10-22 版式：两列并排 —— 方案要求"成员卡片两列并排"，1~5 口人时省一半纵向空间）
   _sec('家庭成员')
@@ -453,6 +467,55 @@ function buildPdf(ctx) {
 
   // 缴费月历（每年固定缴费月：active 保单按生效月分组）
   // 2026-10-22：节名与页面章节对齐（页面已改名「缴费与现金流」，因为该章同时有年度趋势与月历）
+  // 保费分布 7a / 7b（2026-10-24，方案第三部分）：页面已有，纸面补齐。
+  // 7c（月历）与 7d（按年）紧随其后，由下一节承担 —— 四段齐全但不重复。
+  if (act.length) {
+    _sec('保费分布')
+    _para('仅计有效保单；附加险保费并入自身险种；保障型=意外/医疗/重疾/寿险，储蓄型=年金等。', 8, { color: '#999999', gap: 4 })
+    _cn(9); doc.fillColor('#8a6d2f'); doc.text('7a 按成员与险种', M, y, { width: W }); y = doc.y + 3
+    const COL_W = [110, 58, 58, 58, 58, 58, 80]
+    const heads = ['成员', '意外', '医疗', '重疾', '寿险', '储蓄', '合计']
+    const line = (cells, color) => {
+      _ensure(14)
+      let x = M
+      _cn(8); doc.fillColor(color)
+      cells.forEach((c, i) => {
+        doc.text(String(c == null ? '' : c), x, y, { width: COL_W[i], align: i === 0 ? 'left' : 'right', lineBreak: false })
+        x += COL_W[i]
+      })
+      y += 12
+    }
+    const premRow = (name, list) => {
+      const row = [name]
+      ;['意外险', '医疗险', '重疾险', '寿险', '年金'].forEach((cat) => {
+        const yuan = list.filter((p) => canonCat(p.insurance_category || '') === cat)
+          .reduce((s, p) => s + (Number(p.annual_premium) || 0), 0)
+        row.push(yuan > 0 ? String(Math.round(yuan)) : '0')
+      })
+      row.push(String(Math.round(list.reduce((s, p) => s + (Number(p.annual_premium) || 0), 0))))
+      return row
+    }
+    line(heads, '#888888')
+    members.forEach((m) => {
+      line(premRow(m.name || '未指定', act.filter((p) => String(p.insured_name || '') === String(m.name || ''))), '#444444')
+    })
+    line(premRow('合计', act), '#1a1a1a')
+    y += 4
+
+    _cn(9); doc.fillColor('#8a6d2f'); doc.text('7b 按公司', M, y, { width: W }); y = doc.y + 3
+    const byIns = {}
+    act.forEach((p) => {
+      const k = p.insurer || '未知保司'
+      if (!byIns[k]) byIns[k] = { name: k, count: 0, prem: 0 }
+      byIns[k].count += 1
+      byIns[k].prem += Number(p.annual_premium) || 0
+    })
+    Object.keys(byIns).map((k) => byIns[k]).sort((a, b) => b.prem - a.prem).forEach((x) => {
+      _para(x.name + '　' + x.count + ' 份　' + _fmtMoney(x.prem), 9, { color: '#444444', gap: 2 })
+    })
+    _rule()
+  }
+
   _sec('缴费与现金流（每年固定缴费月）')
   const months = ctx.payMonths || []
   const filledMonths = months.filter(m => m.items.length)
@@ -1023,6 +1086,50 @@ function _shortNote(policies) {
   return '其中一年期短险 ' + shortWan + ' 万（每年需续保，不宜计入长期保障厚度）'
 }
 
+/**
+ * 成员卡片数据（2026-10-24，PDF 用）
+ *
+ * 与页面 chapters.member_cards 同口径：固定五行、医疗只给份数、储蓄优先年领、
+ * 失效单列且不计入合计。刻意**不引用** chapter-builder（那是前端模块），
+ * 但口径必须一致 —— 由 tests/pdf-page-consistency 的"同一成员同一险种保额一致"断言钉住。
+ */
+function _memberCardData(members, act, allPolicies) {
+  const CATS = [['意外险', '意外'], ['医疗险', '医疗'], ['重疾险', '重疾'], ['寿险', '寿险'], ['年金', '储蓄']]
+  const catOf = (p) => canonCat((p && p.insurance_category) || '其他')
+  // 本地格式化（这两个 helper 定义在 createLayout 闭包内，模块作用域拿不到）
+  const money = (v) => {
+    const n = Math.round(Number(v) || 0)
+    if (!n) return ''
+    return n >= 10000 ? (Math.round(n / 1000) / 10) + '万' : String(n) + '元'
+  }
+  const wan = (w) => (Math.round((Number(w) || 0) * 10) / 10) + '万'
+  return members.map((m) => {
+    const mine = (act || []).filter((p) => String(p.insured_name || '') === String(m.name || ''))
+    const lines = []
+    CATS.forEach(([cat, label]) => {
+      const inCat = mine.filter((p) => catOf(p) === cat)
+      if (!inCat.length) { lines.push(label + '　—'); return }
+      const prem = inCat.reduce((s, p) => s + (Number(p.annual_premium) || 0), 0)
+      const payout = inCat.reduce((s, p) => s + (Number(p.annuity_payout) || 0), 0)
+      const sum = inCat.reduce((s, p) => s + (Number(p.sum_assured) || 0), 0)
+      let sumText
+      if (cat === '医疗险') sumText = inCat.length + ' 份'
+      else if (cat === '年金' && payout > 0) sumText = '年领 ' + money(payout)
+      else sumText = sum > 0 ? wan(sum / 10000) : '—'
+      lines.push(label + '　' + sumText + '　' + (prem > 0 ? money(prem) : '—'))
+    })
+    const inact = (allPolicies || []).filter((p) => p.status !== 'deleted' && p.status !== 'active' &&
+      String(p.insured_name || '') === String(m.name || ''))
+    const premTotal = mine.reduce((s, p) => s + (Number(p.annual_premium) || 0), 0)
+    return {
+      title: (m.name || '待补姓名') + '（' + (m.role || '成员') + (m.age ? ' · ' + m.age + '岁' : '') + '）· 年缴 ' + money(premTotal),
+      lines: lines,
+      foot: '有效 ' + mine.length + ' 份' + (inact.length ? ' · 失效 ' + inact.length + ' 份' : '')
+    }
+  })
+}
+
+
 exports._termYear = _termYear
 exports._displayName = _displayName
 exports.DISCLAIMER = DISCLAIMER
@@ -1033,6 +1140,8 @@ exports.buildCoverageRows = buildCoverageRows
 exports.buildNodes = buildNodes
 exports._shortNote = _shortNote
 exports._qualitativeNote = _qualitativeNote
+// 2026-10-24：暴露给单测（成员卡片是"纸面与页面同口径"的关键，必须可断言）
+exports._memberCardData = _memberCardData
 exports._analysisNote = _analysisNote
 exports._mdPlain = mdPlain
 exports._expiryNote = _expiryNote
