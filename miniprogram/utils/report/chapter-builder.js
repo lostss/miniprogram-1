@@ -191,7 +191,11 @@ function buildConfidenceAlerts(policies) {
  * 构建所有报告章节（基础版 7 章）
  */
 function buildChapters(family, report, gaps, opts) {
-  var shared = !!(opts && opts.view === 'shared')
+  // 2026-10-24（审计 2.2：收掉分版层）：内容侧**不再区分代理/客户** —— 2026-10-18 已决策统一，
+  // `buildReportView` 也一直强制传 view:'owner'，这些分支早就不可达。
+  // 现在把常量钉成 false 并逐个删除分支：删的是**代码里的两套说法**，不是删功能。
+  // 仍然按 isShared 变化的只有页面层的交互与权限（编辑/上传/转发/水印）与分享脱敏。
+  var shared = false // eslint-disable-line no-unused-vars
   // 审计·顾问视角（2026-09-04）：缺口数据统一复用外部 buildGaps 结果（buildReportView 已算好传入），
   // 删除此前函数内 buildGaps×2 重算 + buildGapMatrix 死代码（结果从未渲染）的浪费
   if (!gaps || !Array.isArray(gaps)) gaps = require('./gap-engine').buildGaps(family)
@@ -341,9 +345,8 @@ function buildChapters(family, report, gaps, opts) {
   }
 
   // ======== ① 家庭结构 / ② 家庭财务 ========
-  // 审计·顾问视角（2026-09-04）：客户版跳过①②——成员结构与收入是顾问的核对工作底稿（带 [编辑] 入口），
-  // 客户无需被重新告知自家信息；结论摘要之后直接进入保障汇总/缺口诊断
-  if (!shared) {
+  // 2026-10-24：原 `if (!shared)` 守卫已删除 —— 内容统一后家庭结构/财务对所有读者一致
+  // （客户看到的正是"我家的成员与收支"，这本来就是报告主体的一部分）。
   // 2026-10-24（方案「经济支柱认定」+ 成员顺序规则）：**支柱优先，其余按年龄降序**，
   // 同年龄再按角色组/姓名。原实现只按角色组（本人→配偶→子女→父母→其他）+ 姓名，
   // 当支柱不是"本人"（例如祖父投保、子女被保）时，支柱会排到后面 —— 与方案「支柱优先」相反。
@@ -401,7 +404,6 @@ function buildChapters(family, report, gaps, opts) {
       debt: Math.round(debt * 100) / 100
     })]
   })
-  }
 
   // ======== ③ 保障汇总 ========
   // 客户版中性措辞："已有XX保障待完善"，不写"缺少XX"式恐吓文案（数据不变，换视角）
@@ -456,10 +458,10 @@ function buildChapters(family, report, gaps, opts) {
   // 单产品同年多节点以「/」分隔；产品分组键含被保人，防同产品跨被保人误合并。
   // 现价保本节点依赖 family.cashValues（getFamily 并行返回，见 dataQuery/family-detail.js）
   var NODE_TEXT = { expiry: '保障期满', paydone: '交费期满', breakeven: '现价保本' }
-  // 客户版仅保留"保障期满"类节点（交费期满/现价回本对客户是推销感/无关紧要）
+  // 2026-10-24：原实现按视角过滤节点（客户版只留"保障期满"、隐藏交费期满/现价保本）——
+  // 内容统一后全给：这几类都是保单事实（什么时候不再交钱、什么时候回本），不是内部口径。
   var timeline = buildTimeline(active, members, family.cashValues)
     .filter(function(e) { return e.type !== 'payment' })
-    .filter(function(e) { return shared ? e.type === 'expiry' : true })
   var byYear = {}
   for (var ti = 0; ti < timeline.length; ti++) {
     var ev = timeline[ti]
@@ -820,7 +822,8 @@ function buildChapters(family, report, gaps, opts) {
   //   待完善 = 缺字段（没读到/没填）；本段 = 读到了但**不确定**（置信度低，可能识别错）。
   // 因此不合并，而是改名、去掉"告警"语气、放在待完善之前（同属数据质量，位置相邻），
   // 并给固定编号 A7，供导读/面谈引用（与 A1–A6 同一套索引体系）。
-  var alerts = shared ? [] : buildConfidenceAlerts(active)
+  // 2026-10-24：去掉"客户版隐藏置信度"的分支 —— 客户与代理人看到同一份数据质量提示
+  var alerts = buildConfidenceAlerts(active)
   if (alerts.length > 0) {
     ch.push({
       key: 'risk_alerts', title: '数据质量提示（A7）',
