@@ -323,6 +323,28 @@
 .an-act { flex-shrink:0; font-size:var(--fs-tiny); color:var(--accent-deep); padding:var(--sp-1) var(--sp-2); }
 .an-detail { display:block; margin-top:var(--sp-1); font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-snug); }
 
+/* ========== 成员卡片（2026-10-24）==========
+   5 列在 375pt 上必然紧：险种 88rpx、保额 130rpx、保费 120rpx、两个期间各 flex:1 且允许换行。
+   金额一律右对齐 + tabular-nums，否则 300/6,000 会跳来跳去。 */
+.mc-wrap { margin-top:var(--sp-2); }
+.mc-card { padding:var(--sp-5) 0; border-bottom:1rpx solid var(--border); }
+.mc-card:last-child { border-bottom:none; }
+.mc-head { display:flex; align-items:baseline; gap:var(--sp-2); margin-bottom:var(--sp-3); }
+.mc-name { font-size:var(--fs-caption); font-weight:var(--fw-semi); color:var(--text-primary); }
+.mc-role { font-size:var(--fs-tiny); color:var(--text-tertiary); }
+.mc-total { margin-left:auto; font-size:var(--fs-tiny); color:var(--accent-deep); font-variant-numeric:tabular-nums; }
+.mc-tr { display:flex; align-items:flex-start; }
+.mc-tr--head { border-bottom:1rpx solid var(--border); padding-bottom:var(--sp-2); }
+.mc-tr--inactive .mc-td { color:var(--text-tertiary); }
+.mc-th { font-size:var(--fs-tiny); color:var(--text-tertiary); }
+.mc-td { font-size:var(--fs-tiny); color:var(--text-secondary); padding:var(--sp-2) 0; font-variant-numeric:tabular-nums; line-height:var(--lh-snug); }
+.mc-th--cat, .mc-td--cat { flex:0 0 92rpx; color:var(--text-primary); }
+.mc-th--sum, .mc-td--sum { flex:0 0 132rpx; text-align:right; font-weight:var(--fw-semi); }
+.mc-th--prem, .mc-td--prem { flex:0 0 120rpx; text-align:right; }
+.mc-th--period, .mc-td--period { flex:1; min-width:0; padding-left:var(--sp-3); }
+.mc-th--pay, .mc-td--pay { flex:1; min-width:0; padding-left:var(--sp-3); }
+.mc-foot { display:block; margin-top:var(--sp-2); font-size:var(--fs-tiny); color:var(--text-tertiary); }
+
 /* ========== 分险种保额合计（2026-10-21）==========
    4 列固定宽度 + 备注行。备注不占列（否则"报销型不可加总"会把表挤爆），
    而是作为该行下方一行 tiny 说明 —— 它解释的是"为什么这里是 —"。 */
@@ -373,7 +395,20 @@
 .ov-note { margin-top:var(--sp-2); font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-snug); }
 /* "无任何保单：母亲"是硬事实，不是脚注 —— 用深一档颜色，避免被下面的口径声明淹没 */
 .ov-note--alert { color:var(--text-secondary); font-weight:var(--fw-semi); }
-/* 覆盖检查：与风险条之间用分隔线，避免两块结论挤在一起 */
+/* 保障型 / 储蓄型构成（2026-10-24）：两段横条 + 图例（替代环形图，见 wxml 注释） */
+.ov-mix { margin-top:var(--sp-4); }
+.ov-mix-bar { display:flex; height:14rpx; border-radius:var(--r-full); overflow:hidden; background:var(--bg-input); }
+.ov-mix-seg--prot { background:var(--accent-deep); }
+.ov-mix-seg--sav { background:var(--border-accent); }
+.ov-mix-legend { display:flex; gap:var(--sp-5); margin-top:var(--sp-2); }
+.ov-mix-item { display:flex; align-items:baseline; gap:var(--sp-1); font-size:var(--fs-tiny); }
+.ov-mix-dot { width:12rpx; height:12rpx; border-radius:2rpx; }
+.ov-mix-dot--prot { background:var(--accent-deep); }
+.ov-mix-dot--sav { background:var(--border-accent); }
+.ov-mix-name { color:var(--text-secondary); }
+.ov-mix-val { color:var(--text-tertiary); font-variant-numeric:tabular-nums; }
+
+/* 覆盖检查：与风险条之间用分隔线，避免两块结论挤在一起（2026-10-24 已移出概览，样式保留供旧数据） */
 .ov-check { margin-top:var(--sp-5); padding-top:var(--sp-4); border-top:1rpx solid var(--border); }
 .ov-check-lead { font-size:var(--fs-caption); color:var(--text-primary); margin-bottom:var(--sp-3); }
 .ov-alert { display:flex; align-items:flex-start; gap:var(--sp-2); margin-top:var(--sp-2); }

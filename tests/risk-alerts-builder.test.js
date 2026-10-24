@@ -237,29 +237,15 @@ describe('风险预警接线（防"建好了但没接进报告"）', () => {
 const SRC_COMPONENT = fs.readFileSync(path.join(__dirname, '..', 'miniprogram', 'components', 'report-markdown', 'index.wxml'), 'utf8')
   const SRC_WXSS = fs.readFileSync(path.join(__dirname, '..', 'miniprogram', 'pages', 'report', 'index.wxss'), 'utf8')
 
-  test('风险条目接进报告：概览章 block 携带 risks（2026-10-18 起由组件渲染，不再在页面）', () => {
-    // 页面仍 setData risks（其它消费方如预设问题用它），但渲染改由 chapters.overview 承担
+  test('TOP-N 风险不再进报告正文（2026-10-24：属需求模型判断，不进"化验单"）', () => {
+    // 页面仍 setData risks（预设问题等消费方用它），但报告不再渲染：
     expect(SRC_PAGE).toContain('risks: view.risks')
-    expect(SRC_COMPONENT).toContain('block.risks')
-    expect(SRC_COMPONENT).toContain('block.risksMore')
-    // 空列表时整块不渲染（不制造空标题）
-    expect(SRC_COMPONENT).toContain('wx:if="{{block.risks.length}}"')
+    expect(SRC_COMPONENT).not.toContain('block.risks')
+    // 判断类内容的唯一去处是缺口章「模型推算」段（见 report-builder 的测试）
   })
 
-  test('依据对红/黄项直接展开，达标项不铺开（组件内无交互态，故取消了 onRiskTap）', () => {
-    expect(SRC_COMPONENT).toContain('ov-risk-basis')
-    expect(SRC_COMPONENT).toContain("item.level !== 'ok'")
-    // 旧交互已随页面级诊断卡一起移除（断言**方法定义与绑定**，不能断言字符串本身：
-    // index.js 的注释里还写着"删除 onRiskTap"这句说明，直接 not.toContain 会被自己的注释命中）
+  test('旧交互已移除（onRiskTap 定义与绑定都不得回归）', () => {
     expect(SRC_PAGE).not.toContain('onRiskTap(e) {')
     expect(SRC_WXML).not.toContain('onRiskTap')
-  })
-
-  test('三个等级的样式类都有定义（红黄绿不得只定义其一）', () => {
-    // 2026-10-22：风险条随概览章进入组件（页面级 .risk-* 已成为死样式被清理）
-    const compWxss = fs.readFileSync(path.join(__dirname, '..', 'miniprogram', 'components', 'report-markdown', 'index.wxss'), 'utf8')
-    ;['.ov-risk--red', '.ov-risk--yellow', '.ov-risk--ok'].forEach(sel => {
-      expect(compWxss).toContain(sel)
-    })
   })
 })

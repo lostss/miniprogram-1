@@ -59,7 +59,11 @@ describe('险种归一：STANDARD_COVERAGE 必须 canonCat 稳定', () => {
   test('空值/未知值安全（不误判成某个险种）', () => {
     expect(canonCat('')).toBe('其他')
     expect(canonCat(null)).toBe('其他')
-    expect(canonCat('增额终身寿')).toBe('增额终身寿') // 未映射则原样返回
+    // 2026-10-24：储蓄型别名归一到「年金」（此前不归一 → 矩阵与分险种表**直接丢这笔保额**）
+    expect(canonCat('增额终身寿')).toBe('年金')
+    expect(canonCat('终身寿险')).toBe('年金')
+    expect(canonCat('两全')).toBe('年金')
+    expect(canonCat('某个没见过的险种')).toBe('某个没见过的险种') // 真未知仍原样返回
   })
 })
 

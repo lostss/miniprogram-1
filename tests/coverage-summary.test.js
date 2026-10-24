@@ -25,8 +25,10 @@ describe('coverage-summary — 三分桶口径', () => {
     expect(r.protectionW).toBe(550)
     expect(r.savingsW).toBe(80)
     expect(r.totalW).toBe(630)
-    // 中文串的 Array.sort 按码位序，不用它比对顺序；这里只验证集合
-    expect(new Set(r.byCat.filter(x => x.kind === 'savings').map(x => x.cat))).toEqual(new Set(['年金', '增额终身寿', '终身寿险']))
+    // 中文串的 Array.sort 按码位序，不用它比对顺序；这里只验证集合。
+    // 2026-10-24：canonCat 已把 增额终身寿 / 终身寿险 / 两全 归一到「年金」
+    // （此前不归一 → 矩阵与分险种表会整行丢弃这笔保额），因此 byCat 里只剩规范词。
+    expect(new Set(r.byCat.filter(x => x.kind === 'savings').map(x => x.cat))).toEqual(new Set(['年金']))
   })
 
   test('险种缺失 → 第三桶「其他」（未标注），**不并入**保障型也不并入储蓄型', () => {

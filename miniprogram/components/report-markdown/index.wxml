@@ -242,6 +242,33 @@
           </view>
         </view>
 
+        <!-- 成员卡片（2026-10-24，方案第二部分第 6 项）：每人一张固定五行的表。
+             回答"这个人一年交多少、每类保到什么时候"——矩阵（按险种横向比）与附录（逐单）都答不了。 -->
+        <view wx:if="{{block.t==='member_cards'}}" class="mc-wrap">
+          <view class="mc-card" wx:for="{{block.members}}" wx:key="name" wx:for-item="m">
+            <view class="mc-head">
+              <text class="mc-name">{{m.name}}</text>
+              <text class="mc-role" wx:if="{{m.role || m.age}}">{{m.role}}{{m.age ? ' · ' + m.age + '岁' : ''}}</text>
+              <text class="mc-total">年缴 {{m.premiumTotalText}}</text>
+            </view>
+            <view class="mc-tr mc-tr--head">
+              <text class="mc-th mc-th--cat">险种</text>
+              <text class="mc-th mc-th--sum">保额</text>
+              <text class="mc-th mc-th--prem">年缴保费</text>
+              <text class="mc-th mc-th--period">保险期间</text>
+              <text class="mc-th mc-th--pay">缴费期间</text>
+            </view>
+            <view class="mc-tr {{r.inactive ? 'mc-tr--inactive' : ''}}" wx:for="{{m.rows}}" wx:key="cat" wx:for-item="r">
+              <text class="mc-td mc-td--cat">{{r.cat}}</text>
+              <text class="mc-td mc-td--sum">{{r.sumText}}</text>
+              <text class="mc-td mc-td--prem">{{r.premiumText}}</text>
+              <text class="mc-td mc-td--period">{{r.periodText}}</text>
+              <text class="mc-td mc-td--pay">{{r.payText}}</text>
+            </view>
+            <text class="mc-foot">{{m.footNote}}</text>
+          </view>
+        </view>
+
         <!-- 分险种保额合计（2026-10-21，方案第一部分第 3 项）：险种为行 —— 矩阵回答"谁有什么"，
              这张表回答"每类保障多少、覆盖几人、几份"。医疗/储蓄不可加总的在备注列直接写明。 -->
         <view wx:if="{{block.t==='cat_table' && block.rows.length}}" class="ct-wrap">
@@ -278,7 +305,8 @@
              合并的意义：同一批信息不再出现两套排版、缺口不再在 3 处重复、目录能索引到它。
              数据全部由 chapter-builder 备好（本组件不做计算）。 -->
         <view wx:if="{{block.t==='overview'}}" class="ov-wrap">
-          <view class="ov-meta">{{block.policyCount}} 张保单 · {{block.memberCount}} 位成员 · 年保费 {{block.premiumText}}</view>
+          <!-- 2026-10-24（方案第一部分 1）：补"持有人数 / 登记人数" —— 只说"5 位成员"看不出谁没有保单 -->
+          <view class="ov-meta">{{block.policyCount}} 张保单 · {{block.coveredMemberCount}}/{{block.memberCount}} 人持有 · 年保费 {{block.premiumText}}</view>
           <!-- 经济支柱（2026-10-21）：口径可推断就必须写明来源，否则读者会当成人工设定 -->
           <view class="ov-note" wx:if="{{block.pillarNote}}">{{block.pillarNote}}</view>
           <view class="ov-pair">
@@ -305,27 +333,26 @@
           <view class="ov-note" wx:if="{{block.unknownText}}">{{block.unknownText}} 的保单未标注险种，未计入上述分类</view>
           <view class="ov-note" wx:if="{{block.inactiveNote}}">{{block.inactiveNote}}</view>
 
-          <view class="ov-check" wx:if="{{block.alerts.length}}">
-            <view class="ov-check-lead">{{block.summaryLead}}</view>
-            <view class="ov-alert {{item.ok ? 'is-ok' : (item.blocked ? 'is-unknown' : 'is-warn')}}" wx:for="{{block.alerts}}" wx:key="name">
-              <text class="ov-dot"></text>
-              <text class="ov-alert-text">{{item.name}} {{item.display}}</text>
+          <!-- 2026-10-24（方案第一部分 2）：保障型 / 储蓄型构成。
+               方案原图是环形图；小程序 WebView 对 conic-gradient 支持不稳，改用两段横条 + 图例
+               （信息相同：各占多少，且横条更容易读绝对值）。 -->
+          <view class="ov-mix" wx:if="{{block.mixBars.length}}">
+            <view class="ov-mix-bar">
+              <view class="ov-mix-seg ov-mix-seg--prot" style="width:{{block.mixBars[0].pct}}%"></view>
+              <view class="ov-mix-seg ov-mix-seg--sav" style="width:{{block.mixBars[1].pct}}%"></view>
             </view>
-            <!-- 2026-10-21：行动建议已移出规则层（现阶段不做诊断）。覆盖检查只到"谁缺什么"为止。 -->
+            <view class="ov-mix-legend">
+              <view class="ov-mix-item" wx:for="{{block.mixBars}}" wx:key="key">
+                <text class="ov-mix-dot ov-mix-dot--{{item.key}}"></text>
+                <text class="ov-mix-name">{{item.label}}</text>
+                <text class="ov-mix-val">{{item.text}} · {{item.pct}}%</text>
+              </view>
+            </view>
           </view>
 
-          <view class="ov-risks" wx:if="{{block.risks.length}}">
-            <view class="ov-risk ov-risk--{{item.level}}" wx:for="{{block.risks}}" wx:key="key">
-              <view class="ov-risk-head">
-                <text class="ov-risk-level">{{item.levelLabel}}</text>
-                <text class="ov-risk-title">{{item.title}}</text>
-              </view>
-              <text class="ov-risk-detail">{{item.detail}}</text>
-              <!-- 依据直接展开（组件内无交互态）：红/黄必须可追溯，达标项不铺开以免噪音 -->
-              <text class="ov-risk-basis" wx:if="{{item.basis && item.level !== 'ok'}}">依据：{{item.basis}}</text>
-            </view>
-            <view class="ov-note" wx:if="{{block.risksMore}}">另有 {{block.risksMore}} 项未展开，共 {{block.risksTotal}} 项</view>
-          </view>
+          <!-- 2026-10-24（审计 2.1 + 用户决策）：覆盖检查与 TOP-N 风险已移出概览 ——
+               它们建立在需求模型（5×收入/负债兜底）之上，属推算而非保单事实。
+               覆盖检查进「保障缺口」章（明确标注模型推算），风险进「数据质量提示」章。 -->
         </view>
 
         <view wx:if="{{block.t==='policy_cards'}}" class="pc-wrap">

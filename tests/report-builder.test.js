@@ -43,7 +43,9 @@ describe('buildReportView — 报告聚合入口（候选 2 深模块）', () =>
     expect(ly.display).toContain('缺少')
     expect(ly.display).toBe(owner.hero.alerts.find(a => a.name === '李阳勇').display)
     const cs = view.chapters.find(x => x.key === 'coverage_summary')
-    expect(cs.pre).toContain('缺少')
+    // 2026-10-24：汇总章的"缺少/不足"判断整段删除（事实与推算分离），
+    // 判断统一收在缺口章的「模型推算」段
+    expect(cs.pre || '').toBe('')
     expect(cs.pre).toBe(owner.chapters.find(x => x.key === 'coverage_summary').pre)
 
     // ③ 保费占收入比、时间线全部节点、缺口公式：两边一致
@@ -63,9 +65,9 @@ describe('buildReportView — 报告聚合入口（候选 2 深模块）', () =>
   test('单接口返回全部视图数据（无告警时 10 章 + Hero + 摘要卡 + gaps + hints）', () => {
     const c = baseCustomer()
     const view = buildReportView(c, { conclusion: 'AI 结论', disclaimer: '免责' })
-    // 2026-10-21：概览 + 异常与待核验（A1–A6）+ 待完善；原「下一步行动」章已删除 → = 10 章
-    // （概览 + 异常 + 家庭结构 + 财务 + 保障汇总 + 缺口 + 期间 + 月历 + 待完善 + 附录）
-    expect(view.chapters.length).toBe(10)
+    // 2026-10-24：新增「成员卡片」章 → owner 版 = 11 章
+    // （概览 + 异常 + 结构 + 财务 + 汇总 + 成员卡片 + 缺口 + 期间 + 缴费 + 待完善 + 附录）
+    expect(view.chapters.length).toBe(11)
     expect(view.chapters[0].key).toBe('overview')
     // 待完善必须是附录前最后一章（数据质量补录清单，不该插在诊断结论之间）
     const keys = view.chapters.map(x => x.key)
@@ -86,7 +88,7 @@ describe('buildReportView — 报告聚合入口（候选 2 深模块）', () =>
 
   test('无报告对象 → 视图仍完整（conclusion 空）', () => {
     const view = buildReportView(baseCustomer(), null)
-    expect(view.chapters.length).toBe(10)
+    expect(view.chapters.length).toBe(11)
     expect(view.hero.conclusion).toBe('')
     expect(view.hints).toEqual([])
   })
@@ -255,7 +257,8 @@ describe('buildCoverageMatrix — 保障覆盖矩阵（第 2 章数据源）', (
     // 没有可加总的保额时只表达"有没有"）；不能是 '—'（那会读成"没有年金"）
     expect(ly.cells[4]).toEqual({ v: '持有', s: '' })
     // 意外险列：确实没有这类保单 → 仍是 '—'
-    expect(ly.cells[2]).toEqual({ v: '—', s: 'missing' })
+    // 2026-10-24：空格不再标红（横向对比表只并列事实，不标够/缺）
+    expect(ly.cells[2]).toEqual({ v: '—', s: '' })
   })
 
   test('保障险有保单但保额为 0 → 显示 0 且标 missing（与缺口引擎 existing=0 一致）', () => {
@@ -263,7 +266,7 @@ describe('buildCoverageMatrix — 保障覆盖矩阵（第 2 章数据源）', (
     c.policies = [{ id: 'P1', insured_name: '李阳勇', insurance_category: '重疾险', sum_assured: 0, status: 'active' }]
     const m = buildCoverageMatrix(c.members, c.policies)
     const ly = m.rows.find(r => r.name === '李阳勇')
-    expect(ly.cells[0]).toEqual({ v: '0', s: 'missing' }) // 重疾险
+    expect(ly.cells[0]).toEqual({ v: '0', s: '' }) // 重疾险（有保单但保额为 0；不标红）
   })
 
   test('成员×险种矩阵：缺失格 missing / 覆盖格 ok / 底部险种合计（无行内合计列）', () => {
@@ -273,7 +276,7 @@ describe('buildCoverageMatrix — 保障覆盖矩阵（第 2 章数据源）', (
     expect(m.heads).toEqual(['成员', '重疾险', '医疗险', '意外险', '寿险', '年金', '年保费'])
     expect(m.rows.length).toBe(4) // 3 成员 + 底部合计行
     const ly = m.rows.find(r => r.name === '李阳勇')
-    expect(ly.cells[0].s).toBe('missing') // 重疾险缺失
+    expect(ly.cells[0].s).toBe('') // 重疾险缺失：只显示 —，不标红
     expect(ly.cells[3]).toEqual({ v: '100', s: 'ok' }) // 寿险
     expect(ly.cells[4].s).toBe('') // 年金空缺：中性，不标 missing
     expect(ly.cells.length).toBe(6) // 5 险种 + 年保费（仍无"成员合计保额"列）
@@ -367,7 +370,8 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     // 2026-10-21：新增「异常与待核验」章（A1–A6）。它在"有异常时"才出现，且固定紧跟概览，
     // 所以这里先剔除再比顺序，另单独断言它的位置（避免用例依赖"本次有没有异常"）。
     // 2026-10-21：next_steps 章已删除（规则层不给建议）
-    expect(keys.filter(k => k !== 'anomalies')).toEqual(['family_structure', 'family_finance', 'coverage_summary', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'appendix_policies'])
+    // 2026-10-24：成员卡片插在保障汇总之后、缺口之前（先"每类多少"再"每人多少"再"差多少"）
+    expect(keys.filter(k => k !== 'anomalies')).toEqual(['family_structure', 'family_finance', 'coverage_summary', 'member_cards', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'appendix_policies'])
     expect(keys).not.toContain('next_steps')
     if (keys.indexOf('anomalies') !== -1) {
       // buildChapters 直调时没有概览章（那需要 checkup），异常章应在第一位
@@ -386,8 +390,8 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     expect(gap.content).toContain('优先级')
     // 2026-10-21：原「下一步行动」章删除 —— 规则报告只陈述事实，建议归 AI 进阶报告
     expect(ch.find(x => x.key === 'next_steps')).toBeUndefined()
-    // 排序依据作为事实留在缺口章尾注（不再派任务）
-    expect(gap.content).toContain('按缺口额与优先级排序')
+    // 2026-10-24：推算段必须显式标注"不是保单事实"（原尾注"按缺口额与优先级排序"随之移除）
+    expect(gap.content).toContain('模型推算（不是保单事实）')
     // 统一编号：正式章 1..N 连续（附录不编号）—— 不写死总数，只断言连续且从 1 开始
     const nums = ch.filter(x => x.key !== 'appendix_policies').map(x => x.num)
     expect(nums).toEqual(nums.map((_, i) => String(i + 1)))
@@ -452,8 +456,10 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     const ly = pano.rows.find(r => r.name === '李阳勇')
     const life = ly.cells.find(c => c.s === 'ok')
     expect(life.v).toBe('100')
-    expect(ly.cells[0].s).toBe('missing') // 重疾险缺失浅红格
-    expect(cs.pre).toContain('李阳勇缺少')
+    // 2026-10-24（方案第二部分第 5 项）：横向对比表"只并列事实，不标够/缺" → 空格不再标红
+    expect(ly.cells[0].s).toBe('')
+    // 判断性文案已整段删除（汇总是事实视图）
+    expect(cs.pre || '').toBe('')
   })
 
   test('缴费月历章：12 格 + 峰值月高亮（语义定位，不依赖章节序号）', () => {
@@ -533,14 +539,14 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     expect(ap.num).toBeUndefined()
   })
 
-  test('置信度告警：低置信度/待确认保单进特别提醒章（带核对定位数据）', () => {
+  test('置信度提示：低置信度/待确认保单进「数据质量提示（A7）」（带核对定位数据）', () => {
     const c = reportCustomer()
     c.policies.push({ id: 'P1', insured_name: '谢敏', insurance_category: '医疗险', sum_assured: 2000000, annual_premium: 800, effective_date: '2022-03-01', status: 'active', need_review: true })
     c.policies.push({ id: 'P2', insured_name: '李阳勇', insurance_category: '重疾险', sum_assured: 500000, status: 'active', field_confidence: { sum_assured: 0.8 } })
     const ch = buildChapters(c, report)
     const raCh = ch.find(x => x.key === 'risk_alerts')
     expect(raCh).toBeDefined()
-    expect(raCh.title).toBe('特别提醒')
+    expect(raCh.title).toBe('数据质量提示（A7）')
     const ra = raCh.customBlocks.find(b => b.t === 'risk_alerts')
     expect(ra.items.length).toBe(2)
     // need_review → 定位到保额字段
@@ -616,7 +622,7 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     c.policies = []
     const ch = buildChapters(c, {})
     const pano = ch.find(x => x.key === 'coverage_summary').customBlocks.find(b => b.t === 'panorama')
-    expect(pano.rows[0].cells[0].s).toBe('missing')
+    expect(pano.rows[0].cells[0].s).toBe('')
     const tl = ch.find(x => x.key === 'premium_timeline').customBlocks.find(b => b.t === 'timeline')
     expect(tl.items.length).toBe(0)
     const pc = ch.find(x => x.key === 'appendix_policies').customBlocks.find(b => b.t === 'policy_cards')
@@ -633,32 +639,33 @@ function chapterCashDisplay(c) {
 }
 
 // ===== 2026-10-17 真机评审修的两处口径 =====
-describe('保障汇总提示：区分「缺少」与「保额不足」', () => {
-  test('有保单但低于需求 → 写「保额不足（缺口 N 万）」，不得写「缺少」', () => {
-    const c = baseCustomer()
+describe('事实 / 推算分离（2026-10-24 用户决策）', () => {
+  const c = () => {
+    const x = baseCustomer()
     // 本人（经济支柱）有重疾 20 万，低于 50 万参考值 → gap > 0 但并非"没有"
-    c.policies = [
+    x.policies = [
       { id: 'P1', insured_name: '李阳勇', insurance_category: '重疾险', sum_assured: 200000, annual_premium: 3000, effective_date: '2020-01-01', insurance_period: '终身', status: 'active' }
     ]
-    const cs = buildChapters(c, {}).find(x => x.key === 'coverage_summary')
-    // 措辞走 _shortCat（'重疾险' → '重疾'），与缺口章、矩阵列头同一套简称
-    expect(cs.pre).toContain('重疾保额不足')
-    expect(cs.pre).toContain('缺口 30 万')
-    expect(cs.pre).not.toContain('缺少重疾')
-    // 确实没有的险种仍然写"缺少"
-    expect(cs.pre).toContain('缺少寿险')
+    return x
+  }
+
+  test('汇总章不再给"缺少/不足"的判断（原红条已删除）', () => {
+    const cs = buildChapters(c(), {}).find(x => x.key === 'coverage_summary')
+    expect(cs.pre || '').toBe('')
+    // 判断不能从别的字段偷偷回来
+    expect(JSON.stringify(cs)).not.toContain('缺少')
   })
 
-  test('客户版仍走中性措辞（只报"待完善"，不报金额）', () => {
-    const c = baseCustomer()
-    c.policies = [
-      { id: 'P1', insured_name: '李阳勇', insurance_category: '重疾险', sum_assured: 200000, annual_premium: 3000, effective_date: '2020-01-01', insurance_period: '终身', status: 'active' }
-    ]
-    // buildChapters(family, report, gaps, opts)；opts.view === 'shared' 才是客户版
-    const cs = buildChapters(c, {}, null, { view: 'shared' }).find(x => x.key === 'coverage_summary')
-    expect(cs.pre).toContain('保障待完善')
-    expect(cs.pre).not.toContain('缺口')
-    expect(cs.pre).not.toContain('缺少')
+  test('缺口章拆成两段：事实（已有保额 / 无）+ 推算（需求、缺口、优先级）', () => {
+    const gap = buildChapters(c(), {}).find(x => x.key === 'gap_analysis')
+    expect(gap.title).toBe('保额与缺口')
+    // 事实段：有保额写金额，没有写"无"
+    expect(gap.content).toContain('重疾：20 万')
+    expect(gap.content).toContain('寿险：无')
+    // 推算段：显式标注"不是保单事实"
+    expect(gap.content).toContain('模型推算（不是保单事实）')
+    expect(gap.content).toContain('需求 50 万')
+    expect(gap.pre).toContain('模型推算')
   })
 })
 

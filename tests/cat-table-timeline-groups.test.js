@@ -37,27 +37,27 @@ function catBlock() {
 describe('分险种保额合计表', () => {
   test('重疾列合计成员保额（含附加险保额），份数按主险计', () => {
     const b = catBlock()
-    const ci = b.rows.find((r) => r.cat === '重疾险')
+    const ci = b.rows.find((r) => r.cat === '重疾')
     expect(ci.sumText).toBe('95万') // 50 + 30 + 15（附加）
     expect(ci.countText).toBe('2（含附加 1 项）')
     expect(ci.membersText).toContain('张先生')
   })
 
   test('医疗险不给保额合计（报销型），只给份数与覆盖成员', () => {
-    const mi = catBlock().rows.find((r) => r.cat === '医疗险')
+    const mi = catBlock().rows.find((r) => r.cat === '医疗')
     expect(mi.sumText).toBe('—')
     expect(mi.note).toContain('报销型')
     expect(mi.membersText).toBe('张先生')
   })
 
   test('储蓄型（年金）同样不汇总保额', () => {
-    const an = catBlock().rows.find((r) => r.cat === '年金')
+    const an = catBlock().rows.find((r) => r.cat === '储蓄')
     expect(an.sumText).toBe('—')
     expect(an.note).toContain('储蓄型')
   })
 
   test('没有保单的险种不出现（不制造空行）', () => {
-    expect(catBlock().rows.some((r) => r.cat === '意外险')).toBe(false)
+    expect(catBlock().rows.some((r) => r.cat === '意外')).toBe(false)
   })
 })
 

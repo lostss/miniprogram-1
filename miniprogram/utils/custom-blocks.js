@@ -78,6 +78,11 @@ const BLOCK_REGISTRY = {
     required: ['years'],
     defaults: { years: [], maxW: 0, thisYear: 0, currentW: 0 }
   },
+  // 成员卡片（2026-10-24）：每人一张五险种表（保额/年保费/保险期间/缴费期间）
+  member_cards: {
+    required: ['members'],
+    defaults: { members: [] }
+  },
   // 分险种保额合计表（2026-10-21）：险种为行的汇总（矩阵是成员×险种的转置视图）
   cat_table: {
     required: ['rows'],
