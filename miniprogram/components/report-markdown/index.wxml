@@ -55,6 +55,17 @@
             </view>
             <view class="gt-side"></view>
           </view>
+          <!-- 人生阶段带（2026-10-24，方案第四部分）：按基准人年龄推算，标注"推算"；
+               输入缺失（无年龄）时 stages 为空 → 整行不出现（不猜）。 -->
+          <view class="gt-axis" wx:if="{{block.stages.length}}">
+            <view class="gt-label"><text class="gt-ref">人生阶段 · 推算</text></view>
+            <view class="gt-track gt-track--axis">
+              <view class="gt-stage" wx:for="{{block.stages}}" wx:key="label" style="left:{{item.left}}%;width:{{item.width}}%">
+                <text class="gt-stage-txt">{{item.label}}</text>
+              </view>
+            </view>
+            <view class="gt-side"></view>
+          </view>
           <!-- 2026-10-17：按成员分组 —— 成员名只在组头出现一次（原实现逐行重复，
                把产品名挤到第二行且只能 tiny 字号）。 -->
           <block wx:for="{{block.rows}}" wx:for-item="r" wx:key="rowKey">

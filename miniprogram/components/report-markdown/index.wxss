@@ -127,6 +127,11 @@
 /* 轴左侧的基准人标注（"李阳勇 年龄"）：不标的话读者会把"62岁"当成自己的 */
 .gt-ref { font-size:var(--fs-tiny); color:var(--text-tertiary); }
 .gt-bar { position:absolute; top:8rpx; height:20rpx; min-width:6rpx; border-radius:999rpx; background:var(--accent-deep); }
+/* 人生阶段带（2026-10-24）：一行浅色分段，不衬在保单条底下（叠加会盖掉条色、且跨容器易错位） */
+.gt-stage { position:absolute; top:6rpx; height:32rpx; border-radius:var(--r-sm); background:var(--accent-dim); display:flex; align-items:center; justify-content:center; overflow:hidden; }
+.gt-stage:nth-child(even) { background:var(--bg-input); }
+.gt-stage-txt { font-size:20rpx; color:var(--text-tertiary); white-space:nowrap; }
+
 /* 缴费期满竖线（2026-10-18 替代条内斜纹）：20rpx 条高下斜纹在真机不可读；
    一根 2rpx 竖线 + 图例说明"其后只保留保障"，信息不减、噪声近零。
    用白色半透明压深金色条，两种条色（金 / 琥珀）上都可见。 */

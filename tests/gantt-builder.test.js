@@ -182,6 +182,26 @@ describe('gantt-builder — 按成员分组（成员名只出现一次）', func
   })
 })
 
+describe('gantt-builder — 人生阶段带（2026-10-24，方案第四部分）', function () {
+  test('有基准人年龄 → 输出阶段带且不重叠、不越界', function () {
+    const g = buildGantt([pol({ insurance_period: '30年', effective_date: '2015-01-01' })], [{ name: '张三', role: '本人', age: 44 }])
+    expect(g.stages.length).toBeGreaterThan(0)
+    g.stages.forEach((s) => {
+      expect(s.left).toBeGreaterThanOrEqual(0)
+      expect(s.left + s.width).toBeLessThanOrEqual(100.1)
+    })
+    // 左边界递增（相邻段不重叠）
+    for (let i = 1; i < g.stages.length; i++) {
+      expect(g.stages[i].left).toBeGreaterThanOrEqual(g.stages[i - 1].left + g.stages[i - 1].width - 0.2)
+    }
+  })
+
+  test('没有年龄 → 空数组（标注"推算"，输入缺失不画）', function () {
+    const g = buildGantt([pol({ insurance_period: '30年', effective_date: '2015-01-01' })], [{ name: '张三' }])
+    expect(g.stages).toEqual([])
+  })
+})
+
 describe('gantt-builder — 附加险不单独画条（2026-10-21）', function () {
   test('同保单号的附加险并入主险行，行尾标"含附加 1 项"', function () {
     const g = buildGantt([
@@ -232,7 +252,8 @@ describe('gantt-builder — 年龄刻度（2026-10-18 用户提议：按年龄�
 describe('gantt-builder — 守卫：不做无字段支撑的判定（v2.0 评审必改②）', function () {
   // 2026-10-14 扩字段（今天竖线 / 缴费期 / 到期年龄）：白名单**显式**列入，新增字段必须先想清楚再改这里
   // 2026-10-18 加 refName / refAge：年龄轴刻度的基准人（户主），属于轴标注
-  const ALLOWED_BLOCK_KEYS = ['rows', 'ticks', 'startYear', 'endYear', 'nowPct', 'nowYear', 'notes', 'refName', 'refAge']
+  // 2026-10-24 加 stages：人生阶段带（按基准人年龄推算，输入缺失为空数组）
+  const ALLOWED_BLOCK_KEYS = ['rows', 'ticks', 'startYear', 'endYear', 'nowPct', 'nowYear', 'notes', 'refName', 'refAge', 'stages']
   // 2026-10-17 加 firstOfMember：纯渲染分组标记（同一成员的第一行），不属于"空白期/重叠"那类判定字段
   // 2026-10-18 payRatio → payEndPct / payEndAge（缴费期满竖线替换斜纹段）
   // 2026-10-21 加 riderCount：附加险不单独画条，并进主险行的"含附加 N 项"标记

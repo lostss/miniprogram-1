@@ -197,6 +197,34 @@ function buildGantt(policies, members) {
     delete r._age
   })
 
+  // 人生阶段带（2026-10-24，方案第四部分）：以**基准人**年龄划分阶段，画在轴下方一行。
+  // 只做一行色带而不是给每条保单衬底色：后者要跨多个绝对定位容器，漏排一次就会错位，
+  // 且 13 条保单叠 5 段底色会盖掉条本身的颜色。方案原文也要求"标注推算、输入缺失不画"。
+  var stages = []
+  if (refAge > 0) {
+    var STAGES = [
+      { to: 6, label: '学龄前' }, { to: 18, label: '学龄期' }, { to: 35, label: '立业期' },
+      { to: 60, label: '责任期' }, { to: 200, label: '退休期' }
+    ]
+    // 第 y 年时基准人的年龄
+    var ageAtYear = function(y) { return refAge + (y - thisYear) }
+    var cursor = startYear
+    STAGES.forEach(function(st) {
+      // 找到该阶段在轴上的起止年（年龄 < to 的最后一年）
+      var fromY = cursor
+      var toY = startYear
+      for (var y = cursor; y <= endYear; y++) {
+        if (ageAtYear(y) < st.to) toY = y
+      }
+      if (toY < fromY) { cursor = fromY; return }
+      var left = (fromY - startYear) / span * 100
+      var width = (toY - fromY + 1) / span * 100
+      if (width > 0) stages.push({ label: st.label, left: _round1(left), width: _round1(Math.min(width, 100 - left)) })
+      cursor = toY + 1
+      if (cursor > endYear) return
+    })
+  }
+
   // 刻度：首尾必在，中间按 span 均分（步长向上取整，避免出现半年的刻度）
   // 2026-10-18：每个刻度额外带基准人（户主）在该年的年龄 —— 客户读"保障到 72 岁"
   // 比读"保障到 2054 年"更直观；几何不变，只多一行标签。
@@ -225,6 +253,8 @@ function buildGantt(policies, members) {
     // 年龄行的基准人（户主）：刻度第二行"62岁"是**谁的** 62 岁，必须标出来，否则读者会以为是自己的
     refName: refName,
     refAge: refAge,
+    // 人生阶段带（按基准人年龄推算；refAge=0 时为空数组 → 不画、不注释）
+    stages: stages,
     // "今天"竖线位置（稿子：让客户看到当前处在哪）：当前年在轴上；保单尚未生效（未来生效日）
     // 时落在轴左侧 → 给 null，不画（画在 0% 会被误读成"已生效"）
     nowPct: (thisYear >= startYear && thisYear <= endYear) ? _round1((thisYear - startYear) / span * 100) : null,
