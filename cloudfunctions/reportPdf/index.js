@@ -246,7 +246,7 @@ function buildPdf(ctx) {
   // 首页要按它预留高度、最后再回填页码。
   // 2026-10-24：目录里不再有「深度分析（AI 解读）」—— PDF 已不含 AI 章节（只列事实）。
   const tocTitles = ['保障摘要']
-    .concat(['成员卡片', '家庭成员', '保单明细', '异常与待核验', '保障期间（谁保到什么时候）', '保障节点（未来关键时点）', '保费分布', '缴费与现金流（每年固定缴费月）', '经济状况'])
+    .concat(['成员卡片', '家庭成员', '保单明细', '异常与待核验', '保障期间（谁保到什么时候）', '保障节点（未来关键时点）', '保费分布', '缴费与现金流（每年固定缴费月）'])
   const now = new Date()
   const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
   const act = policies.filter(p => p.status === 'active')
@@ -558,19 +558,13 @@ function buildPdf(ctx) {
   trend.notes.forEach(function (n) { _para('· ' + n, 8, { color: '#999999' }) })
   _rule()
 
-  // 经济状况（financial_snapshot 万口径直显；收入缺省时用成员收入合计兜底）
-  _sec('经济状况')
-  const showIncome = income > 0 ? income : memberIncome
-  if (!showIncome && !debtAmt) {
-    _para('家庭财务信息待补全', 10, { color: '#999999' })
-  } else {
-    if (showIncome > 0) _para('家庭年收入：' + _wanStr(showIncome) + (income > 0 ? '' : '（成员收入合计）'), 10)
-    if (debtAmt > 0) {
-      const dt = (fin.debt && fin.debt.type) ? '（' + fin.debt.type + '）' : ''
-      _para('总负债：' + _wanStr(debtAmt) + dt, 10)
-    }
-  }
-  _rule()
+  // 2026-10-27（用户决策）：删除「经济状况」节。
+  // 收入与负债在报告里只服务于"需求推算"，而 PDF 已不含推算；单独印一节收支，
+  // 客户会问"我的收入为什么印在保单清单里"。要看收支请看 App（家庭财务章仍是事实）。
+  void income
+  void memberIncome
+  void debtAmt
+  void fin
 
   // 免责
   // 2026-09-25 PDF 审计：这是法律上最该被读到的一行，却是全篇最浅最小的字（8pt #999999，

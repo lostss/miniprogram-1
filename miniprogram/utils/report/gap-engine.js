@@ -113,15 +113,16 @@ function buildCoverageMatrix(members, policies) {
     if (n > 0) return { v: '0', s: '' }
     return { v: '—', s: '' }
   }
+  // 2026-10-27（用户决策）：矩阵去掉「年保费」列。
+  // 理由：方案第二部分横向对比表只有五个险种列，"只并列保额事实"。
+  // 按成员的保费总额在「成员卡片」顶部已有（更完整：还带各险种拆分），矩阵里再列一遍是重复。
   var out = rows.map(function(row) {
     var cells = cats.map(function(c) { return cellOf(c, row.cells[c], row.counts[c]) })
-    cells.push({ v: row.premiumW > 0 ? fmt(row.premiumW) : '—', s: '' })
     return { name: row.name, cells: cells }
   })
   var grandCells = cats.map(function(c) { return cellOf(c, total[c], totalCounts[c]) })
-  grandCells.push({ v: totalPremiumW > 0 ? fmt(totalPremiumW) : '—', s: '' })
   out.push({ name: '合计', cells: grandCells })
-  return { heads: ['成员'].concat(cats).concat(['年保费']), cats: cats.concat(['年保费']), rows: out }
+  return { heads: ['成员'].concat(cats), cats: cats, rows: out }
 }
 
 module.exports = { buildGaps, buildCoverageMatrix }

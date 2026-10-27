@@ -719,7 +719,10 @@ function buildChapters(family, report, gaps, opts) {
   // 保费收入比判定（报告结构 v2.0 ④）：仅 owner 且收入已知时输出。口径见 thresholds.PREMIUM_RATIO
   // （7%/10% 属行业经验值、非监管标准 → 文案只写"常见参考区间"）。收入缺失时 premiumRatio 回落 0
   // → verdict.code='unknown' → text 为空 → 不输出（有依据才出结论）。
-  var premiumNote = (!shared && totalIncome > 0) ? premiumRatioVerdict(premiumRatio).text : ''
+  // 2026-10-27（用户决策）：去掉"处于常见参考区间 / 略高 / 高于"这类**判断词**，只留数值。
+  // 7%/10% 是行业经验值、不是监管标准，写成"高于参考区间"等于给客户一个伪标准；
+  // 占比数字本身（上面那行"占收入 X%"）是事实，可以留。
+  var premiumNote = ''
   // 保费现金流（2026-10-14 用户稿子）：下一期缴费（含第几期）+ 缴费期满释放的现金流。
   // 口径走跨树契约 premium-trend.js（与 PDF 缴费月历节同源）；这两条都是**事实**，
   // 客户版照样给（金额与期数不属"对客户隐藏的内部口径"），只有占收入比才是 owner 专属。
