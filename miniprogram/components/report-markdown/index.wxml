@@ -258,6 +258,20 @@
           </view>
         </view>
 
+        <!-- 通用小表（2026-10-27）：7d 变化年份表等。列数固定、内容纯文本，
+             横向不滚动（最多 4 列），第一列左对齐、其余右对齐，金额可竖着比。 -->
+        <view wx:if="{{block.t==='data_table' && block.rows.length}}" class="dt-wrap">
+          <view class="dt-tr dt-tr--head">
+            <text class="dt-th" wx:for="{{block.heads}}" wx:key="*this" style="flex:{{index === 0 ? '0 0 150rpx' : '1'}}">{{item}}</text>
+          </view>
+          <!-- ⚠️ 外层索引用 ri、内层用 ci：都用 index 时内层会遮蔽外层，
+               dt-td--first 会套到每个单元格（首列宽度也会错） -->
+          <view class="dt-tr" wx:for="{{block.rows}}" wx:key="ri" wx:for-item="r" wx:for-index="ri">
+            <text class="dt-td {{ci === 0 ? 'dt-td--first' : ''}}" wx:for="{{r}}" wx:key="ci" wx:for-item="c" wx:for-index="ci" style="flex:{{ci === 0 ? '0 0 150rpx' : '1'}}">{{c}}</text>
+          </view>
+          <text class="dt-note" wx:if="{{block.note}}">{{block.note}}</text>
+        </view>
+
         <!-- 成员卡片（2026-10-24，方案第二部分第 6 项）：每人一张固定五行的表。
              回答"这个人一年交多少、每类保到什么时候"——矩阵（按险种横向比）与附录（逐单）都答不了。 -->
         <view wx:if="{{block.t==='member_cards'}}" class="mc-wrap">
@@ -402,6 +416,8 @@
                 <!-- 2026-10-18（v2.0 结论可溯源）：OCR 时 AI 摘录的原文片段。
                      只给 owner（客户版看的是一个"数字从哪抄的"，属内部核对口径）；
                      无出处（老数据/未通过校验）则整行不渲染。 -->
+                <!-- 2026-10-27（方案第五部分）：字段级来源。有存疑的字段点名，其余统一说自动识别 -->
+                <view class="pc-meta-row pc-source" wx:if="{{p.sourceText}}">{{p.sourceText}}</view>
                 <view class="pc-meta-row pc-evidence" wx:if="{{p.evidence && !readonly}}">原文：{{p.evidence}}</view>
               </view>
             </view>

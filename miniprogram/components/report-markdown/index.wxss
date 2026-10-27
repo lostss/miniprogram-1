@@ -331,6 +331,18 @@
 .an-act { flex-shrink:0; font-size:var(--fs-tiny); color:var(--accent-deep); padding:var(--sp-1) var(--sp-2); }
 .an-detail { display:block; margin-top:var(--sp-1); font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-snug); }
 
+/* ========== 通用小表（2026-10-27）==========
+   不画竖线、只给行分隔：4 列在 375pt 上画网格会压字；首列固定 150rpx（年份/险种名），
+   其余等分且右对齐 —— 金额竖着比时小数点能对齐。 */
+.dt-wrap { margin:var(--sp-4) 0; }
+.dt-tr { display:flex; align-items:baseline; }
+.dt-tr--head { border-bottom:1rpx solid var(--border); padding-bottom:var(--sp-2); }
+.dt-tr + .dt-tr { border-top:1rpx solid var(--border); }
+.dt-th { font-size:var(--fs-tiny); color:var(--text-tertiary); }
+.dt-td { font-size:var(--fs-tiny); color:var(--text-secondary); padding:var(--sp-2) 0; text-align:right; font-variant-numeric:tabular-nums; }
+.dt-td--first { text-align:left; color:var(--text-primary); font-weight:var(--fw-semi); }
+.dt-note { display:block; margin-top:var(--sp-2); font-size:var(--fs-tiny); color:var(--text-tertiary); }
+
 /* ========== 成员卡片（2026-10-24）==========
    5 列在 375pt 上必然紧：险种 88rpx、保额 130rpx、保费 120rpx、两个期间各 flex:1 且允许换行。
    金额一律右对齐 + tabular-nums，否则 300/6,000 会跳来跳去。 */
@@ -445,6 +457,8 @@
 /* 原文出处（2026-10-18）：比普通元信息更弱一档（tiny + tertiary），
    它是"核对用的脚注"而不是保单事实本身，不该与保额/保费抢注意力。 */
 .pc-evidence { font-size:var(--fs-tiny); color:var(--text-tertiary); line-height:var(--lh-snug); }
+/* 字段来源（2026-10-27）：比原文出处再弱一档 —— 它是"可信度声明"，不是数据本身 */
+.pc-source { font-size:var(--fs-tiny); color:var(--text-disabled); line-height:var(--lh-snug); }
 
 /* 章节前言（保障汇总缺失提示）：告警语义——浅红底 + 红字，与「特别提醒」risk-item 同构；
    区别于中性灰注释 .md-note（当前无章节使用）。此前无样式定义，默认字号 32rpx 比正文还大 */

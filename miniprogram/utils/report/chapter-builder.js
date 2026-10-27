@@ -845,6 +845,20 @@ function buildChapters(family, report, gaps, opts) {
       createBlock('premium_split', premiumSplit),
       // 年度柱：造型（哪几年高、哪一年掉一档）；精确金额仍写在下方文字里，图不重复标数字
       createBlock('premium_trend', { years: trendYears, maxW: trendMax, thisYear: trend.thisYear, currentW: trend.currentW }),
+      // 7d 表格（2026-10-27，方案第三部分）：柱图给"形状"，表给"原因" —— 两者不重复。
+      // 只列**变化年份**（不逐年铺开）：客户关心的是"哪一年松一口气、因为哪张保单缴完"。
+      createBlock('data_table', {
+        heads: ['年份', '年缴保费', '较上年', '变化原因'],
+        rows: trend.drops.map(function(d) {
+          return [
+            d.y + ' 年',
+            _fmtAmount(d.toW * 10000),
+            '−' + _fmtAmount(d.reducedW * 10000),
+            (d.products || []).length ? (d.products.join('、') + ' 缴费期满') : '缴费期满'
+          ]
+        }),
+        note: '基于现有有效保单推算，不含未来新增；短期险按当前费率计。'
+      }),
       // 月份未知桶（2026-10-24）：不混进 12 格，单独一行给"未记录缴费月"的金额与份数
       createBlock('calendar', {
         items: months,
@@ -876,14 +890,12 @@ function buildChapters(family, report, gaps, opts) {
   // 因此不合并，而是改名、去掉"告警"语气、放在待完善之前（同属数据质量，位置相邻），
   // 并给固定编号 A7，供导读/面谈引用（与 A1–A6 同一套索引体系）。
   // 2026-10-24：去掉"客户版隐藏置信度"的分支 —— 客户与代理人看到同一份数据质量提示
+  // 2026-10-27（用户决策）：A7 与「待完善」合并为**一章「数据质量」**。
+  // 它们确实是两类事实（读到但不确定 vs 没读到），但不是两章 —— 合成一章里两个小节，
+  // 读者滑到附录前只看一处就知道"哪些数要先核对"。分成两章时中间隔着别的章节，容易漏。
   var alerts = buildConfidenceAlerts(active)
-  if (alerts.length > 0) {
-    ch.push({
-      key: 'risk_alerts', title: '数据质量提示（A7）',
-      pre: '以下字段的识别置信度较低，可能与保单原文不一致；已在卡片上标注，供核对时优先看。',
-      customBlocks: [createBlock('risk_alerts', { items: alerts })]
-    })
-  }
+  var dqBlocks = []
+  if (alerts.length > 0) dqBlocks.push(createBlock('risk_alerts', { items: alerts }))
 
   // ======== ⑦ 附录：保单明细 ========
   // 二级分组：先按被保人、再按保险公司归类；保司缺失归「未知保司」
@@ -991,7 +1003,17 @@ function buildChapters(family, report, gaps, opts) {
       // 2026-10-21：附加险在附录里缩进挂在主险下（项目按产品入库，两者本是独立文档）
       isRider: !!p.isRider,
       parentKey: p.parentKey || '',
-      rider_count: p.riderCount || 0
+      rider_count: p.riderCount || 0,
+      // 2026-10-27（方案第五部分）：字段级**来源**。
+      // 逐字段列太长（卡片会被撑成两屏），改成"有存疑的字段点名、其余统一说自动识别"：
+      // 读者要的是"这行数字能不能信"，不是每个字段各加一列。
+      sourceText: (function() {
+        var CN = { sum_assured: '保额', annual_premium: '保费', insurance_period: '期间', beneficiary_name: '受益人', insured_name: '被保人', effective_date: '生效日' }
+        var fc = p.field_confidence || {}
+        var low = Object.keys(fc).filter(function(k) { return Number(fc[k]) < 0.8 })
+        if (!low.length) return '来源：字段自动识别（可对照原文核对）'
+        return '来源：' + low.map(function(k) { return (CN[k] || k) + '待核验' }).join('、')
+      })()
     })
   }
   // 状态分组：失效/异常在前（方案第五部分），有效在后；组内按成员，成员内按保司
@@ -1022,12 +1044,16 @@ function buildChapters(family, report, gaps, opts) {
   // 待完善（2026-10-18 第二步 IA）：原页面级「待完善」清单搬进正文，作为附录前的最后一章。
   // 数据源不变（organize 的 pending，已按保单聚合），只是换渲染位置 —— 页面不再自己列。
   if (ovCk && ovCk.pending && ovCk.pending.length) {
+    dqBlocks.push(createBlock('pending_list', { items: ovCk.pending }))
+  }
+  if (dqBlocks.length) {
+    var dqCount = (alerts.length || 0) + ((ovCk && ovCk.pending && ovCk.pending.length) || 0)
     ch.push({
-      key: 'pending_data', title: '待完善',
-      // 一句话说明这一章存在的意义（否则用户会以为是系统错误清单）
-      pre: '以下保单有字段缺失或待核对，补充后报告中的金额与缺口会更准。',
-      customBlocks: [createBlock('pending_list', { items: ovCk.pending })],
-      unit: ovCk.pending.length + ' 张保单'
+      key: 'data_quality', title: '数据质量',
+      // 说明这一章存在的意义（否则用户会以为是系统错误清单），并写清两个小节的差别
+      pre: '上面是「识别存疑」的字段（读到了但不确定），下面是「字段缺失」（没读到或没填）；补充或核对后，报告中的金额与缺口会更准。',
+      customBlocks: dqBlocks,
+      unit: dqCount + ' 项'
     })
   }
 
@@ -1051,8 +1077,8 @@ function buildChapters(family, report, gaps, opts) {
   // 待完善放最后（附录前）：它是"数据质量补录"清单，不该插在诊断结论之间。
   // 异常清单紧跟概览：它是"先看结论，再看哪几件事要处理"的第二眼
   // 2026-10-21：「下一步行动」章已删除（现阶段不做诊断/不给建议），排序说明并入缺口章尾注
-  // 2026-10-24：数据质量提示（原特别提醒）与待完善相邻 —— 两者都是"数据质量"，只是缺字段 vs 不确定
-  var CHAPTER_SEQ = ['overview', 'anomalies', 'family_structure', 'family_finance', 'coverage_summary', 'member_cards', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'risk_alerts', 'pending_data', 'appendix_policies']
+  // 2026-10-27：原来并列的「数据质量提示（A7）」+「待完善」合并成一章 data_quality
+  var CHAPTER_SEQ = ['overview', 'anomalies', 'family_structure', 'family_finance', 'coverage_summary', 'member_cards', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'data_quality', 'appendix_policies']
   var ordered = []
   CHAPTER_SEQ.forEach(function(k) {
     ch.forEach(function(c) { if (c.key === k) ordered.push(c) })

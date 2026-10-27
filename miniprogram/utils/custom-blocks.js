@@ -79,6 +79,12 @@ const BLOCK_REGISTRY = {
     required: ['years'],
     defaults: { years: [], maxW: 0, thisYear: 0, currentW: 0 }
   },
+  // 通用小表（2026-10-27）：heads + rows（字符串二维数组）+ note。
+  // 用于 7d 变化年份表这类"列数固定、内容纯文本"的表格 —— 不再为每张表定义一个类型。
+  data_table: {
+    required: ['heads', 'rows'],
+    defaults: { heads: [], rows: [], note: '' }
+  },
   // 成员卡片（2026-10-24）：每人一张五险种表（保额/年保费/保险期间/缴费期间）
   member_cards: {
     required: ['members'],

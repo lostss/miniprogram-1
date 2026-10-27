@@ -35,7 +35,7 @@ describe('buildReportView — 报告聚合入口（候选 2 深模块）', () =>
     expect(view.chapters.find(x => x.key === 'family_structure')).toBeDefined()
     expect(view.chapters.find(x => x.key === 'family_finance')).toBeDefined()
     // 置信度告警不再对客户隐藏（这一条是本次决策的直接后果：客户也会看到"字段识别存疑"）
-    expect(view.chapters.find(x => x.key === 'risk_alerts')).toBeDefined()
+    expect(view.chapters.find(x => x.key === 'data_quality')).toBeDefined()
 
     // ② 措辞统一为 owner 口径：区分"缺少"与"保额不足"，不再用中性话术
     const ly = view.hero.alerts.find(a => a.name === '李阳勇')
@@ -71,7 +71,7 @@ describe('buildReportView — 报告聚合入口（候选 2 深模块）', () =>
     expect(view.chapters[0].key).toBe('overview')
     // 待完善必须是附录前最后一章（数据质量补录清单，不该插在诊断结论之间）
     const keys = view.chapters.map(x => x.key)
-    expect(keys[keys.length - 2]).toBe('pending_data')
+    expect(keys[keys.length - 2]).toBe('data_quality')
     // 概览章由 customBlock 承载（组件内渲染），不是 markdown 文本；字段平铺在 block 上
     const ov = view.chapters[0].customBlocks[0]
     expect(ov.t).toBe('overview')
@@ -544,9 +544,10 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     c.policies.push({ id: 'P1', insured_name: '谢敏', insurance_category: '医疗险', sum_assured: 2000000, annual_premium: 800, effective_date: '2022-03-01', status: 'active', need_review: true })
     c.policies.push({ id: 'P2', insured_name: '李阳勇', insurance_category: '重疾险', sum_assured: 500000, status: 'active', field_confidence: { sum_assured: 0.8 } })
     const ch = buildChapters(c, report)
-    const raCh = ch.find(x => x.key === 'risk_alerts')
+    // 2026-10-27：A7 与「待完善」合并为一章「数据质量」，置信度条目在其第一个 block
+    const raCh = ch.find(x => x.key === 'data_quality')
     expect(raCh).toBeDefined()
-    expect(raCh.title).toBe('数据质量提示（A7）')
+    expect(raCh.title).toBe('数据质量')
     const ra = raCh.customBlocks.find(b => b.t === 'risk_alerts')
     expect(ra.items.length).toBe(2)
     // need_review → 定位到保额字段
