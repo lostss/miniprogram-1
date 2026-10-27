@@ -188,6 +188,12 @@ async function writePolicy(db, openid, event) {
     insurance_period: insurance_period || '', sum_assured: norm.sumAssured, annual_premium: norm.annualPremium,
     policy_number: policy_number || '', insurer: normalizeInsurer(insurer), effective_date: norm.effectiveDate,
     policyholder_name: policyholder_name || '', insured_name: resolvedInsuredName, beneficiary_name: beneficiary_name || '',
+    // 2026-10-27：OCR 现在会提这三个字段（prompt 已加），落库时必须透传 ——
+    // 否则"提取了却在写入时被丢掉"，报告侧永远显示未采集。
+    // 缺值统一 0（= 未采集），不用 null：报告/编辑表单都按"0 或空 → 未采集"处理。
+    beneficiary_ratio: (function(v) { var n = Number(v); return n > 0 && n <= 100 ? Math.round(n) : 0 })(data.beneficiary_ratio),
+    payment_month: (function(v) { var n = Number(v); return n >= 1 && n <= 12 ? Math.round(n) : 0 })(data.payment_month),
+    annuity_payout: Math.round(Number(data.annuity_payout) || 0),
     special_agreement: safeSpecialAgreement, payment_method: payment_method || '', payment_period: payment_period || '',
     id: id || 'pol_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
     family_id: familyId, member_id: resolvedMemberId,

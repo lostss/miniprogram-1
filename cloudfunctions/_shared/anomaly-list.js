@@ -98,7 +98,12 @@ function buildAnomalies(input) {
   // 2026-10-27（方案 A3 原义）：判据从"姓名为空"升级为**受益比例**。
   // 方案要的是"受益人比例缺失"，而姓名空只是其中一种情形（还有"填了名字但没填比例"）。
   // 两种情况都进 A3，但 detail 分开写 —— "没填受益人"与"填了但没填比例"对用户是两个动作。
-  const _ratioOf = function(p) { var v = Number(p && p.beneficiary_ratio); return isNaN(v) ? null : v }
+  // ⚠️ 0 与缺失同义（写库约定：未采集存 0）→ 都返回 null（= 未采集），
+  // 否则 0% 会被当成"比例非法"逐条列出来，把 A1/A2 淹掉。
+  const _ratioOf = function(p) {
+    var v = Number(p && p.beneficiary_ratio)
+    return (isNaN(v) || v <= 0) ? null : v
+  }
   // 2026-10-27（按方案字面收口）：A3 = 受益人**比例**缺失。
   // 三种情形都算：没有受益人、比例非法（≤0 / >100）、比例未采集。
   // 但"未采集"往往一次几十份（OCR 不采该字段）→ **聚合成一条**，否则 A1/A2 会被淹掉。

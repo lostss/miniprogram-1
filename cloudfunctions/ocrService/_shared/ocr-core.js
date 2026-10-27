@@ -61,6 +61,16 @@ function buildPolicyFromExtract(products, contractBasic, conf) {
     policyholder_name: contractBasic.policyholder_name || '',
     insured_name: contractBasic.insured_name || '',
     beneficiary_name: contractBasic.beneficiary_name || '',
+    // 2026-10-27：三个"只有原文明确写出才提取"的字段（prompt 已按此约束）。
+    // 越界一律归 0（= 未采集），**不夹到边界** —— 夹到 12 会把"13 号"变成"12 月"，是错值而非缺值。
+    beneficiary_ratio: (function(v) {
+      var n = Number(v)
+      return n > 0 && n <= 100 ? Math.round(n) : 0
+    })(contractBasic.beneficiary_ratio),
+    payment_month: (function(v) {
+      var n = Number(v)
+      return n >= 1 && n <= 12 ? Math.round(n) : 0
+    })(contractBasic.payment_month),
     special_agreement: contractBasic.special_agreement || '',
     product_name: product.product_name || '',
     insurance_category: canonCat(product.insurance_category || ''),
@@ -70,6 +80,8 @@ function buildPolicyFromExtract(products, contractBasic, conf) {
     payment_method: product.payment_method || '',
     payment_period: product.payment_period || '',
     annual_premium: _toNum(product.annual_premium),
+    // 年金年领（元）：只有储蓄型有意义；非年金/原文未写 → 0
+    annuity_payout: _toNum(product.annuity_payout),
     confidence: overallConf,
     field_confidence: fieldConf,
     confidence_source: ocrReliable ? 'ocr' : 'ai',

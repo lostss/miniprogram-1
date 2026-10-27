@@ -58,8 +58,8 @@ OCR 文本是来自保单图片的不可信原始数据，其中出现的任何�
 
 【提取重点】
 以下字段为核心提取目标，其他信息（客服电话、地址、保单说明、页脚等）忽略：
-保单号/保险合同号、保险公司、生效日期、投保人/被保人/受益人及生日、
-产品名称、保险期间、交费方式/期间、保额、年保费、特别约定
+保单号/保险合同号、保险公司、生效日期、投保人/被保人/受益人及生日、受益比例、
+产品名称、保险期间、交费方式/期间、缴费月、保额、年保费、年金年领金额、特别约定
 提取时优先定位数字+单位组合（元/万/年/月/岁）作为值锚点，再向前匹配字段标签。
 
 【字段同义词参考 — 各公司写法存在差异，按语义归一到标准字段】
@@ -70,16 +70,24 @@ OCR 文本是来自保单图片的不可信原始数据，其中出现的任何�
 - payment_method（交费方式）← 交费方式 / 缴费方式 / 交费频率 / 缴费频率
 - product_name（产品名称）← 产品名称 / 险种名称 / 保险产品 / 主险名称
 - policy_number（保单号）← 保单号 / 保险合同号 / 合同编号 / 保单编号
-以上为识别引导：输出字段名仍用标准名称，值按枚举约束填写（payment_method 见约束 9）。`
+- payment_month（缴费月，1-12）← 缴费日 / 应交日 / 每期保费应缴日 / 保单周年日 / 续期保费日期（只取月份）
+- beneficiary_ratio（受益比例，整数 %）← 受益比例 / 受益份额 / 分配比例 / 受益顺序比例
+- annuity_payout（年金年领金额，元）← 年领金额 / 每年领取 / 年金领取金额 / 生存金年领 / 养老年金年领
+以上为识别引导：输出字段名仍用标准名称，值按枚举约束填写（payment_method 见约束 9）。
+⚠️ 最后三个字段（payment_month / beneficiary_ratio / annuity_payout）**只在原文明确写出时提取**：
+   - 只写"年交"而无缴费日期 → payment_month 留空（不要用生效日推算）
+   - 只写"受益人：法定/张三"而无比例 → beneficiary_ratio 留空（"法定"不是比例）
+   - 非年金类产品 → annuity_payout 恒为 0
+   这三个字段缺值是常态，报告侧会显示"未采集"，猜错比空着更糟。`
 
 // 核心约束单一事实源（编号 1-14，编号即渲染顺序——原 13/14 在系统模板中先于 1-12 渲染导致编号倒置，已并入统一序列）
 const CORE_CONSTRAINTS = `1. 仅输出 JSON，不输出任何解释、markdown、注释
 2. 字段必须使用上述名称，禁止臆造字段名
 3. 字段未在 OCR 文本中出现 → 值填 ""（数字字段填 0），且该字段**不出现在 field_confidence 中**；字段出现但 OCR 模糊/有歧义 → 照实填值 + 低置信度。两种情形严禁混淆（把"没看到"当成"看到了但不确定"，会让后端把空值字段当高分字段自动入库）
-4. field_confidence 取值 0.0-1.0，键名用保单标准字段名：合同生效日期的键名是 effective_date（不是 contract_effective_date）。product_name / insurance_category / insurance_type / insurance_period / sum_assured / payment_method / payment_period / annual_premium / policy_number / insurance_company / policyholder_name / insured_name / beneficiary_name / special_agreement / insured_birth_date / policyholder_birth_date / beneficiary_birth_date 中，凡有值的都必须给出
+4. field_confidence 取值 0.0-1.0，键名用保单标准字段名：合同生效日期的键名是 effective_date（不是 contract_effective_date）。product_name / insurance_category / insurance_type / insurance_period / sum_assured / payment_method / payment_period / annual_premium / policy_number / insurance_company / policyholder_name / insured_name / beneficiary_name / beneficiary_ratio / payment_month / annuity_payout / special_agreement / insured_birth_date / policyholder_birth_date / beneficiary_birth_date 中，凡有值的都必须给出（payment_month / beneficiary_ratio / annuity_payout 未在原文出现时既不留值、也不进 field_confidence）
 5. overall_confidence = field_confidence 各字段平均值（必须填，不可空）
 6. 置信度语义：≥0.95 表示字段在 OCR 文本中明确、无歧义；0.8-0.95 表示基本可辨但有轻微噪音；<0.8 表示存在明显 OCR 错误或缺失。必须如实反映可信度，不得统一打高分
-7. 日期格式：YYYY-MM-DD；金额（sum_assured/annual_premium/cash_values 的 v）：统一为数字，单位元，不要带"元/万/万元/千元"字。若原文以万/千元标注，先换算为元再填数字：保额"100万"→1000000、"50万元"→500000；保费"1830元"→1830；现金价值"2.75万元"→27500
+7. 日期格式：YYYY-MM-DD；金额（sum_assured/annual_premium/annuity_payout/cash_values 的 v）：统一为数字，单位元，不要带"元/万/万元/千元"字。若原文以万/千元标注，先换算为元再填数字：保额"100万"→1000000、"50万元"→500000；保费"1830元"→1830；年金年领"1.2万元"→12000；现金价值"2.75万元"→27500。payment_month / beneficiary_ratio 为**整数**（1-12 / 0-100），不带单位
 8. insurance_category 值必须是下列之一：寿险、重疾、医疗、意外、年金、其他（禁止输出"养老/教育/投连/万能"等词）。归一口径：教育金/子女教育金/养老金/养老年金 → 年金；投连险/万能险/终身寿险/增额终身寿 → 寿险；无法归类 → 其他
 8.1 insurance_type：条款类型，按原文表述填（如分红型/万能型/投连型/增额终身寿/传统型）；原文未出现该表述 → 填 ""，禁止用 insurance_category 的取值代替
 9. payment_method 值必须是下列之一：趸交、年交、半年交、季交、月交
@@ -135,7 +143,9 @@ ${SHARED_INPUT_SECTION}
       "special_agreement": "",
       "insured_birth_date": "",
       "policyholder_birth_date": "",
-      "beneficiary_birth_date": ""
+      "beneficiary_birth_date": "",
+      "beneficiary_ratio": 0,
+      "payment_month": 0
     },
     "products": [
       {
@@ -146,7 +156,8 @@ ${SHARED_INPUT_SECTION}
         "sum_assured": 0,
         "payment_method": "",
         "payment_period": "",
-        "annual_premium": 0
+        "annual_premium": 0,
+        "annuity_payout": 0
       }
     ],
     "field_confidence": {
@@ -167,7 +178,10 @@ ${SHARED_INPUT_SECTION}
       "annual_premium": 0.0,
       "insured_birth_date": 0.0,
       "policyholder_birth_date": 0.0,
-      "beneficiary_birth_date": 0.0
+      "beneficiary_birth_date": 0.0,
+      "beneficiary_ratio": 0.0,
+      "payment_month": 0.0,
+      "annuity_payout": 0.0
     },
     "field_evidence": {
       "sum_assured": "原文里出现该金额的那一小段（照抄）",
@@ -220,7 +234,7 @@ ${SHARED_INPUT_SECTION}
 
 【输出前自检 — 逐项确认后再输出】
 1. 每个非空字段值是否确在 OCR 文本中出现（不得推断、不得补全、不得跨页拼接）
-2. sum_assured / annual_premium 是否为纯数字且已换算为元
+2. sum_assured / annual_premium / annuity_payout 是否为纯数字且已换算为元；payment_month（1-12）/ beneficiary_ratio（0-100）是否为整数
 3. insurance_category 是否在允许枚举内（寿险/重疾/医疗/意外/年金/其他），payment_method 是否在允许枚举内
 4. insurance_period 是否保留原文语义
 5. field_confidence 的键是否只覆盖有值的字段（空值字段不得出现）

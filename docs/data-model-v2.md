@@ -154,11 +154,19 @@
   insurance_category: '寿险',         // 重疾险 | 医疗险 | 意外险 | 寿险 | 年金 | 其他
   sum_assured: 1000000,     // 保额（元）
   annual_premium: 2230,     // 年缴保费（元）
+  annuity_payout: 0,        // 年金年领金额（元）；非年金/原文未写 → 0（2026-10-27 新增）
 
   // === 日期与状态 ===
   effective_date: '2020-06-01',
   expiry_date: '2050-06-01',
+  payment_month: 0,         // 缴费月 1-12；0 = 未采集（报告退回"按生效月估算"并明示，2026-10-27 新增）
   status: 'active',         // active | expired | pending | cancelled
+
+  // === 受益与核保 ===
+  beneficiary_name: '法定',
+  beneficiary_ratio: 0,     // 受益比例 0-100；0 = 未采集（A3 只在"填了但非法"时逐条列，未采集聚合一条，2026-10-27 新增）
+  exclusion_marked: false,  // 除外承保标记（顾问手动，条款内容 OCR 不解读）
+  exclusion_note: '',
 
   // === OCR 元数据 ===
   confidence: 0.95,
@@ -173,6 +181,10 @@
   updated_at: Date
 }
 ```
+
+**三个 2026-10-27 新增字段的取舍**：`payment_month` / `beneficiary_ratio` / `annuity_payout` 都是"原文明确写了才提取，否则为 0"——
+OCR prompt 已按此约束（缺值是常态，报告侧显示"未采集"），写库与编辑 Sheet 都按 **0 = 未采集** 处理。
+**越界值不夹到边界**（13 号不会变成 12 月、120% 不会变成 100%）：那是错值，不是缺值；错值会静默污染月历与 A3 判据。
 
 **保额口径（2026-09-22 产品决策：医疗险报销限额也算保额）**：`sum_assured` 存的是**保单载明的"保险金额"**；医疗险填的是其**各项医疗费用保险金的年限额之和** —— 这不是我们换算出来的口径，条款原文即如此定义（见 `tests/fixtures/policy-clauses/康健华贵B款医疗保险.txt` 第四条：「本合同的保险金额为投保时约定的保障计划类别对应的各项医疗费用保险金**年限额之和**，约定的保险金额将在保险单上载明」）。
 
