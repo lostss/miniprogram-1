@@ -23,7 +23,7 @@ var { buildCoverageMatrix } = require('./gap-engine')
 var { resolvePillar } = require('../gap-core')
 var { buildTimeline } = require('./timeline-builder')
 var { buildGantt } = require('./gantt-builder')
-var { canonCat, premiumRatioVerdict } = require('../thresholds')
+var { canonCat } = require('../thresholds')
 // 保费现金流趋势：跨树契约（与 reportPdf 缴费月历节同源）
 var { buildPremiumTrend } = require('../premium-trend')
 var { yuanToWan, fmtYuan } = require('../amount')
@@ -203,11 +203,10 @@ function buildChapters(family, report, gaps, opts) {
   var members = norm.members
   var policies = norm.policies
   var active = norm.active
-  var debt = norm.debt
-  var totalIncome = norm.totalIncome
   var annualPremiumW = norm.annualPremiumW
-  var premiumRatio = norm.premiumRatio
   var policyCount = norm.policyCount
+  // 2026-10-27：totalIncome / premiumRatio / debt 不再进正文（家庭财务章已移出），
+  // 这里不再解构，避免"解构了却没用"的死变量。
 
   var matrix = buildCoverageMatrix(members, active)
 
@@ -470,7 +469,10 @@ function buildChapters(family, report, gaps, opts) {
     { key: 'now', title: '未来 12 个月', test: function(y) { return y <= nowY + 1 } },
     { key: 'mid', title: '中期（1–5 年）', test: function(y) { return y > nowY + 1 && y <= nowY + 5 } },
     { key: 'far', title: '长期（5 年以上）', test: function(y) { return y > nowY + 5 } },
-    { key: 'past', title: '已过（核对状态）', test: function(y) { return y < nowY } }
+    // 2026-10-27：原「已过（核对状态）」→「待核对（已到期）」。
+    // 这组捕捉的是一个真实事实：**到期日已过、但状态字段仍写"有效"**（A1 只认 status≠active）。
+    // 改名去掉"已过"的诊断味，同时保留这组 —— 删掉它，这类数据就无处提示。
+    { key: 'past', title: '待核对（已到期）', test: function(y) { return y < nowY } }
   ]
   var tlGroups = TL_GROUPS.map(function(g) {
     return { key: g.key, title: g.title, items: timelineItems.filter(function(it) { return g.test(it.y) }) }
@@ -651,14 +653,9 @@ function buildChapters(family, report, gaps, opts) {
     }
     return arr
   })()
-  var peakMonth = months.filter(function(x) { return x.h === 2 }).map(function(x) { return x.m + '月' }).join('、')
-  // 保费收入比判定（报告结构 v2.0 ④）：仅 owner 且收入已知时输出。口径见 thresholds.PREMIUM_RATIO
-  // （7%/10% 属行业经验值、非监管标准 → 文案只写"常见参考区间"）。收入缺失时 premiumRatio 回落 0
-  // → verdict.code='unknown' → text 为空 → 不输出（有依据才出结论）。
-  // 2026-10-27（用户决策）：去掉"处于常见参考区间 / 略高 / 高于"这类**判断词**，只留数值。
-  // 7%/10% 是行业经验值、不是监管标准，写成"高于参考区间"等于给客户一个伪标准；
-  // 占比数字本身（上面那行"占收入 X%"）是事实，可以留。
-  var premiumNote = ''
+  // 2026-10-27（用户决策）：保费占收入比**整块移出正文** —— 占比与被删的"家庭财务"章绑定，
+  // 基数不可见时给出比例属于"引用不可见数据"；判定词（偏高/合理）更是拿行业经验值当标准。
+  // peakMonth 仍由月历格高亮表达（cal-peak），不再拼成一句"请提前安排资金"的劝告。
   // 保费现金流（2026-10-14 用户稿子）：下一期缴费（含第几期）+ 缴费期满释放的现金流。
   // 口径走跨树契约 premium-trend.js（与 PDF 缴费月历节同源）；这两条都是**事实**，
   // 客户版照样给（金额与期数不属"对客户隐藏的内部口径"），只有占收入比才是 owner 专属。
@@ -832,20 +829,14 @@ function buildChapters(family, report, gaps, opts) {
         })()
       })
     ],
-    // 下方提示：无列表垂直排列（年保费 → 峰值月），markdown-render 以 <br> 换行
-    // 客户版：占收入比标注"家庭年收入占比，仅供参考"（数据保留，缓解"推销感"顾虑）
-    // 2026-09-09：家庭年收入缺失时不再输出"（占收入 0%）"——data-normalizer 在 totalIncome=0 时
-    // premiumRatio 回落 0，原实现直接拼成 0%，与"收入未填写"事实矛盾；改为显式缺失说明
-    // 2026-09-12 客户版去除占收入比：家庭财务章对客户隐藏（:181），客户无从核对"家庭年收入"基数，
-    // 引用不可见数据并附"仅供参考"是双重减分（数字算不出 + 结论自我注销）。owner 侧保留占比。
-    // 2026-10-13 报告结构 v2.0 ④：owner 侧补"参考区间判定"（thresholds.PREMIUM_RATIO 7%/10%）。
-    // ⚠️ 判定文案只随 owner 的占比一起出现 —— 客户版不显示占比，也不得显示基于占比的结论
-    // （引用不可见数据下结论，与上一行同一条口径）；家庭年收入缺失时不判定（verdict.code='unknown'）。
-    content: '年总保费 ' + annualPremiumW + '万' + (!shared
-      ? (totalIncome > 0 ? '（占收入 ' + premiumRatio + '%）' : '（家庭年收入未填写，暂不计算占比）')
-      : '') + (premiumNote ? '<br>' + premiumNote : '')
+    // 下方提示：无列表垂直排列（年保费 → 变动说明），markdown-render 以 <br> 换行
+    // 2026-10-27（用户决策：正文纯事实）：
+    //   ① 删掉「（占收入 X%）」—— 家庭财务章已移出正文，读者看得到占比却找不到收入基数；
+    //      引用不可见数据给出的比例，比不给更糟（与当初删客户版占比是同一条理由）。
+    //   ② 删掉「💡 X月缴费压力最大，请提前安排资金」——“请提前安排”是建议，不是事实；
+    //      峰值月本身已经用高亮格表达了，不需要再翻译成一句劝告。
+    content: '年总保费 ' + annualPremiumW + '万'
       + (trendLines.length ? '<br>' + trendLines.join('<br>') : '')
-      + (peakMonth ? '<br>💡 ' + peakMonth + '缴费压力最大，请提前安排资金' : '')
   })
 
   // ======== 数据质量提示（原「特别提醒」，2026-10-24 改造）========
@@ -1014,9 +1005,11 @@ function buildChapters(family, report, gaps, opts) {
   if (dqBlocks.length) {
     var dqCount = (alerts.length || 0) + ((ovCk && ovCk.pending && ovCk.pending.length) || 0)
     ch.push({
-      key: 'data_quality', title: '数据质量',
-      // 说明这一章存在的意义（否则用户会以为是系统错误清单），并写清两个小节的差别
-      pre: '上面是「识别存疑」的字段（读到了但不确定），下面是「字段缺失」（没读到或没填）；补充或核对后，报告中的金额与缺口会更准。',
+      // 2026-10-27：降级为**附录前的附注**（不占章号）——方案正文只有六部分，
+      // A7/待完善属质控信息；编号会让它看起来像正文结论，其实只是"哪些数要先核对"。
+      key: 'data_quality', title: '数据质量（附注）',
+      // 写清两个小节的差别；不再引用已删除的"缺口"（原先写"金额与缺口会更准"，缺口推算已移出报告）
+      pre: '上面是「识别存疑」的字段（读到了但不确定），下面是「字段缺失」（没读到或没填）；补充或核对后，本报告中的金额会更准。',
       customBlocks: dqBlocks,
       unit: dqCount + ' 项'
     })
@@ -1053,9 +1046,12 @@ function buildChapters(family, report, gaps, opts) {
 
   // 统一章节编号：正式章按渲染顺序重排 1..N（附录不编号）——客户版跳过①②后序号依然连续，
   // 缺口/收口/告警章按是否存在动态插入后编号自动顺延
+  // 2026-10-27：数据质量也**不占章号**（降级为附录前的附注）——
+  // 方案正文只有六部分，A7/待完善属"质控信息"，编号会让它看起来像正文结论。
+  var UNNUMBERED = ['appendix_policies', 'data_quality']
   var seq = 0
   for (var ci = 0; ci < ordered.length; ci++) {
-    if (ordered[ci].key !== 'appendix_policies') { seq++; ordered[ci].num = String(seq) }
+    if (UNNUMBERED.indexOf(ordered[ci].key) === -1) { seq++; ordered[ci].num = String(seq) }
   }
   return ordered
 }

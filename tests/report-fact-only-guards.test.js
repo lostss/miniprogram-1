@@ -79,6 +79,45 @@ describe('③ 概览构成按年缴保费口径', () => {
   })
 })
 
+describe('③b 保费章彻底纯事实（2026-10-27）', () => {
+  function calContent() {
+    const f = {
+      name: '张家',
+      members: [{ member_id: 'm1', name: '张先生', role: '本人', age: 38, income: 30 }],
+      policies: [{
+        id: 'p1', insured_name: '张先生', insurance_category: '重疾险', sum_assured: 500000,
+        annual_premium: 6000, status: 'active', effective_date: '2020-01-01', insurance_period: '终身'
+      }]
+    }
+    return buildReportView(f, {}).chapters.find((c) => c.key === 'premium_calendar').content
+  }
+
+  test('不再有「占收入 X%」（收入基数已随家庭财务章移出正文）', () => {
+    expect(calContent()).not.toContain('占收入')
+  })
+
+  test('不再有「请提前安排资金」这类建议句（峰值月由格高亮表达）', () => {
+    const c = calContent()
+    expect(c).not.toContain('缴费压力最大')
+    expect(c).not.toContain('请提前安排')
+  })
+
+  test('不再有保费占收入比的区间判定词（行业经验值不是标准）', () => {
+    const c = calContent()
+    expect(c).not.toContain('参考区间')
+    expect(c).not.toContain('偏高')
+  })
+})
+
+describe('③c 客户版不得出现 AI 入口（2026-10-27）', () => {
+  test('进阶报告区必须判 !isShared（此前只判 hasPolicy，客户也能看到入口）', () => {
+    const page = read('miniprogram/pages/report/index.wxml')
+    expect(page).toContain('wx:if="{{hasPolicy && !isShared}}"')
+    // 反向：不得存在只判 hasPolicy 的进阶区
+    expect(page).not.toContain('class="adv-head-card" wx:if="{{hasPolicy}}"')
+  })
+})
+
 describe('④ 成员卡片四修', () => {
   function fam() {
     return {

@@ -39,7 +39,7 @@ describe('① 数据质量合并章', () => {
     expect(keys).not.toContain('risk_alerts')
     expect(keys).not.toContain('pending_data')
     const dq = view.chapters.find((c) => c.key === 'data_quality')
-    expect(dq.title).toBe('数据质量')
+    expect(dq.title).toBe('数据质量（附注）')
     const types = dq.customBlocks.map((b) => b.t)
     expect(types).toContain('risk_alerts') // 读到了但不确定
     // 待完善小节只在有缺字段时出现（本夹具保费/保额齐全，可能没有）

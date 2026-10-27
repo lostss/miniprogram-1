@@ -434,7 +434,9 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     expect(cal).toBeDefined()
     expect(cal.items.length).toBe(12)
     expect(cal.items[0].h).toBe(2) // 1月生效 → 峰值高亮
-    expect(calCh.content).toContain('缴费压力最大')
+    // 2026-10-27：峰值只由格高亮表达，不再拼"请提前安排资金"这类建议句
+    expect(calCh.content).not.toContain('缴费压力最大')
+    expect(calCh.content).not.toContain('请提前安排')
   })
 
   test('保障节点章：排除每年缴费事件，仅保留到期/缴满关键节点（设计稿 v4，语义定位）', () => {
@@ -511,7 +513,10 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     // 2026-10-27：A7 与「待完善」合并为一章「数据质量」，置信度条目在其第一个 block
     const raCh = ch.find(x => x.key === 'data_quality')
     expect(raCh).toBeDefined()
-    expect(raCh.title).toBe('数据质量')
+    // 2026-10-27：降级为附注（不占章号），标题带「（附注）」
+    expect(raCh.title).toBe('数据质量（附注）')
+    // 附注不编号
+    expect(raCh.num).toBeUndefined()
     const ra = raCh.customBlocks.find(b => b.t === 'risk_alerts')
     expect(ra.items.length).toBe(2)
     // need_review → 定位到保额字段

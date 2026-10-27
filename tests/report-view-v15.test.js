@@ -94,10 +94,13 @@ describe('「已有保额」章（2026-10-27 起只列事实）', function () {
     expect(cal.content).not.toContain('仅供参考')
   })
 
-  test('owner 版月历保留占收入比', function () {
+  test('月历不再有占收入比（2026-10-27：收入基数已随家庭财务章移出正文）', function () {
     const view = buildReportView(family(), {})
     const cal = view.chapters.find(c => c.key === 'premium_calendar')
-    expect(cal.content).toContain('占收入')
+    // 占比与被删的"家庭财务"章绑定：基数不可见时给比例 = 引用不可见数据
+    expect(cal.content).not.toContain('占收入')
+    // 判定词也一并移除（7%/10% 是行业经验值，不是监管标准）
+    expect(cal.content).not.toContain('参考区间')
   })
 })
 

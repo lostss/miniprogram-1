@@ -38,7 +38,7 @@ function _maskMembers(members) {
 /**
  * 事实脱敏（客户版专用，2026-09-20 流程审计 P2-3）。
  * 口径与成员/保单一致：姓名走同一 _maskName；自由文本值走 pii-rules.desensitize
- * （身份证/手机号/银行卡）。注意：值里的姓名不做二次掩码——客户版叙事本就保留 AI 全文
+ * （身份证/手机号/银行卡）。注意：值里的姓名不做二次掩码（2026-10-27：AI 叙事已不再随分享下发，见下方 report 字段清理）
  * （用户决策 2026-08-31「叙事给客户看」），此处只需不低于同一披露标准。
  * 保单节点属性（subject_type='policy'）照样带上：buildFactsView 会自行过滤，
  * 保持与 owner 版投影一致，避免"两个入口字段集不同"的新漂移。
@@ -140,7 +140,7 @@ async function getSharedFamily(db, openid, event) {
     // 2026-09-19：实现抽到 _shared/family-compat.js，本处与 owner 读路径共用同一函数
     applyFamilyCompat(family)
 
-    // 脱敏：姓名/保单号；剔除特别约定；客户版保留 AI 深度分析叙事（用户决策 2026-08-31：叙事给客户看）
+    // 脱敏：姓名/保单号；剔除特别约定；2026-10-27：AI 叙事**不再**下发（用户决策：客户手里只留化验单），见下方 family.report 字段删除
     family.name = _maskFamilyName(family.name)
     family.family_name = family.name
     family.members = _maskMembers(family.members)
