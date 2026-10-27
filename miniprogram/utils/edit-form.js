@@ -108,7 +108,10 @@ function _policyFields(p) {
     { title: '人员信息', fields: [
       { key: 'insured_name', label: '被保险人', value: p.insured_name || '', placeholder: '姓名', tone: tone('insured_name'), required: true },
       { key: 'policyholder_name', label: '投保人', value: p.policyholder_name || '', placeholder: '姓名', tone: tone('policyholder_name') },
-      { key: 'beneficiary_name', label: '受益人', value: p.beneficiary_name || '', placeholder: '姓名', tone: tone('beneficiary_name') }
+      { key: 'beneficiary_name', label: '受益人', value: p.beneficiary_name || '', placeholder: '姓名', tone: tone('beneficiary_name') },
+      // 2026-10-27（A3 判据）：受益人比例。OCR 只读到姓名、读不到比例，
+      // 所以此前 A3 只能退化成"姓名为空"，与方案要的"比例缺失"不是一回事。
+      { key: 'beneficiary_ratio', label: '受益比例(%)', value: p.beneficiary_ratio ? String(p.beneficiary_ratio) : '', placeholder: '如100', type: 'digit' }
     ] },
     // 2026-10-21：核保信息（A4 除外承保）。用既有 selector 控件表达"是/否"，
     // 不新增 switch 类型 —— 多一个控件类型就要同时改 sheet 渲染与取值映射，收益不成比例。
@@ -120,7 +123,11 @@ function _policyFields(p) {
     { title: '缴费信息', fields: [
       { key: 'payment_method', label: '缴费方式', value: p.payment_method || '', placeholder: '请选择', type: 'selector', options: PAYMENT_METHOD_OPTIONS, tone: tone('payment_method') },
       { key: 'payment_period', label: '缴费期限', value: p.payment_period || '', placeholder: '如20年/交至60岁/月交', type: 'text', tone: tone('payment_period') },
-      { key: 'annual_premium', label: '年缴保费(元)', value: p.annual_premium ? String(p.annual_premium) : '', placeholder: '如8000', type: 'number', tone: tone('annual_premium'), required: true, pattern: '^\\d+(\\.\\d+)?$', patternMsg: '请输入数字' }
+      { key: 'annual_premium', label: '年缴保费(元)', value: p.annual_premium ? String(p.annual_premium) : '', placeholder: '如8000', type: 'number', tone: tone('annual_premium'), required: true, pattern: '^\\d+(\\.\\d+)?$', patternMsg: '请输入数字' },
+      // 2026-10-27：真实缴费月（1–12）。不填时月历退回"按生效月估算"并明示 —— 不猜。
+      { key: 'payment_month', label: '缴费月', value: p.payment_month ? String(p.payment_month) : '', placeholder: '1-12，留空按生效月估算', type: 'digit', pattern: '^([1-9]|1[0-2])$', patternMsg: '请填 1-12' },
+      // 储蓄型年领金额：成员卡片的"储蓄"行要显示年领而不是保额（年金多数没有可加总的保额）
+      { key: 'annuity_payout', label: '年领金额(元)', value: p.annuity_payout ? String(p.annuity_payout) : '', placeholder: '仅储蓄型填写，如12000', type: 'number' }
     ] },
     { title: '保障信息', fields: [
       // 2026-09-28 全面审计 P2（静默改数据）：原 `String(Math.round(yuanToWan(p.sum_assured)))` 把
@@ -313,6 +320,10 @@ function buildUpdateData(mode, vals, family, editMemberIdx) {
       if (nextMarked !== origMarked) data.exclusion_marked = nextMarked
     }
     if (vals.exclusion_note !== undefined) data.exclusion_note = vals.exclusion_note
+    // 2026-10-27：三个手动字段（清空 → 发空串，语义为"未采集"，与其它可选项同规则）
+    if (vals.payment_month !== undefined) data.payment_month = vals.payment_month === '' ? '' : Number(vals.payment_month)
+    if (vals.beneficiary_ratio !== undefined) data.beneficiary_ratio = vals.beneficiary_ratio === '' ? '' : Number(vals.beneficiary_ratio)
+    if (vals.annuity_payout !== undefined) data.annuity_payout = vals.annuity_payout === '' ? '' : Number(vals.annuity_payout)
 
     return { updatePolicy: { policyId: editMemberIdx || '', data: data } }
   }

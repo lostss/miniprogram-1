@@ -48,6 +48,17 @@ describe('buildAnomalies — A1–A6', () => {
     expect(g[1].items.length).toBe(1)
   })
 
+  test('A3 判据升级：有受益人但比例填错 → 进 A3；比例"未采集"不进（属待完善）', () => {
+    const bad = buildAnomalies({ policies: [P({ beneficiary_name: '张三', beneficiary_ratio: 120 })], now: NOW })
+    const a3 = bad.find((x) => x.code === 'A3')
+    expect(a3).toBeTruthy()
+    expect(a3.items[0].detail).toContain('120%')
+
+    // 比例 60% 是**合法**值（多受益人情形），不进 A3；只有非法值（≤0 / >100）才进\n    const okRatio = buildAnomalies({ policies: [P({ beneficiary_name: '张三', beneficiary_ratio: 60 })], now: NOW })\n    expect(okRatio.find((x) => x.code === 'A3')).toBeUndefined()\n    // 有受益人、没有比例字段（OCR 不采）→ 也不制造 A3（否则每张保单都会进来，A1/A2 被淹）
+    const ok = buildAnomalies({ policies: [P({ beneficiary_name: '张三', beneficiary_ratio: undefined })], now: NOW })
+    expect(ok.find((x) => x.code === 'A3')).toBeUndefined()
+  })
+
   test('A4 除外承保：数据模型没有字段 → 不出现（不猜）', () => {
     const g = buildAnomalies({ policies: [P({})], now: NOW })
     expect(codes(g)).not.toContain('A4')

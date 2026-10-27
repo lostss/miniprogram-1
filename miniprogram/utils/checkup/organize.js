@@ -90,6 +90,9 @@ function toPolicyCard(p) {
     category: _str(p.insurance_category) || '未分类',
     type: _str(p.insurance_type),
     insuredName: _str(p.insured_name) || DASH,
+    // 2026-10-27：受益比例"未采集"要能进待完善（A3 只收填错的），故卡片带上原值
+    beneficiaryName: _str(p.beneficiary_name),
+    beneficiaryRatio: _num(p.beneficiary_ratio),
     sumAssured: _num(p.sum_assured),
     sumAssuredText: fmtYuan(_num(p.sum_assured)),
     annualPremium: _num(p.annual_premium),
@@ -312,6 +315,11 @@ function buildCheckupReport(input) {
   // 不静默（明细里它会显示成独立一条，用户会问"为什么份数和明细对不上"）。
   policies.filter((c) => c.isRider && !c.parentKey).forEach((c) => {
     pushPending(c.id, c.productName, 'rider_unlinked', '疑似主险的附加险，但缺保单号无法关联（份数已按独立一 份计）')
+  })
+  // 2026-10-27：受益比例"未采集"进待完善（不是 A3）。
+  // A3 只收"有受益人但比例填错"，否则 OCR 不采比例时每张保单都会进 A3、把清单淹掉。
+  policies.filter((c) => c.beneficiaryName && !(Number(c.beneficiaryRatio) > 0)).forEach((c) => {
+    pushPending(c.id, c.productName, 'beneficiary_ratio', '受益比例未采集（填写后可核对是否为 100%）')
   })
   const pending = Object.keys(pendingMap).map((k) => pendingMap[k])
 

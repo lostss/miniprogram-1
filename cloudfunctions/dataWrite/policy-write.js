@@ -519,7 +519,11 @@ const POLICY_STATUS_CHANGEABLE = ['active', ...MANUAL_STATUSES]
 const POLICY_STATUS_META = ['status_reason', 'status_effective_date']
 // 2026-10-21：加除外承保两项（A4）。原文里的"除外责任"属条款内容、OCR 不解读，
 // 由顾问在编辑 Sheet 手动标记 → 落库为 exclusion_marked(bool) / exclusion_note(string)。
-const POLICY_EDITABLE = ['product_name', 'insurer', 'sum_assured', 'annual_premium', 'insurance_category', 'insurance_type', 'effective_date', 'insurance_period', 'payment_period', 'payment_method', 'premium_term', 'coverage_term', 'policyholder_name', 'beneficiary_name', 'insured_name', 'policy_number', 'status', 'exclusion_marked', 'exclusion_note', ...POLICY_STATUS_META]
+// 2026-10-27：补三个"报告中要用、但 OCR 读不到"的字段（都由顾问在编辑 Sheet 手动录入）：
+//   payment_month     真实缴费月（此前月历用生效月**估算**，是个未声明的假设）
+//   beneficiary_ratio 受益人比例（A3 的判据；没有它就只能在"姓名是否为空"上做文章）
+//   annuity_payout    储蓄型年领金额（成员卡片"储蓄"行要显示年领，而非保额）
+const POLICY_EDITABLE = ['product_name', 'insurer', 'sum_assured', 'annual_premium', 'insurance_category', 'insurance_type', 'effective_date', 'insurance_period', 'payment_period', 'payment_method', 'premium_term', 'coverage_term', 'policyholder_name', 'beneficiary_name', 'insured_name', 'policy_number', 'status', 'exclusion_marked', 'exclusion_note', 'payment_month', 'beneficiary_ratio', 'annuity_payout', ...POLICY_STATUS_META]
 
 function _isActivePolicyStatus(status) {
   return !status || status === 'active' || status === 'unknown'

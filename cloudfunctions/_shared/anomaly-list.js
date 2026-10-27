@@ -95,12 +95,29 @@ function buildAnomalies(input) {
   }
 
   // A3 受益人待核验（没读到受益人，不是"法定"）
-  const a3 = mainList.filter(function(p) { return !_s(p.beneficiary_name) && _s(p.status) === 'active' })
+  // 2026-10-27（方案 A3 原义）：判据从"姓名为空"升级为**受益比例**。
+  // 方案要的是"受益人比例缺失"，而姓名空只是其中一种情形（还有"填了名字但没填比例"）。
+  // 两种情况都进 A3，但 detail 分开写 —— "没填受益人"与"填了但没填比例"对用户是两个动作。
+  const _ratioOf = function(p) { var v = Number(p && p.beneficiary_ratio); return isNaN(v) ? null : v }
+  // ⚠️ 比例"未采集"不算 A3，只算**待完善**（organize 里的一条 pending）：
+  // A3 是"有东西不对"（没指定受益人、或比例填错），待完善是"还缺字段"。
+  // 若不区分，OCR 不采比例时**每张保单都会进 A3**，A1/A2 会被淹掉 —— 清单就失效了。
+  const a3 = mainList.filter(function(p) {
+    if (_s(p.status) !== 'active') return false
+    if (!_s(p.beneficiary_name)) return true          // 根本没有受益人
+    var r = _ratioOf(p)
+    return r !== null && (r <= 0 || r > 100)          // 填了比例但明显不对
+  })
   if (a3.length) {
     groups.push({
       code: 'A3', title: '受益人待核验', count: a3.length,
       items: a3.map(function(p) {
-        return { policyId: _s(p.id || p._id), member: _memberName(p), product: _s(p.product_name) || '未命名保单', detail: '保单未记录受益人' }
+        var hasName = !!_s(p.beneficiary_name)
+        var r = _ratioOf(p)
+        var detail = !hasName
+          ? '保单未记录受益人'
+          : ('受益比例 ' + r + '%（应在 1–100%）')
+        return { policyId: _s(p.id || p._id), member: _memberName(p), product: _s(p.product_name) || '未命名保单', detail: detail }
       })
     })
   }
