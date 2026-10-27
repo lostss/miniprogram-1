@@ -178,48 +178,9 @@
         </view>
         <!-- 审计 C3（2026-09-02）：删除 deep 区 AI 免责（与页面底部静态免责双层重复，静态为合规唯一源） -->
     </view>
-    <!-- 2026-09-14 客户档案：按「信息稳定性」分四档（关键属性 / 需要留意 / 待核实 / 记录时间线）。
-         owner 与客户版都渲染，内容由 utils/facts-view.js 按 view 规则过滤（客户版不给线索与时间线）。
-         默认折叠——首屏只保留结论与缺口，与 V1.5 的明细层折叠口径一致 -->
-    <view class="facts-card" wx:if="{{factsView}}">
-      <view class="facts-head pressable" bindtap="onToggleFacts">
-        <text class="facts-title">客户档案</text>
-        <text class="facts-count">{{factsView.total}} 条</text>
-        <text class="facts-arrow">{{factsOpen ? '收起 ▴' : '展开 ▾'}}</text>
-      </view>
-      <view wx:if="{{factsOpen}}" class="facts-list">
-        <block wx:if="{{factsView.members.length}}">
-          <view class="facts-sec">关键属性</view>
-          <view class="facts-member" wx:for="{{factsView.members}}" wx:key="key">
-            <text class="facts-member-name">{{item.name}}</text>
-            <text class="facts-member-text">{{item.text}}</text>
-          </view>
-        </block>
-        <block wx:if="{{factsView.constraints.length}}">
-          <view class="facts-sec">需要留意</view>
-          <view class="facts-warn" wx:for="{{factsView.constraints}}" wx:key="key">
-            <text class="facts-mark">{{'!'}}</text>
-            <text class="facts-warn-text">{{item.text}}</text>
-          </view>
-        </block>
-        <block wx:if="{{factsView.leads.length}}">
-          <view class="facts-sec">待核实</view>
-          <view class="facts-lead" wx:for="{{factsView.leads}}" wx:key="key">
-            <text class="facts-mark facts-mark--muted">{{'?'}}</text>
-            <text class="facts-lead-text">{{item.text}}</text>
-            <text class="facts-lead-tag">未确认</text>
-          </view>
-        </block>
-        <block wx:if="{{factsView.timeline.length}}">
-          <view class="facts-sec">记录时间线</view>
-          <view class="facts-item" wx:for="{{factsView.timeline}}" wx:key="key">
-            <text class="facts-time">{{item.timeText}}</text>
-            <text class="facts-text">{{item.text}}</text>
-          </view>
-          <view class="facts-more" wx:if="{{factsView.truncated}}">仅显示最近 {{factsView.timeline.length}} 条</view>
-        </block>
-      </view>
-    </view>
+<!-- 2026-10-27（方案边界）：客户档案卡移出报告。
+     它是对 member facts 的二次组织（关键属性 / 待核实 / 时间线），不属于"对保单原材料的加工"；
+     报告只保留保单事实。facts 取数仍留在页面实例上（App 内其它入口可用），只是不再渲染。 -->
     <!-- 2026-10-18 IA 重构（用户决策）：**规则类内容整合为一份完整的保单整理报告**，
          AI 分析整体移到报告尾部、由用户手动触发。
          阅读顺序：页头 → 整理汇总卡 → 保障覆盖与风险 → 按成员整理 → 待完善

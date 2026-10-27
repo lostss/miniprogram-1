@@ -33,9 +33,10 @@ describe('规则层不出建议（2026-10-21 用户决策：现阶段不做诊�
     expect(view.deep).toBeNull()
     expect(hasKey(view.chapters, 'next_steps')).toBe(false)
     expect(view.hero).not.toHaveProperty('topAdvice')
-    // 事实仍在：缺口列表里有金额与优先级
+    // 事实仍在：每人每险种的已有保额（2026-10-27 起不再有缺口/优先级）
     const gap = view.chapters.find(c => c.key === 'gap_analysis')
-    expect(gap.content).toContain('缺口')
+    expect(gap.title).toBe('已有保额')
+    expect(gap.content).toContain('万')
   })
 
   test('有 AI 分析：建议只出现在 deep.suggestions（来源明确、可区分）', function () {
@@ -66,25 +67,24 @@ describe('内容统一（2026-10-18 用户决策）', function () {
   })
 })
 
-describe('缺口章呈现（统一后不再有客户版专用措辞）', function () {
-  test('缺口章带单位 + 章首差额口径；收入基数随家庭财务章一起对客户可见', function () {
+describe('「已有保额」章（2026-10-27 起只列事实）', function () {
+  test('带单位、只写已有保额；客户版与 owner 版逐字一致', function () {
     const view = buildReportView(family(), {}, { view: 'shared' })
     const gap = view.chapters.find(c => c.key === 'gap_analysis')
     expect(gap).toBeDefined()
     expect(gap.unit).toBe('单位：万元')
-    expect(gap.content).toContain('缺口')
-    expect(gap.content).toContain('需求')
-    expect(gap.content).toContain('已有')
-    // 2026-10-18：客户版与 owner 版逐字一致（内容统一的直接判据；旧版客户版会删掉"需求=…"公式）
+    expect(gap.content).toContain('万')
+    // 推算段已删：不再出现需求/缺口/优先级
+    expect(gap.content).not.toContain('需求')
+    expect(gap.content).not.toContain('缺口')
     const ownerGap = buildReportView(family(), {}, { view: 'owner' }).chapters.find(c => c.key === 'gap_analysis')
     expect(gap.content).toBe(ownerGap.content)
   })
 
-  test('owner 版缺口章同样带单位（差额口径行仅客户版）', function () {
+  test('章首说明「需求与缺口不在本报告内」', function () {
     const view = buildReportView(family(), {})
     const gap = view.chapters.find(c => c.key === 'gap_analysis')
-    expect(gap.unit).toBe('单位：万元')
-    expect(gap.content).toContain('需求') // owner 保留「需求 X 万 - 已有 Y 万 · 优先级」
+    expect(gap.pre).toContain('不在本报告内')
   })
 
   test('客户版月历不含占收入比（基数不可见则不引用）', function () {

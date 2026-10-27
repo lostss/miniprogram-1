@@ -62,9 +62,14 @@ describe('② 7d 变化年份表', () => {
     expect(tb.heads).toEqual(['年份', '年缴保费', '较上年', '变化原因'])
     // 两张长期险各有一次缴费期满 → 至少一行
     expect(tb.rows.length).toBeGreaterThan(0)
+    // 2026-10-27：首行是「当前年」基线，其"较上年"为 —，变化原因写"当前"
     expect(tb.rows[0][0]).toMatch(/年$/)
-    expect(tb.rows[0][2].indexOf('−')).toBe(0) // 减号开头（保费下降）
-    expect(tb.rows[0][3]).toContain('缴费期满')
+    expect(tb.rows[0][2]).toBe('—')
+    expect(tb.rows[0][3]).toContain('当前')
+    // 后续行才是掉档：较上年为负数，原因是缴费期满
+    const drop = tb.rows.slice(1).find((r) => r[2].indexOf('−') === 0)
+    expect(drop).toBeTruthy()
+    expect(drop[3]).toContain('缴费期满')
   })
 })
 

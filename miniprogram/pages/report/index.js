@@ -17,7 +17,7 @@ const { track } = require('../../utils/track')
 // 画像确认：本地 readiness 判定（与后端 reportAI 共用同一事实源，sync-shared 契约同步）
 const { evaluateReadiness } = require('../../utils/readiness')
 // 客户档案视图（2026-09-14）：纯函数，按"信息稳定性"分四档；依赖 fact-vocab（同为契约文件）
-const { buildFactsView } = require('../../utils/facts-view')
+// 2026-10-27：报告页不再渲染客户档案（buildFactsView 留给 App 的档案入口）
 // 空态成员回显（2026-10-17）：新建客户填的"人数"要有可见结果，否则用户怀疑白填
 const { buildMemberEcho } = require('../../utils/member-echo')
 
@@ -78,7 +78,7 @@ Page({
     // 2026-09-12 客户版预览：owner 端自跳 shared 视图时置 true（顶部提示条 + 一键返回编辑视角）
     isPreview: false,
     // 2026-09-14 客户档案：四档视图（关键属性 / 需要留意 / 待核实 / 时间线），默认折叠
-    factsView: null, factsOpen: false,
+    // 2026-10-27：客户档案移出报告 → factsView/factsOpen 不再使用
     // 2026-09-12 MVP 验证：反馈已提交态 + 成交标记（成交是 ROI 的唯一真值来源）
     feedbackGiven: false, dealStatus: '',
     // 保单整理视图（阶段一报告主体，见 _applyReportData）
@@ -267,34 +267,12 @@ Page({
     return this.data.familyId || (this._family && this._family._id) || ''
   },
 
+  // 2026-10-27（方案边界）：**报告页不再加载客户档案**。
+  // 客户档案是对 member facts 的二次组织（关键属性/待核实/时间线），不属于"对保单原材料的加工"；
+  // 报告只保留保单事实。facts 查询与组装留在 App 的客户档案入口（本页不再取数、不再渲染）。
+  // 这里只保留一个空实现，避免调用方（onLoad / onShow）改链。
   async _loadFacts() {
-    if (this._disposed) return
-    // 2026-09-20 修（流程审计 P2-3）：客户版拿不到 owner 的 facts —— queryFacts 按调用方 openid
-    // 过滤，客户调必然空/无权。改用共享响应里带下来的 facts（getSharedFamily 已分页取回 + 脱敏）。
-    // 视图组装仍由 buildFactsView(shared:true) 独家承担（"只给客观信息、不给线索/时间线"这条规则
-    // 只有一处实现）——wxml 注释早已写"owner 与客户版都渲染"，断的只是取数。
-    // 2026-10-18 用户决策：报告不区分代理/客户 → 客户档案也统一（含"待核实线索/时间线"）。
-    // 仍按 isShared 分支的只剩**取数路径**（客户拿不到 owner 的 facts，只能读共享响应里的），
-    // 展示规则不再分两套。
-    if (this.data.isShared) {
-      const view = buildFactsView((this._family && this._family.facts) || [], { shared: false })
-      this.setData({ factsView: view.empty ? null : view })
-      return
-    }
-    const cid = this.data.familyId
-    if (!cid) return
-    try {
-      const q = await api('queryFacts', { familyId: cid }, { retries: 0 })
-      if (this._disposed || !q || !q.ok) return
-      const view = buildFactsView((q.data && q.data.facts) || [], { shared: false })
-      this.setData({ factsView: view.empty ? null : view })
-    } catch (e) {
-      console.error('[report] load facts:', (e && e.message) || e)
-    }
-  },
-  onToggleFacts() {
-    if (this._disposed) return
-    this.setData({ factsOpen: !this.data.factsOpen })
+    // intentionally empty（见上方说明）；保留方法名以免调用点散落 if
   },
 
   // V1.5 吸顶目录跳转：组件测出目标章节的视口 top，此处按当前滚动位置换算 scroll-top

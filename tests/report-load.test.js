@@ -199,7 +199,7 @@ describe('报告页数据契约（性能 / 体验）', () => {
   // -------------------------------------------------------------------------
   // 2026-09-20 流程审计 P2-3：客户版「客户档案」恒空 + 埋点丢 familyId
   // -------------------------------------------------------------------------
-  test('客户版：客户档案从共享响应构建，且不调用 owner 专用 queryFacts', async () => {
+  test('客户版：客户档案移出报告（2026-10-27）→ 不渲染、也不调用 owner 专用 queryFacts', async () => {
     const facts = [
       { _id: 'f1', subject_id: 'm1', subject_type: 'member', subject_name: '李**', predicate: '职业', axis: '职业', kind: 'fact', object_value: '教师', confidence: 1 },
       { _id: 'f2', subject_id: 'm1', subject_type: 'member', subject_name: '李**', predicate: '健康异常', axis: '健康异常', kind: 'fact', object_value: '高血压', confidence: 1 },
@@ -219,14 +219,10 @@ describe('报告页数据契约（性能 / 体验）', () => {
     await ctx._loadSharedReport('tok_1')
     ctx.data.isShared = false // 还原，避免污染同文件其他用例
 
-    const factsView = ctx.setData.mock.calls.map(c => c[0]).filter(o => o && o.factsView).pop()
-    expect(factsView).toBeTruthy()
-    expect(factsView.factsView.members.length).toBe(1)
-    // 2026-10-18 用户决策：报告内容不分代理/客户 → 客户档案也统一（线索与时间线一并展示）。
-    // 仍保留的差异只有**取数路径**（客户不能调 owner 专用的 queryFacts）。
-    expect(factsView.factsView.leads.length).toBe(1)
-    expect(factsView.factsView.timeline.length).toBeGreaterThanOrEqual(0)
-    expect(factsView.factsView.members[0].text).toContain('职业 教师')
+    // 2026-10-27（方案边界）：报告只列保单事实 → 客户档案卡移出报告页，不再 setData factsView。
+    // 反向断言：全程没有任何一次 setData 带 factsView（既没渲染、也没取数）。
+    const factsSet = ctx.setData.mock.calls.map((c) => c[0]).filter((o) => o && o.factsView)
+    expect(factsSet).toEqual([])
   })
 
   test('客户版：埋点 familyId 从共享响应取（刻意不写 data.familyId，避免激活 owner 专用路径）', async () => {

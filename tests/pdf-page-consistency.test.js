@@ -56,10 +56,13 @@ describe('PDF 与页面同源', () => {
     expect(PDF).toMatch(/if \(anomalies\.length\) \{[\s\S]{0,200}_sec\('异常与待核验'\)/)
   })
 
-  test('家庭成员两列并排（方案第六部分：成员卡片两列）', () => {
-    expect(PDF).toContain('twoColumnRows(members)')
-    // 列宽必须走 layout 计算，不能手写魔法数（否则总宽一改就溢出）
+  test('成员卡片两列并排（2026-10-27 起「家庭成员」节已删，避免同一批人两份清单）', () => {
+    // 成员卡片用 twoColumnRows 排两列；列宽走 layout 计算，不写魔法数
+    expect(PDF).toContain('twoColumnRows(cards)')
     expect(PDF).toContain('columnWidth(W, 2')
+    // 旧「家庭成员」节不得回归（姓名/年龄已在成员卡片标题；职业/健康不属于保单事实）
+    expect(PDF).not.toContain("_sec('家庭成员')")
+    expect(PDF).not.toContain('const memberLine =')
   })
 
   test('PDF 不产出新的诊断/建议文案（方案：只做格式转换）', () => {

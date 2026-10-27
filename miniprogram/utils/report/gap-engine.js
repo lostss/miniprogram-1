@@ -122,7 +122,10 @@ function buildCoverageMatrix(members, policies) {
   })
   var grandCells = cats.map(function(c) { return cellOf(c, total[c], totalCounts[c]) })
   out.push({ name: '合计', cells: grandCells })
-  return { heads: ['成员'].concat(cats), cats: cats, rows: out }
+  // 2026-10-27：列头显示「储蓄」（方案用词），内部键仍是「年金」（归集与阈值用规范词）。
+  // 分险种表、成员卡片都已叫「储蓄」，三张表用两个名字会让读者以为是两种东西。
+  var headLabels = cats.map(function(c) { return c === '年金' ? '储蓄' : c })
+  return { heads: ['成员'].concat(headLabels), cats: cats, rows: out }
 }
 
 module.exports = { buildGaps, buildCoverageMatrix }

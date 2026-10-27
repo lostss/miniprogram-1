@@ -246,7 +246,7 @@ function buildPdf(ctx) {
   // 首页要按它预留高度、最后再回填页码。
   // 2026-10-24：目录里不再有「深度分析（AI 解读）」—— PDF 已不含 AI 章节（只列事实）。
   const tocTitles = ['保障摘要']
-    .concat(['成员卡片', '家庭成员', '保单明细', '异常与待核验', '保障期间（谁保到什么时候）', '保障节点（未来关键时点）', '保费分布', '缴费与现金流（每年固定缴费月）'])
+    .concat(['成员卡片', '保单明细', '异常与待核验', '保障期间（谁保到什么时候）', '保障节点（未来关键时点）', '保费分布', '缴费与现金流（每年固定缴费月）'])
   const now = new Date()
   const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
   const act = policies.filter(p => p.status === 'active')
@@ -362,37 +362,8 @@ function buildPdf(ctx) {
   void deep
   void report
 
-  // 家庭成员（2026-10-22 版式：两列并排 —— 方案要求"成员卡片两列并排"，1~5 口人时省一半纵向空间）
-  _sec('家庭成员')
-  if (!members.length) {
-    _para('尚未录入家庭成员', 10, { color: '#999999' })
-  } else {
-    const memberLine = (m) => {
-      const age = m.age || (m.birth_date ? calcAge(m.birth_date) : '')
-      return (m.name || '未命名') + '（' + (m.role || '成员') + '）' +
-        (age ? ' · ' + age + '岁' : ' · 年龄待补') +
-        (m.occupation ? ' · ' + m.occupation : '') +
-        (m.health ? ' · 健康：' + m.health : '')
-    }
-    const COL_GAP = 16
-    const colW = columnWidth(W, 2, COL_GAP)
-    for (const row of twoColumnRows(members)) {
-      const y0 = y
-      let h = 0
-      ;[row.left, row.right].forEach((m, ci) => {
-        if (!m) return
-        const line = memberLine(m)
-        _cn(10)
-        doc.fillColor('#333333')
-        const x = M + ci * (colW + COL_GAP)
-        doc.text(line, x, y0, { width: colW })
-        // 同一行两列取较高的那个，避免长名字/健康备注把下一行压住
-        h = Math.max(h, doc.heightOfString(line, { width: colW }))
-      })
-      y = y0 + h + 4
-    }
-  }
-  _rule()
+  // 2026-10-27（用户决策）：删除「家庭成员」节 —— 它与「成员卡片」是同一批人的两份清单，
+  // 姓名/角色/年龄已在成员卡片标题里，职业与健康不属于保单事实（方案只加工保单）。
 
   // 保单明细（纵向主行 + 副行附加信息：保单号/公司/保险期间全保留）
   _sec('保单明细')

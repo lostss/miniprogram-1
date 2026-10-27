@@ -99,27 +99,38 @@ function buildAnomalies(input) {
   // 方案要的是"受益人比例缺失"，而姓名空只是其中一种情形（还有"填了名字但没填比例"）。
   // 两种情况都进 A3，但 detail 分开写 —— "没填受益人"与"填了但没填比例"对用户是两个动作。
   const _ratioOf = function(p) { var v = Number(p && p.beneficiary_ratio); return isNaN(v) ? null : v }
-  // ⚠️ 比例"未采集"不算 A3，只算**待完善**（organize 里的一条 pending）：
-  // A3 是"有东西不对"（没指定受益人、或比例填错），待完善是"还缺字段"。
-  // 若不区分，OCR 不采比例时**每张保单都会进 A3**，A1/A2 会被淹掉 —— 清单就失效了。
-  const a3 = mainList.filter(function(p) {
-    if (_s(p.status) !== 'active') return false
-    if (!_s(p.beneficiary_name)) return true          // 根本没有受益人
+  // 2026-10-27（按方案字面收口）：A3 = 受益人**比例**缺失。
+  // 三种情形都算：没有受益人、比例非法（≤0 / >100）、比例未采集。
+  // 但"未采集"往往一次几十份（OCR 不采该字段）→ **聚合成一条**，否则 A1/A2 会被淹掉。
+  // 计数仍按份数（count 反映真实问题量），只是明细不逐条铺开。
+  const a3Hard = []       // 逐条列：没受益人 / 比例非法
+  const a3Uncollected = [] // 聚合：比例未采集
+  mainList.forEach(function(p) {
+    if (_s(p.status) !== 'active') return
+    if (!_s(p.beneficiary_name)) { a3Hard.push(p); return }
     var r = _ratioOf(p)
-    return r !== null && (r <= 0 || r > 100)          // 填了比例但明显不对
+    if (r === null) { a3Uncollected.push(p); return }
+    if (r <= 0 || r > 100) a3Hard.push(p)
   })
-  if (a3.length) {
-    groups.push({
-      code: 'A3', title: '受益人待核验', count: a3.length,
-      items: a3.map(function(p) {
-        var hasName = !!_s(p.beneficiary_name)
-        var r = _ratioOf(p)
-        var detail = !hasName
-          ? '保单未记录受益人'
-          : ('受益比例 ' + r + '%（应在 1–100%）')
-        return { policyId: _s(p.id || p._id), member: _memberName(p), product: _s(p.product_name) || '未命名保单', detail: detail }
-      })
+  const a3Count = a3Hard.length + a3Uncollected.length
+  if (a3Count > 0) {
+    var a3Items = a3Hard.map(function(p) {
+      var hasName = !!_s(p.beneficiary_name)
+      var r = _ratioOf(p)
+      var detail = !hasName ? '保单未记录受益人' : ('受益比例 ' + r + '%（应在 1–100%）')
+      return { policyId: _s(p.id || p._id), member: _memberName(p), product: _s(p.product_name) || '未命名保单', detail: detail }
     })
+    if (a3Uncollected.length) {
+      var names = {}
+      a3Uncollected.forEach(function(p) { names[_memberName(p)] = 1 })
+      a3Items.push({
+        policyId: '',
+        member: Object.keys(names).join('、') || '—',
+        product: '',
+        detail: '共 ' + a3Uncollected.length + ' 份未采集受益比例（可在保单卡片补充，补录后可核对是否为 100%）'
+      })
+    }
+    groups.push({ code: 'A3', title: '受益人待核验', count: a3Count, items: a3Items })
   }
 
   // A4 除外承保标记：数据模型里没有这个字段（需用户手动标记，属后续能力）→ 恒为空。

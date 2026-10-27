@@ -30,11 +30,12 @@ describe('buildReportView — 报告聚合入口（候选 2 深模块）', () =>
     const view = buildReportView(c, { conclusion: 'AI 结论' }, { view: 'shared' })
     const owner = buildReportView(c, { conclusion: 'AI 结论' }, { view: 'owner' })
 
-    // ① 章节集合与顺序一致（含家庭结构/财务、置信度告警）
+    // ① 章节集合与顺序一致
     expect(view.chapters.map(x => x.key)).toEqual(owner.chapters.map(x => x.key))
-    expect(view.chapters.find(x => x.key === 'family_structure')).toBeDefined()
-    expect(view.chapters.find(x => x.key === 'family_finance')).toBeDefined()
-    // 置信度告警不再对客户隐藏（这一条是本次决策的直接后果：客户也会看到"字段识别存疑"）
+    // 2026-10-27：家庭结构/财务章已删除（成员信息并入概览与成员卡片；收支不进报告）
+    expect(view.chapters.find(x => x.key === 'family_structure')).toBeUndefined()
+    expect(view.chapters.find(x => x.key === 'family_finance')).toBeUndefined()
+    // 置信度提示不再对客户隐藏
     expect(view.chapters.find(x => x.key === 'data_quality')).toBeDefined()
 
     // ② 措辞统一为 owner 口径：区分"缺少"与"保额不足"，不再用中性话术
@@ -67,7 +68,7 @@ describe('buildReportView — 报告聚合入口（候选 2 深模块）', () =>
     const view = buildReportView(c, { conclusion: 'AI 结论', disclaimer: '免责' })
     // 2026-10-24：新增「成员卡片」章 → owner 版 = 11 章
     // （概览 + 异常 + 结构 + 财务 + 汇总 + 成员卡片 + 缺口 + 期间 + 缴费 + 待完善 + 附录）
-    expect(view.chapters.length).toBe(11)
+    expect(view.chapters.length).toBe(9)
     expect(view.chapters[0].key).toBe('overview')
     // 待完善必须是附录前最后一章（数据质量补录清单，不该插在诊断结论之间）
     const keys = view.chapters.map(x => x.key)
@@ -88,7 +89,7 @@ describe('buildReportView — 报告聚合入口（候选 2 深模块）', () =>
 
   test('无报告对象 → 视图仍完整（conclusion 空）', () => {
     const view = buildReportView(baseCustomer(), null)
-    expect(view.chapters.length).toBe(11)
+    expect(view.chapters.length).toBe(9)
     expect(view.hero.conclusion).toBe('')
     expect(view.hints).toEqual([])
   })
@@ -274,7 +275,7 @@ describe('buildCoverageMatrix — 保障覆盖矩阵（第 2 章数据源）', (
     const m = buildCoverageMatrix(c.members, c.policies)
     // 2026-10-14：加「年金」列与「年保费」列（年金不参与缺失标红 —— 储蓄型，标红＝推荐买年金）
     // 2026-10-27：去掉「年保费」列（方案第二部分只有五个险种列；保费合计在成员卡片顶部）
-    expect(m.heads).toEqual(['成员', '重疾险', '医疗险', '意外险', '寿险', '年金'])
+    expect(m.heads).toEqual(['成员', '重疾险', '医疗险', '意外险', '寿险', '储蓄'])
     expect(m.rows.length).toBe(4) // 3 成员 + 底部合计行
     const ly = m.rows.find(r => r.name === '李阳勇')
     expect(ly.cells[0].s).toBe('') // 重疾险缺失：只显示 —，不标红
@@ -372,7 +373,8 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     // 所以这里先剔除再比顺序，另单独断言它的位置（避免用例依赖"本次有没有异常"）。
     // 2026-10-21：next_steps 章已删除（规则层不给建议）
     // 2026-10-24：成员卡片插在保障汇总之后、缺口之前（先"每类多少"再"每人多少"再"差多少"）
-    expect(keys.filter(k => k !== 'anomalies')).toEqual(['family_structure', 'family_finance', 'coverage_summary', 'member_cards', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'appendix_policies'])
+    // 2026-10-27：家庭结构/财务删除 → 概览 → 保障汇总 → 成员卡片 → 已有保额 → 期间 → 缴费 → 附录
+    expect(keys.filter(k => k !== 'anomalies' && k !== 'data_quality')).toEqual(['coverage_summary', 'member_cards', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'appendix_policies'])
     expect(keys).not.toContain('next_steps')
     if (keys.indexOf('anomalies') !== -1) {
       // buildChapters 直调时没有概览章（那需要 checkup），异常章应在第一位
@@ -380,71 +382,32 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     }
   })
 
-  test('缺口章：内容含缺口金额与优先级；无行动建议章；正式章编号连续 1..N', () => {
+  test('「已有保额」章只列保单事实（无需求/缺口/优先级）；正式章编号连续 1..N', () => {
     const ch = buildChapters(reportCustomer(), report)
     const gap = ch.find(x => x.key === 'gap_analysis')
     expect(gap).toBeDefined()
-    // 编号按"存在哪些章"顺延：2026-10-21 起多了异常章（有异常时）→ 用位置断言而不是写死序号
+    // 编号按"存在哪些章"顺延：用位置断言而不是写死序号
     expect(gap.num).toBe(String(ch.indexOf(gap) + 1))
-    expect(gap.content).toContain('缺口')
+    expect(gap.title).toBe('已有保额')
     expect(gap.content).toContain('万')
-    expect(gap.content).toContain('优先级')
+    // 2026-10-27：模型推算整段删除 —— 正文不得再出现"需求/缺口/优先级"
+    expect(gap.content).not.toContain('需求')
+    expect(gap.content).not.toContain('缺口')
+    expect(gap.content).not.toContain('优先级')
     // 2026-10-21：原「下一步行动」章删除 —— 规则报告只陈述事实，建议归 AI 进阶报告
     expect(ch.find(x => x.key === 'next_steps')).toBeUndefined()
-    // 2026-10-24：推算段必须显式标注"不是保单事实"（原尾注"按缺口额与优先级排序"随之移除）
-    expect(gap.content).toContain('模型推算（不是保单事实）')
     // 统一编号：正式章 1..N 连续（附录不编号）—— 不写死总数，只断言连续且从 1 开始
     const nums = ch.filter(x => x.key !== 'appendix_policies').map(x => x.num)
     expect(nums).toEqual(nums.map((_, i) => String(i + 1)))
   })
 
-  // 2026-09-18 报告页审计：②章收入口径——未填写时曾直传 totalIncome=0 → 渲染"年收入 0万"，
-  // 与⑦缴费月历章"（家庭年收入未填写，暂不计算占比）"矛盾（同一 owner 视图两章说法不一）
-  test('家庭财务章：收入与成员收入均未填写 → income 传 null（防渲染"0万"）', () => {
-    const c = reportCustomer()
-    c.family_income = 0
-    c.financial_snapshot = {}
-    c.members = c.members.map(m => Object.assign({}, m, { income: 0 }))
-    const fin = buildChapters(c, report).find(x => x.key === 'family_finance').customBlocks.find(b => b.t === 'finance')
-    expect(fin.income).toBe(null)
-  })
-
-  test('家庭财务章：有收入 → income 为数值（不把"有值"误判成未填写）', () => {
-    const c = reportCustomer()
-    c.family_income = 20
-    c.members = c.members.map(m => Object.assign({}, m, { income: 0 }))
-    const fin = buildChapters(c, report).find(x => x.key === 'family_finance').customBlocks.find(b => b.t === 'finance')
-    expect(fin.income).toBe(20)
-  })
-
-  test('家庭结构章：成员节点（角色分组排序）；财务独立成章', () => {
+  test('家庭结构章 / 家庭财务章已删除（成员信息在概览与成员卡片；收支不进报告）', () => {
     const ch = buildChapters(reportCustomer(), report)
-    // 2026-10-21：异常章可能插在首位 → 按 key 取，不按索引（索引会随"本次有无异常"漂移）
-    const ft = ch.find(x => x.key === 'family_structure').customBlocks.find(b => b.t === 'family_tree')
-    expect(ft).toBeDefined()
-    expect(ft.nodes.length).toBe(3)
-    expect(ft.nodes[0].name).toBe('李阳勇') // 本人组排前
-    expect(ft.nodes[0].display).toBe('本人')
-    // 财务已拆为独立章（家庭结构之后）
-    const fin = ch.find(x => x.key === 'family_finance')
-    expect(fin.key).toBe('family_finance')
-    // 编号按存在章顺延（异常章可能插入），因此比位置而不是写死 '2'
-    expect(fin.num).toBe(String(ch.indexOf(fin) + 1))
-    expect(fin.customBlocks[0].t).toBe('finance')
-    expect(fin.customBlocks[0].income).toBe(30) // 2026-09-06 修复：家庭财务章取家庭收入源（family_income/financial_snapshot.income），非成员收入合计(30+15)
-    expect(ft.finance).toBeUndefined()
-  })
-
-  test('家庭结构章：成员平铺（nodes 数组，角色分组排序），无 levels 分层', () => {
-    // fixture 成员：本人/配偶/子女 → 平铺 3 节点（本人→配偶→子女 按角色组序）
-    const ch = buildChapters(reportCustomer(), report)
-    // 2026-10-21：异常章可能插在首位 → 按 key 取，不按索引（索引会随"本次有无异常"漂移）
-    const ft = ch.find(x => x.key === 'family_structure').customBlocks.find(b => b.t === 'family_tree')
-    expect(ft.levels).toBeUndefined()
-    expect(ft.nodes.length).toBe(3)
-    expect(ft.nodes[0].role).toBe('本人')
-    expect(ft.nodes[1].role).toBe('配偶')
-    expect(ft.nodes[2].role).toBe('子女')
+    expect(ch.find(x => x.key === 'family_structure')).toBeUndefined()
+    expect(ch.find(x => x.key === 'family_finance')).toBeUndefined()
+    // 成员编辑入口没丢：挂在成员卡片章上
+    const mc = ch.find(x => x.key === 'member_cards')
+    expect(mc.edit).toBe('family')
   })
 
   test('保障汇总章：覆盖矩阵（成员×险种 + 合计行）+ 缺失提示', () => {
@@ -452,7 +415,7 @@ describe('buildChapters — 基础版报告 6 章单页结构', () => {
     const cs = ch.find(x => x.key === 'coverage_summary')
     const pano = cs.customBlocks.find(b => b.t === 'panorama')
     expect(pano).toBeDefined()
-    expect(pano.heads).toEqual(['成员', '重疾险', '医疗险', '意外险', '寿险', '年金'])
+    expect(pano.heads).toEqual(['成员', '重疾险', '医疗险', '意外险', '寿险', '储蓄'])
     expect(pano.rows.length).toBe(4) // 3 成员 + 底部险种合计行
     const ly = pano.rows.find(r => r.name === '李阳勇')
     const life = ly.cells.find(c => c.s === 'ok')
@@ -658,16 +621,15 @@ describe('事实 / 推算分离（2026-10-24 用户决策）', () => {
     expect(JSON.stringify(cs)).not.toContain('缺少')
   })
 
-  test('缺口章拆成两段：事实（已有保额 / 无）+ 推算（需求、缺口、优先级）', () => {
+  test('「已有保额」只列事实：有保额写金额，没有写"无"，不再有需求/缺口', () => {
     const gap = buildChapters(c(), {}).find(x => x.key === 'gap_analysis')
-    expect(gap.title).toBe('保额与缺口')
-    // 事实段：有保额写金额，没有写"无"
+    expect(gap.title).toBe('已有保额')
     expect(gap.content).toContain('重疾：20 万')
     expect(gap.content).toContain('寿险：无')
-    // 推算段：显式标注"不是保单事实"
-    expect(gap.content).toContain('模型推算（不是保单事实）')
-    expect(gap.content).toContain('需求 50 万')
-    expect(gap.pre).toContain('模型推算')
+    // 2026-10-27：推算段整段删除（用户决策），章首 pre 只解释"需求与缺口不在本报告内"
+    expect(gap.content).not.toContain('模型推算')
+    expect(gap.content).not.toContain('需求')
+    expect(gap.pre).toContain('不在本报告内')
   })
 })
 
@@ -710,24 +672,22 @@ describe('缴费与现金流：年度保费柱（2026-10-18 用户提议「看�
   })
 })
 
-describe('第二步 IA：成员规模并入家庭结构章', () => {
-  test('家庭结构节点带「N 张 · 保额 X万」（原页面「按成员整理」的信息）', () => {
-    const c = baseCustomer()
-    // 必须走 buildReportView：checkup 由它在内部自算后传给 chapter-builder
-    // （直接调 buildChapters 不传 checkup 时，概览章与成员规模都不会出现）
-    const view = buildReportView(c, {})
-    const ft = view.chapters.find((x) => x.key === 'family_structure')
-    const nodes = ft.customBlocks.find((b) => b.t === 'family_tree').nodes
-    const ly = nodes.find((n) => n.name === '李阳勇')
-    expect(ly.scaleText).toMatch(/\d+ 张 · 保额 /)
+describe('成员信息承载（2026-10-27：家庭结构章删除后）', () => {
+  test('概览带"持有人数/登记人数"，成员卡片带每人的份数与保额脚注', () => {
+    const view = buildReportView(baseCustomer(), {})
+    const ov = view.chapters[0].customBlocks[0]
+    expect(ov.coveredMemberCount).toBeGreaterThan(0)
+    expect(ov.memberCount).toBeGreaterThanOrEqual(ov.coveredMemberCount)
+    const mc = view.chapters.find((x) => x.key === 'member_cards')
+    expect(mc).toBeDefined()
+    expect(mc.edit).toBe('family') // 成员编辑入口挂在这里
   })
 
-  test('统一视图下客户版同样有家庭结构章（2026-10-18 决策：内容不分视角）', () => {
+  test('客户版与 owner 版章节集合一致（内容不分视角）', () => {
     const view = buildReportView(baseCustomer(), {}, { view: 'shared' })
-    const ft = view.chapters.find((x) => x.key === 'family_structure')
-    expect(ft).toBeDefined()
-    expect(ft.customBlocks.find((b) => b.t === 'family_tree').nodes[0].scaleText).toMatch(/\d+ 张/)
     expect(view.chapters[0].key).toBe('overview')
+    expect(view.chapters.find((x) => x.key === 'family_structure')).toBeUndefined()
+    expect(view.chapters.find((x) => x.key === 'member_cards')).toBeDefined()
   })
 })
 

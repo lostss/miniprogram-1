@@ -15,7 +15,9 @@ const NOW = new Date('2026-10-21T00:00:00')
 const P = (o) => Object.assign({
   id: 'p1', product_name: 'XX终身重疾', insurance_category: '重疾险', coverage_term: 105,
   sum_assured: 500000, annual_premium: 6000, effective_date: '2017-06-01',
-  insurance_period: '终身', status: 'active', beneficiary_name: '张三', policy_number: 'P1'
+  // 2026-10-27：默认带上合法比例（100%），否则每张夹具保单都会因"比例未采集"进 A3，
+  // 与用例想验证的 A1/A2/A5/A6 混在一起。需要验证 A3 的用例会显式覆盖该字段。
+  insurance_period: '终身', status: 'active', beneficiary_name: '张三', beneficiary_ratio: 100, policy_number: 'P1'
 }, o)
 
 const codes = (groups) => groups.map((g) => g.code)
@@ -54,9 +56,13 @@ describe('buildAnomalies — A1–A6', () => {
     expect(a3).toBeTruthy()
     expect(a3.items[0].detail).toContain('120%')
 
-    // 比例 60% 是**合法**值（多受益人情形），不进 A3；只有非法值（≤0 / >100）才进\n    const okRatio = buildAnomalies({ policies: [P({ beneficiary_name: '张三', beneficiary_ratio: 60 })], now: NOW })\n    expect(okRatio.find((x) => x.code === 'A3')).toBeUndefined()\n    // 有受益人、没有比例字段（OCR 不采）→ 也不制造 A3（否则每张保单都会进来，A1/A2 被淹）
-    const ok = buildAnomalies({ policies: [P({ beneficiary_name: '张三', beneficiary_ratio: undefined })], now: NOW })
-    expect(ok.find((x) => x.code === 'A3')).toBeUndefined()
+    // 比例 60% 是**合法**值（多受益人情形），不进 A3；只有非法值（≤0 / >100）才进\n    const okRatio = buildAnomalies({ policies: [P({ beneficiary_name: '张三', beneficiary_ratio: 60 })], now: NOW })\n    expect(okRatio.find((x) => x.code === 'A3')).toBeUndefined()\n    // 比例未采集 → 进 A3，但**聚合成一条**（不逐条铺开，否则 A1/A2 会被淹）
+    const un = buildAnomalies({ policies: [P({ beneficiary_name: '张三', beneficiary_ratio: undefined })], now: NOW })
+    const a3u = un.find((x) => x.code === 'A3')
+    expect(a3u).toBeTruthy()
+    expect(a3u.count).toBe(1)
+    expect(a3u.items.length).toBe(1)
+    expect(a3u.items[0].detail).toContain('未采集受益比例')
   })
 
   test('A4 除外承保：数据模型没有字段 → 不出现（不猜）', () => {

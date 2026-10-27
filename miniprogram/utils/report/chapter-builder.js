@@ -389,58 +389,17 @@ function buildChapters(family, report, gaps, opts) {
         : ''
     }
   })
-  // 去代际分层：成员卡片平铺流动布局（排序仍按角色分组序+中文名）
-  ch.push({
-    key: 'family_structure', title: '家庭结构', num: '1', edit: 'family',
-    customBlocks: [createBlock('family_tree', { nodes: nodes })]
-  })
-
-  // ② 家庭财务（独立章，R2 从家庭结构拆出）
-  // edit:'financials' → 章标题行渲染 [编辑]（onChapterEdit mode='financials'）
-  ch.push({
-    key: 'family_finance', title: '家庭财务', num: '2', edit: 'financials',
-    customBlocks: [createBlock('finance', {
-      // 2026-09-18 报告页审计：totalIncome 在"家庭收入与成员收入均未填写"时回落 0（data-normalizer L23），
-      // 直传会渲染成"年收入 0万"，与⑦缴费月历章 L360 的"（家庭年收入未填写，暂不计算占比）"口径矛盾
-      // ——同一份 owner 视图里两章对同一事实说法不一。传 null 让渲染侧区分"未填写"与"真的是 0"。
-      // 注：debt 不这样处理——"总负债 0万"是准确表述（无负债），不存在未填写歧义。
-      income: totalIncome > 0 ? totalIncome : null,
-      debt: Math.round(debt * 100) / 100
-    })]
-  })
+  // 2026-10-27（用户决策）：删除「家庭结构」与「家庭财务」两章。
+  //   家庭结构：成员规模（N 张 · 保额）已并入概览与成员卡片，姓名/角色/年龄在成员卡片标题里，
+  //             同一批信息出现两遍只是重复；成员编辑入口挂到「成员卡片」上，不丢功能。
+  //   家庭财务：收入/负债只服务于缺口推算，而推算已删；不分版后客户还会直接看到自家收支。
+  //             收支编辑仍在 App（编辑 Sheet 的财务入口），只是不进报告正文。
+  // 删掉 `missingLines` 之后，`if (shared)` 这最后一处死分支也随之消失。
 
   // ======== ③ 保障汇总 ========
-  // 客户版中性措辞："已有XX保障待完善"，不写"缺少XX"式恐吓文案（数据不变，换视角）
-  // 2026-10-17 修：原实现把 `gap > 0` 一律写成"缺少"——**有保单但低于需求也是 gap > 0**
-  // （真机截图里矩阵写着"李阳勇 重疾险 20万"，红条却写"缺少…重疾"，代理人当场被问住）。
-  // 现在区分两种事实：无此类保单 → "缺少X"；有但不足 → "X保额不足（缺口 N 万）"。
-  var missingLines = (function() {
-    var lines = []
-    for (var i = 0; i < members.length; i++) {
-      var m = members[i]
-      var mg = gaps.filter(function(g) { return g.member === m.name && g.gap > 0 })
-      if (mg.length === 0) continue
-      if (shared) {
-        // 客户版不报缺口金额（金额在缺口章统一给），只给"待完善"
-        lines.push(m.name + '的' + mg.map(function(g) { return _shortCat(g.category) }).join('、') + '保障待完善')
-        continue
-      }
-      var absent = mg.filter(function(g) { return !(Number(g.existing) > 0) }).map(function(g) { return _shortCat(g.category) })
-      var short = mg.filter(function(g) { return Number(g.existing) > 0 })
-        .map(function(g) { return _shortCat(g.category) + '保额不足（缺口 ' + _numW(g.gap) + ' 万）' })
-      var segs = []
-      if (absent.length) segs.push('缺少' + absent.join('、'))
-      if (short.length) segs.push(short.join('；'))
-      lines.push(m.name + segs.join('；'))
-    }
-    return lines
-  })()
   ch.push({
     key: 'coverage_summary', title: '保障汇总', num: '3',
     unit: '单位：万元',
-    // 2026-10-24（审计 2.1）：原红条「缺少 X / Y 保额不足」是**需求模型判断**，
-    // 与缺口章重复且会把"够不够"放在矩阵上方先入为主。事实性内容（谁有哪些险种、保额多少）
-    // 已由矩阵与下方分险种表承担；判断统一收在缺口章的「模型推算」段。
     pre: '',
     customBlocks: [
       createBlock('panorama', { heads: matrix.heads, cats: matrix.cats, rows: matrix.rows }),
@@ -611,17 +570,20 @@ function buildChapters(family, report, gaps, opts) {
   })
   if (memberCards.length) {
     ch.push({
-      key: 'member_cards', title: '成员卡片',
+      // edit:'family'：家庭结构章删除后，成员编辑入口挂到这里（章标题行的 [编辑]）
+      key: 'member_cards', title: '成员卡片', edit: 'family',
       pre: '每个成员一张表：五类险种各自的保额、年缴保费与期间。附加险并入所属险种，份数按主险计。',
       customBlocks: [createBlock('member_cards', { members: memberCards })]
     })
   }
 
-  // ======== ⑤ 保障缺口（2026-10-24 拆分：**事实段 / 推算段**）========
-  // 用户决策（采纳审计建议的"拆"法）：保留"谁有哪些险种、保额多少"这类保单事实，
-  // 把"需求—缺口"明确标为**模型推算**。
-  // 原因：需求靠 5×收入、负债兜底等参数推出来，不是保单上写的东西。混在一张表里，
-  // 客户会把"缺口 30 万"当成合同金额 —— 而它连"要不要补"都取决于顾问的判断。
+  // ======== ⑤ 已有保额（2026-10-27：**删掉模型推算**，只留保单事实）========
+  // 上一版是"事实段 + 模型推算段"。删推算段的三个理由（用户决策）：
+  //   ① PDF 与客户版都已不含推算 —— 正文留着它，同一份报告就有两个版本；
+  //   ② 推算依赖"5×收入 / 负债兜底"，而家庭财务章已移出正文 —— 读者看到"需求 500 万"
+  //      却找不到依据，比不写更糟；
+  //   ③ 它的真实用途是面谈底稿，而面谈在 App 里，不在客户手里的纸面。
+  // 所以这里只回答一个问题：**每个人每类险种现在有多少保额**（没有就写"无"）。
   var showGapCh = gaps.length > 0
   if (showGapCh) {
     var gapLines = []
@@ -630,7 +592,6 @@ function buildChapters(family, report, gaps, opts) {
       if (!gapByMember[g.member]) gapByMember[g.member] = []
       gapByMember[g.member].push(g)
     })
-    // —— 事实段：每人每险种的"已有保额 / 无"
     Object.keys(gapByMember).forEach(function(mn) {
       var mb = members.find(function(x) { return x.name === mn }) || null
       gapLines.push('**' + mn + '**' + (mb && mb.role ? '（' + mb.role + '）' : ''))
@@ -641,35 +602,10 @@ function buildChapters(family, report, gaps, opts) {
         gapLines.push('- ' + _shortCat(g.category) + '：' + (has ? _numW(g.existing) + ' 万' : '无'))
       })
     })
-    // —— 推算段：需求 / 缺口 / 优先级（明确标注来源）
-    if (actionable.length > 0) {
-      gapLines.push('')
-      gapLines.push('**模型推算（不是保单事实）**')
-      gapLines.push('')
-      gapLines.push('需求与缺口按家庭收入、负债等参数推算，随收支信息更新而重算；仅供顾问参考。')
-      gapLines.push('')
-      actionable.forEach(function(g) {
-        gapLines.push('- ' + g.member + ' ' + _shortCat(g.category) + '：需求 ' + _numW(g.reference) +
-          ' 万 − 已有 ' + _numW(g.existing) + ' 万 = 缺口 ' + _numW(g.gap) + ' 万（优先级：' + g.priorityLabel + '）')
-      })
-    }
-    if (blockedGaps.length > 0) {
-      var bCats = []
-      var bMems = []
-      blockedGaps.forEach(function(bg) {
-        if (bCats.indexOf(bg.category) === -1) bCats.push(bg.category)
-        if (bMems.indexOf(bg.member) === -1) bMems.push(bg.member)
-      })
-      gapLines.push('')
-      // 2026-10-17 修：原文案写"因年收入缺失无法计算"，但第 2 章明明显示年收入——
-      // 真实原因是家庭年收入只兜底给经济支柱（gap-core.js）。
-      gapLines.push(bMems.join('、') + ' 的' + bCats.join('、') + '需按个人收入测算：家庭年收入仅用于测算经济支柱，未拆分到其他成员；补充成员收入后即可计算。')
-    }
     ch.push({
       key: 'gap_analysis',
-      // 章名改为「保额与缺口」：前半是事实（保额），后半是推算（缺口），章名两者都要说清
-      title: '保额与缺口',
-      pre: '上半部分是保单事实（各成员各险种的已有保额）；下半部分的需求与缺口为模型推算，不是保单载明金额。',
+      title: '已有保额',
+      pre: '按成员列出各类险种当前有效的保额；「无」表示没有这类保单。需求与缺口由顾问结合收支测算，不在本报告内。',
       unit: '单位：万元',
       content: gapLines.join('\n')
     })
@@ -852,15 +788,25 @@ function buildChapters(family, report, gaps, opts) {
       // 只列**变化年份**（不逐年铺开）：客户关心的是"哪一年松一口气、因为哪张保单缴完"。
       createBlock('data_table', {
         heads: ['年份', '年缴保费', '较上年', '变化原因'],
-        rows: trend.drops.map(function(d) {
-          return [
-            d.y + ' 年',
-            _fmtAmount(d.toW * 10000),
-            '−' + _fmtAmount(d.reducedW * 10000),
-            (d.products || []).length ? (d.products.join('、') + ' 缴费期满') : '缴费期满'
-          ]
+        // 2026-10-27：补「当前年」基线行 —— 没有基线，读者不知道第一条是从多少降下来的。
+        rows: [{
+          y: trend.thisYear,
+          cur: trend.currentW * 10000,
+          delta: '',
+          why: '当前（有效保单）'
+        }].concat(trend.drops.map(function(d) {
+          return {
+            y: d.y,
+            cur: d.toW * 10000,
+            delta: '−' + _fmtAmount(d.reducedW * 10000),
+            why: (d.products || []).length ? (d.products.join('、') + ' 缴费期满') : '缴费期满'
+          }
+        })).map(function(r) {
+          return [r.y + ' 年', _fmtAmount(r.cur), r.delta || '—', r.why]
         }),
-        note: '基于现有有效保单推算，不含未来新增；短期险按当前费率计。'
+        // 口径修正：本节曲线**只含长期险**（一年期按年续保，画进去会出现假台阶），
+        // 所以不能再写"短期险按当前费率计"——那是另一套口径。
+        note: '仅长期险：一年期按年续保、趸交付清不计入曲线；不含未来新增保单。'
       }),
       // 月份未知桶（2026-10-24）：不混进 12 格，单独一行给"未记录缴费月"的金额与份数
       createBlock('calendar', {
@@ -868,7 +814,22 @@ function buildChapters(family, report, gaps, opts) {
         unknownText: monthUnknownCount > 0
           ? ('月份未知 ' + _fmtAmount(monthUnknownYuan) + '，' + monthUnknownCount + ' 份保单未记录缴费月')
           : '',
-        basisText: '月份按保单生效月估算（缴费月字段尚未采集）'
+        // 2026-10-27：口径说明要**动态**。payment_month 字段已存在：
+        // 全部有值时不能再写"字段尚未采集"（那是上一版留下的自相矛盾）。
+        basisText: (function() {
+          var withPay = 0
+          var total = 0
+          active.forEach(function(p) {
+            if ((Number(p.annual_premium) || 0) <= 0) return
+            total += 1
+            var pm = Number(p.payment_month)
+            if (pm >= 1 && pm <= 12) withPay += 1
+          })
+          if (!total) return ''
+          if (withPay === total) return '月份按保单「缴费月」'
+          if (withPay === 0) return '月份按保单生效月估算（' + total + ' 份未填缴费月）'
+          return '月份按「缴费月」；其中 ' + (total - withPay) + ' 份未填，按生效月估算'
+        })()
       })
     ],
     // 下方提示：无列表垂直排列（年保费 → 峰值月），markdown-render 以 <br> 换行
@@ -1020,7 +981,8 @@ function buildChapters(family, report, gaps, opts) {
     })
   }
   // 状态分组：失效/异常在前（方案第五部分），有效在后；组内按成员，成员内按保司
-  ;[['inactive', '失效 / 异常'], ['active', '有效']].forEach(function(pair) {
+  var STATUS_GROUPS = [['inactive', '失效 / 异常'], ['active', '有效']]
+  STATUS_GROUPS.forEach(function(pair) {
     var bucketKey = pair[0]
     var bucketLabel = pair[1]
     var map = byStatus[bucketKey]
@@ -1081,7 +1043,8 @@ function buildChapters(family, report, gaps, opts) {
   // 异常清单紧跟概览：它是"先看结论，再看哪几件事要处理"的第二眼
   // 2026-10-21：「下一步行动」章已删除（现阶段不做诊断/不给建议），排序说明并入缺口章尾注
   // 2026-10-27：原来并列的「数据质量提示（A7）」+「待完善」合并成一章 data_quality
-  var CHAPTER_SEQ = ['overview', 'anomalies', 'family_structure', 'family_finance', 'coverage_summary', 'member_cards', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'data_quality', 'appendix_policies']
+  // 2026-10-27：删除 family_structure / family_finance（成员信息并入概览 + 成员卡片）
+  var CHAPTER_SEQ = ['overview', 'anomalies', 'coverage_summary', 'member_cards', 'gap_analysis', 'premium_timeline', 'premium_calendar', 'data_quality', 'appendix_policies']
   var ordered = []
   CHAPTER_SEQ.forEach(function(k) {
     ch.forEach(function(c) { if (c.key === k) ordered.push(c) })
